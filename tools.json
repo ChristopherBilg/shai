@@ -1,0 +1,48 @@
+[
+  {
+    "name": "gh_pr_view",
+    "description": "View a GitHub pull request (read-only). Returns title, body, state, author, and other metadata.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "number": { "type": "string", "description": "The pull request number." },
+        "repo": { "type": "string", "description": "Optional OWNER/REPO. Defaults to the repository of the current directory." }
+      },
+      "required": ["number"]
+    }
+  },
+  {
+    "name": "gh_issue_view",
+    "description": "View a GitHub issue (read-only). Returns title, body, state, author, and other metadata.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "number": { "type": "string", "description": "The issue number." },
+        "repo": { "type": "string", "description": "Optional OWNER/REPO. Defaults to the repository of the current directory." }
+      },
+      "required": ["number"]
+    }
+  },
+  {
+    "name": "list_directory",
+    "description": "List the files and folders inside a local directory.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or relative path. Use . for the current directory." }
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "print_file",
+    "description": "Print the contents of a local file.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or relative path to the file." }
+      },
+      "required": ["path"]
+    }
+  }
+]
