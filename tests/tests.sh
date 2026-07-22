@@ -41,7 +41,9 @@ assert_contains "$OUT" '"source":"user"' "read: user source"
 assert_contains "$OUT" '"text":"Hello shai"' "read: payload text"
 SYSOUT=$(echo "sys prompt" | "$DIR/shai-read" --system)
 assert_contains "$SYSOUT" '"source":"system"' "read: --system source"
-EMPTY=$(printf '' | "$DIR/shai-read"); assert_eq "$EMPTY" "" "read: empty input → empty"
+EMPTY=$(printf '' | "$DIR/shai-read"); RC=$?
+assert_eq "$EMPTY" "" "read: empty input → empty"
+assert_eq "$RC" "0" "read: empty input → exit 0"
 
 # (later tasks append their sections above this footer)
 
