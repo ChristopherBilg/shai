@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+
+WINDOW="10"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --window)
+      [ "$#" -lt 2 ] && { echo "error: --window requires a value" >&2; exit 1; }
+      WINDOW="$2"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
+jq -R -s --argjson window "$WINDOW" '
+  split("\n") | map(select(length > 0)) | map(try fromjson catch null) | map(select(. != null))
+  | . as $events
+  | ($events | map(select(.type=="message" and .source=="system") | .payload.text) | join("\n\n")) as $system
+  | ($events | map(select(.source != "system"))) as $conv
+  | [ range(0; ($conv|length)) as $i | select($conv[$i].type=="message" and $conv[$i].source=="user") | $i ] as $uidx
+  | (if ($uidx | length) > $window then $uidx[-$window] else ($uidx[0] // 0) end) as $start
+  | ($conv[$start:]) as $win
+  | (reduce $win[] as $e (
+        {messages: [], pending: []};
+        if $e.type == "tool_result" then
+          .pending += [{type:"tool_result", tool_use_id: $e.payload.tool_use_id, content: $e.payload.content, is_error: ($e.payload.is_error // false)}]
+        else
+          (if (.pending|length) > 0 then .messages += [{role:"user", content: .pending}] | .pending = [] else . end)
+          | if $e.type=="message" and $e.source=="user" then
+              .messages += [{role:"user", content: $e.payload.text}]
+            elif $e.type=="message" and $e.source=="assistant" then
+              .messages += [{role:"assistant", content: $e.payload.content}]
+            else . end
+        end
+      )
+      | (if (.pending|length) > 0 then .messages += [{role:"user", content: .pending}] else . end)
+      | .messages
+    ) as $messages
+  | {system: $system, messages: $messages}
+'

@@ -45,6 +45,25 @@ EMPTY=$(printf '' | "$DIR/shai-read"); RC=$?
 assert_eq "$EMPTY" "" "read: empty input → empty"
 assert_eq "$RC" "0" "read: empty input → exit 0"
 
+echo "Testing shai-context..."
+HIST='{"type":"message","source":"system","payload":{"text":"SYS"}}
+{"type":"message","source":"user","payload":{"text":"hi"}}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}}'
+CTX=$(printf '%s\n' "$HIST" | "$DIR/shai-context")
+assert_eq "$(printf '%s' "$CTX" | jq -r '.system')" "SYS" "context: system extraction"
+assert_eq "$(printf '%s' "$CTX" | jq -r '.messages[0].role')" "user" "context: first role user"
+assert_eq "$(printf '%s' "$CTX" | jq -r '.messages[0].content')" "hi" "context: user content"
+assert_eq "$(printf '%s' "$CTX" | jq -r '.messages[1].role')" "assistant" "context: assistant role"
+assert_eq "$(printf '%s' "$CTX" | jq -r '.messages[1].content[0].text')" "hello" "context: assistant blocks preserved"
+
+HIST2='{"type":"message","source":"user","payload":{"text":"read file"}}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t1","name":"print_file","input":{"path":"x"}}],"stop_reason":"tool_use"}}
+{"type":"tool_result","source":"tool","payload":{"tool_use_id":"t1","content":"FILEDATA","is_error":false}}'
+CTX2=$(printf '%s\n' "$HIST2" | "$DIR/shai-context")
+assert_eq "$(printf '%s' "$CTX2" | jq -r '.messages[2].content[0].type')" "tool_result" "context: tool_result folded"
+assert_eq "$(printf '%s' "$CTX2" | jq -r '.messages[2].content[0].tool_use_id')" "t1" "context: tool_use_id pairing"
+assert_eq "$(printf '%s' "$CTX2" | jq -r '.messages[2].role')" "user" "context: tool_result in user turn"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"
