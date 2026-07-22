@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+SOURCE="user"
+if [ "${1:-}" = "--system" ]; then
+  SOURCE="system"
+fi
+
+input=$(cat)
+if [ -z "$input" ]; then
+  exit 0
+fi
+
+printf '%s' "$input" | jq -c -Rs --arg source "$SOURCE" \
+  '{type: "message", source: $source, payload: {text: .}}'
