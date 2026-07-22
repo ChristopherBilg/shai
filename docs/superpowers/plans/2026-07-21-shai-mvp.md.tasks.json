@@ -1,0 +1,80 @@
+{
+  "planPath": "docs/superpowers/plans/2026-07-21-shai-mvp.md",
+  "tasks": [
+    {
+      "id": 1,
+      "subject": "Task 1: tools.json",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Define the four read-only tools in Anthropic's flat {name, description, input_schema} shape.\n\n**Files:**\n- Create: `tools.json`\n\n**Acceptance Criteria:**\n- Valid JSON array of length 4\n- Each entry has name, description, input_schema (no OpenAI function nesting)\n- Tools: gh_pr_view, gh_issue_view (number req, repo opt), list_directory, print_file (path req)\n\n**Verify:** `jq -e 'type==\"array\" and length==4' tools.json` -> true\n\n```json:metadata\n{\"files\": [\"tools.json\"], \"verifyCommand\": \"jq -e 'length==4' tools.json\", \"acceptanceCriteria\": [\"valid JSON array length 4\", \"flat Anthropic shape\", \"four read-only tools\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 2,
+      "subject": "Task 2: shai-read + test harness",
+      "status": "pending",
+      "blockedBy": [],
+      "description": "**Goal:** Wrap stdin into a message event, and establish the offline test harness (stubbed curl+gh) that later tasks extend.\n\n**Files:**\n- Create: `shai-read`\n- Create: `tests/tests.sh`\n\n**Acceptance Criteria:**\n- echo hi | ./shai-read -> {type:message, source:user, payload:{text:hi}}\n- --system sets source to system\n- Empty stdin -> no output, exit 0\n- tests/tests.sh runs fully offline (curl+gh stubs on PATH), non-zero on failure\n\n**Verify:** `./tests/tests.sh` -> read: assertions pass; final line ALL TESTS PASSED\n\n```json:metadata\n{\"files\": [\"shai-read\", \"tests/tests.sh\"], \"verifyCommand\": \"./tests/tests.sh\", \"acceptanceCriteria\": [\"message envelope with user source\", \"--system source\", \"empty input passthrough\", \"offline stubbed harness\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 3,
+      "subject": "Task 3: shai-context",
+      "status": "pending",
+      "blockedBy": [
+        2
+      ],
+      "description": "**Goal:** Reduce history JSONL to {system, messages} in Anthropic shape - pure jq, windowed on user-message boundaries, folding consecutive tool_result events into one user turn.\n\n**Files:**\n- Create: `shai-context`\n- Modify: `tests/tests.sh` (append context section)\n\n**Acceptance Criteria:**\n- system = all system-source message texts joined with \\n\\n\n- user -> {role:user,content:text}; assistant -> {role:assistant,content:<stored blocks>}\n- consecutive tool_result -> one user turn of tool_result blocks (tool_use_id, is_error) after the assistant turn\n- window keeps events from the last N user turns (default 10, --window N), starting on a user boundary\n- malformed lines skipped (try fromjson catch null)\n\n**Verify:** `./tests/tests.sh` -> context: assertions pass\n\n```json:metadata\n{\"files\": [\"shai-context\", \"tests/tests.sh\"], \"verifyCommand\": \"./tests/tests.sh\", \"acceptanceCriteria\": [\"system extraction\", \"user/assistant role mapping preserving blocks\", \"tool_result folding with tool_use_id\", \"user-boundary windowing\", \"malformed-line tolerance\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 4,
+      "subject": "Task 4: shai-eval",
+      "status": "pending",
+      "blockedBy": [
+        1,
+        3
+      ],
+      "description": "**Goal:** Build the request payload and call the Messages API (non-streaming), emitting one assistant event (or an error event).\n\n**Files:**\n- Create: `shai-eval`\n- Modify: `tests/tests.sh` (append eval section)\n\n**Acceptance Criteria:**\n- Payload {model,max_tokens,system,messages,tools?}; defaults claude-opus-4-8/16000; --tools adds tools.json; no thinking, no stream\n- --dry-run prints payload and exits; --health-check exits 1 iff ANTHROPIC_API_KEY unset\n- POST to https://api.anthropic.com/v1/messages with x-api-key + anthropic-version: 2023-06-01, curl --max-time 120\n- HTTP 200 -> assistant event {content,stop_reason}; non-2xx or .type==error -> error event\n\n**Verify:** `./tests/tests.sh` -> eval: assertions pass\n\n```json:metadata\n{\"files\": [\"shai-eval\", \"tests/tests.sh\"], \"verifyCommand\": \"./tests/tests.sh\", \"acceptanceCriteria\": [\"payload build + defaults\", \"dry-run + health-check\", \"correct endpoint/headers/timeout\", \"assistant vs error event parsing\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 5,
+      "subject": "Task 5: shai-dispatch",
+      "status": "pending",
+      "blockedBy": [
+        1,
+        4
+      ],
+      "description": "**Goal:** Run tool_use blocks from the latest assistant turn, emit truncated tool_result events, and signal the loop via exit code (1 = ran, 0 = none).\n\n**Files:**\n- Create: `shai-dispatch`\n- Modify: `tests/tests.sh` (append dispatch section)\n\n**Acceptance Criteria:**\n- No tool_use -> exit 0, no output\n- tool_use -> one tool_result per block (tool_use_id echoed), exit 1\n- gh wrapped in timeout 30s; output truncated to 8000 bytes\n- Tool failure / unknown tool -> tool_result with is_error:true\n\n**Verify:** `./tests/tests.sh` -> dispatch: assertions pass\n\n```json:metadata\n{\"files\": [\"shai-dispatch\", \"tests/tests.sh\"], \"verifyCommand\": \"./tests/tests.sh\", \"acceptanceCriteria\": [\"tool_use extraction\", \"read-only dispatch + timeout\", \"8KB truncation\", \"tool_use_id pairing + is_error\", \"exit-code loop contract\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 6,
+      "subject": "Task 6: shai-print",
+      "status": "pending",
+      "blockedBy": [
+        5
+      ],
+      "description": "**Goal:** Render events for humans - assistant text blocks and Error: lines; --debug also shows tool activity.\n\n**Files:**\n- Create: `shai-print`\n- Modify: `tests/tests.sh` (append print section)\n\n**Acceptance Criteria:**\n- Assistant event -> its text block(s)\n- error event -> Error: <text>\n- --debug shows tool_use/tool_result; default hides them\n\n**Verify:** `./tests/tests.sh` -> print: assertions pass\n\n```json:metadata\n{\"files\": [\"shai-print\", \"tests/tests.sh\"], \"verifyCommand\": \"./tests/tests.sh\", \"acceptanceCriteria\": [\"assistant text extraction\", \"error line formatting\", \"--debug mode\"], \"modelTier\": \"mechanical\"}\n```"
+    },
+    {
+      "id": 7,
+      "subject": "Task 7: shai (entry/REPL) + integration",
+      "status": "pending",
+      "blockedBy": [
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "description": "**Goal:** Wire the standalone filters into the read/eval/dispatch/print loop, with startup health-check, state init, and a seeded system prompt.\n\n**Files:**\n- Create: `shai`\n- Modify: `tests/tests.sh` (append integration section)\n\n**Acceptance Criteria:**\n- Startup runs shai-eval --health-check; creates ~/.shai/ (honoring SHAI_HOME); seeds a system message if history empty\n- One prompt drives read -> context -> eval -> print, then loops shai-dispatch while it exits 1\n- exit/quit ends the loop; events appended to history.jsonl\n\n**Verify:** `./tests/tests.sh` -> shai: integration assertions pass; ALL TESTS PASSED\n\n```json:metadata\n{\"files\": [\"shai\", \"tests/tests.sh\"], \"verifyCommand\": \"./tests/tests.sh\", \"acceptanceCriteria\": [\"startup health-check + init + seed\", \"read/eval/print pipeline\", \"dispatch loop via exit code\", \"exit/quit + history logging\"], \"modelTier\": \"standard\"}\n```"
+    },
+    {
+      "id": 8,
+      "subject": "Task 8: README.md",
+      "status": "pending",
+      "blockedBy": [
+        7
+      ],
+      "description": "**Goal:** Document setup and usage so a new user can run the MVP.\n\n**Files:**\n- Create: `README.md`\n\n**Acceptance Criteria:**\n- Setup: ANTHROPIC_API_KEY, gh auth login, jq/curl prereqs\n- Quick start via ./shai; a composable one-shot pipe example\n- Documents the read-only tool set and the append-only ~/.shai/history.jsonl model\n- Notes MVP scope + links the design spec\n\n**Verify:** `test -f README.md && grep -q 'ANTHROPIC_API_KEY' README.md && grep -q './shai' README.md` -> exit 0\n\n```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"test -f README.md && grep -q ANTHROPIC_API_KEY README.md && grep -q './shai' README.md\", \"acceptanceCriteria\": [\"setup steps\", \"quick start + pipe example\", \"tool set + history model\", \"scope + spec link\"], \"modelTier\": \"mechanical\"}\n```"
+    }
+  ],
+  "lastUpdated": "2026-07-21"
+}
