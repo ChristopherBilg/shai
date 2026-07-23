@@ -149,6 +149,19 @@ EV200SHAPE=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
 assert_contains "$EV200SHAPE" '"type":"error"' "eval: 200 unexpected shape → error event (not fake success)"
 rm -rf "$ESTUB"
 
+echo "Testing shai-dispatch..."
+NOTOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn"}}'
+echo "$NOTOOL" | "$DIR/shai-dispatch" >/dev/null; assert_eq "$?" "0" "dispatch: no-tool exit 0"
+TOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t1","name":"gh_pr_view","input":{"number":"123"}}],"stop_reason":"tool_use"}}'
+DOUT=$(echo "$TOOL" | "$DIR/shai-dispatch"); DRC=$?
+assert_eq "$DRC" "1" "dispatch: tool exit 1"
+assert_contains "$DOUT" '"type":"tool_result"' "dispatch: emits tool_result"
+assert_contains "$DOUT" '"tool_use_id":"t1"' "dispatch: tool_use_id echoed"
+assert_contains "$DOUT" 'stub gh output' "dispatch: ran stubbed gh"
+UNK='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t9","name":"nope","input":{}}],"stop_reason":"tool_use"}}'
+UOUT=$(echo "$UNK" | "$DIR/shai-dispatch") || true
+assert_contains "$UOUT" '"is_error":true' "dispatch: unknown tool → is_error"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"
