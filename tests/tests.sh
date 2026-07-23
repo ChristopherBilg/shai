@@ -162,6 +162,16 @@ UNK='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_
 UOUT=$(echo "$UNK" | "$DIR/shai-dispatch") || true
 assert_contains "$UOUT" '"is_error":true' "dispatch: unknown tool → is_error"
 
+# truncation path: output > 8000 bytes must still emit a tool_result (SIGPIPE-safe)
+BIGFILE=$(mktemp)
+head -c 20000 /dev/zero | tr '\0' 'x' > "$BIGFILE"
+BIGTOOL=$(jq -nc --arg p "$BIGFILE" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"tb",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
+BOUT=$(echo "$BIGTOOL" | "$DIR/shai-dispatch"); BRC=$?
+assert_eq "$BRC" "1" "dispatch: large output still exits 1 (no SIGPIPE crash)"
+assert_contains "$BOUT" '"type":"tool_result"' "dispatch: large output emits tool_result"
+assert_eq "$(printf '%s' "$BOUT" | jq -r '.payload.content | length')" "8000" "dispatch: output truncated to 8000 bytes"
+rm -f "$BIGFILE"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"

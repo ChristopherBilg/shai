@@ -25,7 +25,7 @@ while IFS=$'\t' read -r tool_id tool_name tool_input; do
   [ -z "$tool_id" ] && continue
   tool_calls=$((tool_calls + 1))
   if raw=$(run_tool "$tool_name" "$tool_input"); then is_error=false; else is_error=true; fi
-  output=$(printf '%s' "$raw" | head -c "$MAX_BYTES")
+  output=$(head -c "$MAX_BYTES" <<< "$raw")
   jq -nc --arg id "$tool_id" --arg content "$output" --argjson is_error "$is_error" \
     '{type:"tool_result", source:"tool", payload:{tool_use_id:$id, content:$content, is_error:$is_error}}'
 done < <(jq -r '
