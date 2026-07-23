@@ -1,0 +1,79 @@
+#!/bin/bash
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+MODEL="${SHAI_MODEL:-claude-opus-4-8}"
+MAX_TOKENS="16000"
+USE_TOOLS=false
+DRY_RUN=false
+HEALTH_CHECK=false
+API_URL="https://api.anthropic.com/v1/messages"
+TOOLS_FILE="$DIR/tools.json"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --tools) USE_TOOLS=true; shift ;;
+    --model) MODEL="$2"; shift 2 ;;
+    --max-tokens) MAX_TOKENS="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --health-check) HEALTH_CHECK=true; shift ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ "$HEALTH_CHECK" = true ]; then
+  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "error: ANTHROPIC_API_KEY is not set" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
+INPUT=$(cat)
+if [ -z "$(printf '%s' "$INPUT" | tr -d '[:space:]')" ]; then
+  exit 0
+fi
+
+TOOLS_JSON="[]"
+if [ "$USE_TOOLS" = true ]; then
+  TOOLS_JSON=$(cat "$TOOLS_FILE")
+fi
+
+PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
+  --arg model "$MODEL" \
+  --argjson max_tokens "$MAX_TOKENS" \
+  --argjson tools "$TOOLS_JSON" '
+  {model: $model, max_tokens: $max_tokens, system: .system, messages: .messages}
+  + (if ($tools | length) > 0 then {tools: $tools} else {} end)
+')
+
+if [ "$DRY_RUN" = true ]; then
+  printf '%s\n' "$PAYLOAD"
+  exit 0
+fi
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  jq -nc '{type:"error", source:"system", payload:{text:"ANTHROPIC_API_KEY is not set"}}'
+  exit 0
+fi
+
+RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' -X POST "$API_URL" \
+  -H "content-type: application/json" \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -d @-) || { jq -nc '{type:"error", source:"system", payload:{text:"request failed (curl)"}}'; exit 0; }
+
+HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -n1)
+BODY=$(printf '%s' "$RESPONSE" | sed '$d')
+
+if [ "$HTTP_CODE" != "200" ]; then
+  printf '%s' "$BODY" | jq -c --arg code "$HTTP_CODE" \
+    '{type:"error", source:"system", payload:{text: (.error.message // ("HTTP " + $code))}}'
+  exit 0
+fi
+
+printf '%s' "$BODY" | jq -c '
+  if .type == "error" then {type:"error", source:"system", payload:{text: .error.message}}
+  else {type:"message", source:"assistant", payload:{content: .content, stop_reason: .stop_reason}}
+  end
+'

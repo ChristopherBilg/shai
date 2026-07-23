@@ -84,6 +84,20 @@ CTXM=$(printf '%s\n' "$HISTM" | "$DIR/shai-context")
 assert_eq "$(printf '%s' "$CTXM" | jq -r '.messages[0].content')" "hi" "context: malformed + shape-bad lines skipped"
 assert_eq "$(printf '%s' "$CTXM" | jq '.messages | length')" "2" "context: only valid events reduced"
 
+echo "Testing shai-eval..."
+DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools)
+assert_contains "$DRY" '"model":"claude-opus-4-8"' "eval: default model"
+assert_contains "$DRY" '"max_tokens":16000' "eval: default max_tokens"
+assert_contains "$DRY" '"gh_pr_view"' "eval: tools.json included with --tools"
+NOTOOLS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
+assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tools without --tools"
+EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
+assert_contains "$EV" '"stop_reason":"end_turn"' "eval: stop_reason parsed"
+assert_contains "$EV" 'stub reply' "eval: content passed through"
+env -u ANTHROPIC_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null; assert_eq "$?" "1" "eval: health-check fails without key"
+"$DIR/shai-eval" --health-check; assert_eq "$?" "0" "eval: health-check ok with key"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"
