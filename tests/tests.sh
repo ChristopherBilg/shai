@@ -98,6 +98,39 @@ assert_contains "$EV" 'stub reply' "eval: content passed through"
 env -u ANTHROPIC_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null; assert_eq "$?" "1" "eval: health-check fails without key"
 "$DIR/shai-eval" --health-check; assert_eq "$?" "0" "eval: health-check ok with key"
 
+# error-path coverage: temporarily shadow curl with stubs returning non-200 / bad bodies
+ESTUB=$(mktemp -d)
+cat > "$ESTUB/curl" <<'EOF'
+#!/bin/bash
+cat > /dev/null
+echo '{"type":"error","error":{"message":"overloaded"}}'
+echo "529"
+EOF
+chmod +x "$ESTUB/curl"
+EVERR=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | PATH="$ESTUB:$PATH" "$DIR/shai-eval")
+assert_contains "$EVERR" '"type":"error"' "eval: non-200 JSON body → error event"
+assert_contains "$EVERR" 'overloaded' "eval: error message extracted"
+
+cat > "$ESTUB/curl" <<'EOF'
+#!/bin/bash
+cat > /dev/null
+echo '<html>502 Bad Gateway</html>'
+echo "502"
+EOF
+EVHTML=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | PATH="$ESTUB:$PATH" "$DIR/shai-eval")
+assert_contains "$EVHTML" '"type":"error"' "eval: non-200 non-JSON body → error event (no crash)"
+assert_contains "$EVHTML" 'HTTP 502' "eval: non-JSON error falls back to HTTP code"
+
+cat > "$ESTUB/curl" <<'EOF'
+#!/bin/bash
+cat > /dev/null
+echo '{"type":"error","error":{"message":"bad-200-body"}}'
+echo "200"
+EOF
+EV200=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | PATH="$ESTUB:$PATH" "$DIR/shai-eval")
+assert_contains "$EV200" '"type":"error"' "eval: 200 body with type=error → error event"
+rm -rf "$ESTUB"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"

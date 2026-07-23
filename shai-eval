@@ -67,13 +67,17 @@ HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -n1)
 BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 
 if [ "$HTTP_CODE" != "200" ]; then
-  printf '%s' "$BODY" | jq -c --arg code "$HTTP_CODE" \
-    '{type:"error", source:"system", payload:{text: (.error.message // ("HTTP " + $code))}}'
+  MSG=$(printf '%s' "$BODY" | jq -r '.error.message // empty' 2>/dev/null || true)
+  [ -z "$MSG" ] && MSG="HTTP $HTTP_CODE"
+  jq -nc --arg text "$MSG" '{type:"error", source:"system", payload:{text:$text}}'
   exit 0
 fi
 
-printf '%s' "$BODY" | jq -c '
+if OUT=$(printf '%s' "$BODY" | jq -c '
   if .type == "error" then {type:"error", source:"system", payload:{text: .error.message}}
   else {type:"message", source:"assistant", payload:{content: .content, stop_reason: .stop_reason}}
-  end
-'
+  end' 2>/dev/null); then
+  printf '%s\n' "$OUT"
+else
+  jq -nc '{type:"error", source:"system", payload:{text:"unparseable API response (HTTP 200)"}}'
+fi
