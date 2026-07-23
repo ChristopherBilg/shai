@@ -64,6 +64,26 @@ assert_eq "$(printf '%s' "$CTX2" | jq -r '.messages[2].content[0].type')" "tool_
 assert_eq "$(printf '%s' "$CTX2" | jq -r '.messages[2].content[0].tool_use_id')" "t1" "context: tool_use_id pairing"
 assert_eq "$(printf '%s' "$CTX2" | jq -r '.messages[2].role')" "user" "context: tool_result in user turn"
 
+HISTW='{"type":"message","source":"user","payload":{"text":"u1"}}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"a1"}],"stop_reason":"end_turn"}}
+{"type":"message","source":"user","payload":{"text":"u2"}}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"a2"}],"stop_reason":"end_turn"}}
+{"type":"message","source":"user","payload":{"text":"u3"}}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"a3"}],"stop_reason":"end_turn"}}'
+CTXW=$(printf '%s\n' "$HISTW" | "$DIR/shai-context" --window 1)
+assert_eq "$(printf '%s' "$CTXW" | jq '.messages | length')" "2" "context: --window 1 keeps last turn only"
+assert_eq "$(printf '%s' "$CTXW" | jq -r '.messages[0].content')" "u3" "context: --window 1 starts at last user turn"
+CTXZERO=$(printf '%s\n' "$HISTW" | "$DIR/shai-context" --window 0)
+assert_eq "$(printf '%s' "$CTXZERO" | jq '.messages | length')" "0" "context: --window 0 keeps no turns"
+
+HISTM='this is not json
+{"type":"message","source":"user","payload":{"text":"hi"}}
+{"type":"message","source":"user","payload":"shape-bad"}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}}'
+CTXM=$(printf '%s\n' "$HISTM" | "$DIR/shai-context")
+assert_eq "$(printf '%s' "$CTXM" | jq -r '.messages[0].content')" "hi" "context: malformed + shape-bad lines skipped"
+assert_eq "$(printf '%s' "$CTXM" | jq '.messages | length')" "2" "context: only valid events reduced"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"

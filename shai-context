@@ -11,13 +11,16 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-jq -R -s --argjson window "$WINDOW" '
+jq -R -s -c --argjson window "$WINDOW" '
   split("\n") | map(select(length > 0)) | map(try fromjson catch null) | map(select(. != null))
+  | map(select((type=="object") and ((.payload? | type) == "object")))
   | . as $events
   | ($events | map(select(.type=="message" and .source=="system") | .payload.text) | join("\n\n")) as $system
   | ($events | map(select(.source != "system"))) as $conv
   | [ range(0; ($conv|length)) as $i | select($conv[$i].type=="message" and $conv[$i].source=="user") | $i ] as $uidx
-  | (if ($uidx | length) > $window then $uidx[-$window] else ($uidx[0] // 0) end) as $start
+  # window <= 0 keeps no turns; interrupted tool calls can leave a dangling tool_use
+  # (no following tool_result) — the shai loop always dispatches, so recover by clearing history.
+  | (if $window <= 0 then ($conv | length) elif ($uidx | length) > $window then $uidx[-$window] else ($uidx[0] // 0) end) as $start
   | ($conv[$start:]) as $win
   | (reduce $win[] as $e (
         {messages: [], pending: []};
