@@ -129,6 +129,24 @@ echo "200"
 EOF
 EV200=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | PATH="$ESTUB:$PATH" "$DIR/shai-eval")
 assert_contains "$EV200" '"type":"error"' "eval: 200 body with type=error → error event"
+
+cat > "$ESTUB/curl" <<'EOF'
+#!/bin/bash
+cat > /dev/null
+echo 'totally not json'
+echo "200"
+EOF
+EV200BAD=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | PATH="$ESTUB:$PATH" "$DIR/shai-eval")
+assert_contains "$EV200BAD" '"type":"error"' "eval: 200 non-JSON body → error event (no crash)"
+
+cat > "$ESTUB/curl" <<'EOF'
+#!/bin/bash
+cat > /dev/null
+echo '{"foo":"bar"}'
+echo "200"
+EOF
+EV200SHAPE=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | PATH="$ESTUB:$PATH" "$DIR/shai-eval")
+assert_contains "$EV200SHAPE" '"type":"error"' "eval: 200 unexpected shape → error event (not fake success)"
 rm -rf "$ESTUB"
 
 # (later tasks append their sections above this footer)

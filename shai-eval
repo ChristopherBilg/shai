@@ -74,10 +74,11 @@ if [ "$HTTP_CODE" != "200" ]; then
 fi
 
 if OUT=$(printf '%s' "$BODY" | jq -c '
-  if .type == "error" then {type:"error", source:"system", payload:{text: .error.message}}
-  else {type:"message", source:"assistant", payload:{content: .content, stop_reason: .stop_reason}}
-  end' 2>/dev/null); then
+  if .type == "error" then {type:"error", source:"system", payload:{text: (.error.message // "unknown API error")}}
+  elif (.content | type) == "array" then {type:"message", source:"assistant", payload:{content: .content, stop_reason: .stop_reason}}
+  else error("unexpected response shape")
+  end' 2>/dev/null) && [ -n "$OUT" ]; then
   printf '%s\n' "$OUT"
 else
-  jq -nc '{type:"error", source:"system", payload:{text:"unparseable API response (HTTP 200)"}}'
+  jq -nc '{type:"error", source:"system", payload:{text:"unparseable or unexpected API response (HTTP 200)"}}'
 fi
