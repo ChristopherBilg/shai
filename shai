@@ -16,8 +16,8 @@ if [ ! -s "$HISTORY" ]; then
   printf '%s' "$SYSTEM_PROMPT" | "$DIR/shai-read" --system >> "$HISTORY"
 fi
 
-while true; do
-  read -r -p "> " line || break
+# `|| [ -n "$line" ]` keeps a final prompt that has no trailing newline (piped input)
+while read -r -p "> " line || [ -n "$line" ]; do
   case "$line" in
     "") continue ;;
     exit|quit) printf "Goodbye.\n"; break ;;
@@ -28,6 +28,7 @@ while true; do
   cat "$HISTORY" | "$DIR/shai-context" | "$DIR/shai-eval" --tools \
     | tee -a "$HISTORY" | tee "$LATEST" | "$DIR/shai-print"
 
+  # shai-dispatch exits 1 when a tool ran (re-evaluate) and 0 when the turn is done
   until cat "$LATEST" | "$DIR/shai-dispatch" >> "$HISTORY"; do
     cat "$HISTORY" | "$DIR/shai-context" | "$DIR/shai-eval" --tools \
       | tee -a "$HISTORY" | tee "$LATEST" | "$DIR/shai-print"

@@ -243,6 +243,13 @@ assert_contains "$H2" 'done summarizing' "shai: loop re-evaluates after tool and
 unset SHAI_ROUND_COUNT
 rm -rf "$SHAI_TMP2" "$CSTUB"
 
+# integration: a final prompt with NO trailing newline (piped) must still be processed
+SHAI_TMP3=$(mktemp -d)
+printf 'hi there' | SHAI_HOME="$SHAI_TMP3" "$DIR/shai" >/dev/null 2>&1
+H3=$(cat "$SHAI_TMP3/history.jsonl" 2>/dev/null || echo "")
+assert_contains "$H3" '"text":"hi there"' "shai: processes final line without trailing newline"
+rm -rf "$SHAI_TMP3"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"
