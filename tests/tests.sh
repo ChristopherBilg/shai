@@ -210,6 +210,15 @@ assert_eq "$(echo "$TOOL_RES" | "$DIR/shai-print")" "" "print: default hides too
 TRDEBUG=$(echo "$TOOL_RES" | "$DIR/shai-print" --debug)
 assert_contains "$TRDEBUG" '[tool_result:' "print: --debug shows tool_result"
 
+echo "Testing shai (integration)..."
+SHAI_TMP=$(mktemp -d)
+printf 'summarize PR 1\nexit\n' | SHAI_HOME="$SHAI_TMP" "$DIR/shai" >/dev/null 2>&1
+HIST_CONTENT=$(cat "$SHAI_TMP/history.jsonl" 2>/dev/null || echo "")
+assert_contains "$HIST_CONTENT" '"source":"system"' "shai: seeds system prompt"
+assert_contains "$HIST_CONTENT" '"source":"user"' "shai: logs user event"
+assert_contains "$HIST_CONTENT" '"source":"assistant"' "shai: logs assistant event"
+rm -rf "$SHAI_TMP"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"
