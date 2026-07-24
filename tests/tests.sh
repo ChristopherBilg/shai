@@ -201,6 +201,14 @@ POUT=$(echo "$NOTOOL" | "$DIR/shai-print")
 assert_eq "$POUT" "hi" "print: assistant text"
 EOUT=$(echo '{"type":"error","source":"system","payload":{"text":"boom"}}' | "$DIR/shai-print")
 assert_eq "$EOUT" "Error: boom" "print: error line"
+TOOL_MSG='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t1","name":"gh_pr_view","input":{"number":"123"}}],"stop_reason":"tool_use"}}'
+assert_eq "$(echo "$TOOL_MSG" | "$DIR/shai-print")" "" "print: default hides tool_use"
+TDEBUG=$(echo "$TOOL_MSG" | "$DIR/shai-print" --debug)
+assert_contains "$TDEBUG" '[tool_use: gh_pr_view' "print: --debug shows tool_use"
+TOOL_RES='{"type":"tool_result","source":"tool","payload":{"tool_use_id":"t1","content":"result data","is_error":false}}'
+assert_eq "$(echo "$TOOL_RES" | "$DIR/shai-print")" "" "print: default hides tool_result"
+TRDEBUG=$(echo "$TOOL_RES" | "$DIR/shai-print" --debug)
+assert_contains "$TRDEBUG" '[tool_result:' "print: --debug shows tool_result"
 
 # (later tasks append their sections above this footer)
 
