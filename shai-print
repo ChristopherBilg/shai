@@ -1,0 +1,16 @@
+#!/bin/bash
+set -euo pipefail
+
+DEBUG=false
+[ "${1:-}" = "--debug" ] && DEBUG=true
+
+jq -r --argjson debug "$DEBUG" '
+  if .type == "message" and .source == "assistant" then
+    (.payload.content[]? | select(.type=="text") | .text),
+    (if $debug then (.payload.content[]? | select(.type=="tool_use") | "[tool_use: \(.name) \(.input|@json)]") else empty end)
+  elif .type == "tool_result" and $debug then
+    "[tool_result: \(.payload.content)]"
+  elif .type == "error" then
+    "Error: \(.payload.text)"
+  else empty end
+'

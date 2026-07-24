@@ -196,6 +196,12 @@ INJ='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_
 IOUT=$(echo "$INJ" | "$DIR/shai-dispatch")
 assert_contains "$IOUT" 'stub gh output for: pr view -- --web' "dispatch: gh number is positional (-- guards option injection)"
 
+echo "Testing shai-print..."
+POUT=$(echo "$NOTOOL" | "$DIR/shai-print")
+assert_eq "$POUT" "hi" "print: assistant text"
+EOUT=$(echo '{"type":"error","source":"system","payload":{"text":"boom"}}' | "$DIR/shai-print")
+assert_eq "$EOUT" "Error: boom" "print: error line"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"
