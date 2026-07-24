@@ -4,21 +4,21 @@
     {
       "id": 1,
       "subject": "Task 1: tools.json",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** Define the four read-only tools in Anthropic's flat {name, description, input_schema} shape.\n\n**Files:**\n- Create: `tools.json`\n\n**Acceptance Criteria:**\n- Valid JSON array of length 4\n- Each entry has name, description, input_schema (no OpenAI function nesting)\n- Tools: gh_pr_view, gh_issue_view (number req, repo opt), list_directory, print_file (path req)\n\n**Verify:** `jq -e 'type==\"array\" and length==4' tools.json` -> true\n\n```json:metadata\n{\"files\": [\"tools.json\"], \"verifyCommand\": \"jq -e 'length==4' tools.json\", \"acceptanceCriteria\": [\"valid JSON array length 4\", \"flat Anthropic shape\", \"four read-only tools\"], \"modelTier\": \"mechanical\"}\n```"
     },
     {
       "id": 2,
       "subject": "Task 2: shai-read + test harness",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [],
       "description": "**Goal:** Wrap stdin into a message event, and establish the offline test harness (stubbed curl+gh) that later tasks extend.\n\n**Files:**\n- Create: `shai-read`\n- Create: `tests/tests.sh`\n\n**Acceptance Criteria:**\n- echo hi | ./shai-read -> {type:message, source:user, payload:{text:hi}}\n- --system sets source to system\n- Empty stdin -> no output, exit 0\n- tests/tests.sh runs fully offline (curl+gh stubs on PATH), non-zero on failure\n\n**Verify:** `./tests/tests.sh` -> read: assertions pass; final line ALL TESTS PASSED\n\n```json:metadata\n{\"files\": [\"shai-read\", \"tests/tests.sh\"], \"verifyCommand\": \"./tests/tests.sh\", \"acceptanceCriteria\": [\"message envelope with user source\", \"--system source\", \"empty input passthrough\", \"offline stubbed harness\"], \"modelTier\": \"standard\"}\n```"
     },
     {
       "id": 3,
       "subject": "Task 3: shai-context",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2
       ],
@@ -27,7 +27,7 @@
     {
       "id": 4,
       "subject": "Task 4: shai-eval",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1,
         3
@@ -37,7 +37,7 @@
     {
       "id": 5,
       "subject": "Task 5: shai-dispatch",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         1,
         4
@@ -47,7 +47,7 @@
     {
       "id": 6,
       "subject": "Task 6: shai-print",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         5
       ],
@@ -56,7 +56,7 @@
     {
       "id": 7,
       "subject": "Task 7: shai (entry/REPL) + integration",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         2,
         3,
@@ -69,12 +69,12 @@
     {
       "id": 8,
       "subject": "Task 8: README.md",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         7
       ],
       "description": "**Goal:** Document setup and usage so a new user can run the MVP.\n\n**Files:**\n- Create: `README.md`\n\n**Acceptance Criteria:**\n- Setup: ANTHROPIC_API_KEY, gh auth login, jq/curl prereqs\n- Quick start via ./shai; a composable one-shot pipe example\n- Documents the read-only tool set and the append-only ~/.shai/history.jsonl model\n- Notes MVP scope + links the design spec\n\n**Verify:** `test -f README.md && grep -q 'ANTHROPIC_API_KEY' README.md && grep -q './shai' README.md` -> exit 0\n\n```json:metadata\n{\"files\": [\"README.md\"], \"verifyCommand\": \"test -f README.md && grep -q ANTHROPIC_API_KEY README.md && grep -q './shai' README.md\", \"acceptanceCriteria\": [\"setup steps\", \"quick start + pipe example\", \"tool set + history model\", \"scope + spec link\"], \"modelTier\": \"mechanical\"}\n```"
     }
   ],
-  "lastUpdated": "2026-07-21"
+  "lastUpdated": "2026-07-24T16:57:43Z"
 }
