@@ -172,6 +172,30 @@ assert_contains "$BOUT" '"type":"tool_result"' "dispatch: large output emits too
 assert_eq "$(printf '%s' "$BOUT" | jq -r '.payload.content | length')" "8000" "dispatch: output truncated to 8000 bytes"
 rm -f "$BIGFILE"
 
+NTOUT=$(echo "$NOTOOL" | "$DIR/shai-dispatch")
+assert_eq "$NTOUT" "" "dispatch: no-tool produces no output"
+
+MULTI='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"m1","name":"list_directory","input":{"path":"."}},{"type":"tool_use","id":"m2","name":"print_file","input":{"path":"tools.json"}}],"stop_reason":"tool_use"}}'
+MOUT=$(echo "$MULTI" | "$DIR/shai-dispatch"); MRC=$?
+assert_eq "$MRC" "1" "dispatch: multiple tool_use → exit 1"
+assert_eq "$(printf '%s' "$MOUT" | jq -s 'length')" "2" "dispatch: multiple tool_use → two tool_results"
+assert_contains "$MOUT" '"tool_use_id":"m1"' "dispatch: first tool_use_id echoed"
+assert_contains "$MOUT" '"tool_use_id":"m2"' "dispatch: second tool_use_id echoed"
+
+# regression: backslash in a path must survive (no @tsv double-escaping)
+SPDIR=$(mktemp -d)
+BSNAME='a\b'
+printf 'PASSTHRU_OK' > "$SPDIR/$BSNAME"
+SPTOOL=$(jq -nc --arg p "$SPDIR/$BSNAME" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"sp",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
+SPOUT=$(echo "$SPTOOL" | "$DIR/shai-dispatch")
+assert_contains "$SPOUT" 'PASSTHRU_OK' "dispatch: backslash path survives input passthrough"
+rm -rf "$SPDIR"
+
+# regression: a model-supplied number like --web must be positional, not a gh flag
+INJ='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"inj","name":"gh_pr_view","input":{"number":"--web"}}],"stop_reason":"tool_use"}}'
+IOUT=$(echo "$INJ" | "$DIR/shai-dispatch")
+assert_contains "$IOUT" 'stub gh output for: pr view -- --web' "dispatch: gh number is positional (-- guards option injection)"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"
