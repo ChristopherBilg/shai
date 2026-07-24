@@ -25,7 +25,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 ```
 
 ## Tools (read-only)
-`gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file`. Defined in `tools.json` (Anthropic shape). Outputs are truncated to 8 KB before entering context.
+`gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file`. Defined in `tools.json` (Anthropic shape). Outputs are truncated to 8000 bytes before entering context.
 
 ## Tests
 ```shell
