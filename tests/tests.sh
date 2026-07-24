@@ -219,6 +219,30 @@ assert_contains "$HIST_CONTENT" '"source":"user"' "shai: logs user event"
 assert_contains "$HIST_CONTENT" '"source":"assistant"' "shai: logs assistant event"
 rm -rf "$SHAI_TMP"
 
+# integration: a tool-calling round-trip must drive the dispatch loop to completion
+SHAI_TMP2=$(mktemp -d)
+CSTUB=$(mktemp -d)
+export SHAI_ROUND_COUNT="$CSTUB/count"; echo 0 > "$SHAI_ROUND_COUNT"
+cat > "$CSTUB/curl" <<'EOF'
+#!/bin/bash
+cat > /dev/null
+n=$(cat "$SHAI_ROUND_COUNT"); echo $((n+1)) > "$SHAI_ROUND_COUNT"
+if [ "$n" = "0" ]; then
+  echo '{"type":"message","content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}'
+else
+  echo '{"type":"message","content":[{"type":"text","text":"done summarizing"}],"stop_reason":"end_turn"}'
+fi
+echo "200"
+EOF
+chmod +x "$CSTUB/curl"
+printf 'list the dir\nexit\n' | PATH="$CSTUB:$PATH" SHAI_HOME="$SHAI_TMP2" "$DIR/shai" >/dev/null 2>&1
+H2=$(cat "$SHAI_TMP2/history.jsonl" 2>/dev/null || echo "")
+assert_contains "$H2" '"type":"tool_use"' "shai: tool round-trip records tool_use"
+assert_contains "$H2" '"type":"tool_result"' "shai: tool round-trip records tool_result"
+assert_contains "$H2" 'done summarizing' "shai: loop re-evaluates after tool and finishes"
+unset SHAI_ROUND_COUNT
+rm -rf "$SHAI_TMP2" "$CSTUB"
+
 # (later tasks append their sections above this footer)
 
 rm -rf "$STUB"
