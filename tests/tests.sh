@@ -91,6 +91,10 @@ assert_contains "$DRY" '"max_tokens":16000' "eval: default max_tokens"
 assert_contains "$DRY" '"gh_pr_view"' "eval: tools.json included with --tools"
 NOTOOLS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
 assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tools without --tools"
+NOSYS=$(echo '{"system":"","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
+assert_eq "$(printf '%s' "$NOSYS" | jq 'has("system")')" "false" "eval: empty system omitted from payload"
+WITHSYS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
+assert_eq "$(printf '%s' "$WITHSYS" | jq -r '.system')" "S" "eval: non-empty system included"
 EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
 assert_contains "$EV" '"stop_reason":"end_turn"' "eval: stop_reason parsed"

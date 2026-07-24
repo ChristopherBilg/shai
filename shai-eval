@@ -43,7 +43,8 @@ PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
   --arg model "$MODEL" \
   --argjson max_tokens "$MAX_TOKENS" \
   --argjson tools "$TOOLS_JSON" '
-  {model: $model, max_tokens: $max_tokens, system: .system, messages: .messages}
+  {model: $model, max_tokens: $max_tokens, messages: .messages}
+  + (if ((.system // "") | length) > 0 then {system: .system} else {} end)
   + (if ($tools | length) > 0 then {tools: $tools} else {} end)
 ')
 
