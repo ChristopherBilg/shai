@@ -164,7 +164,7 @@ assert_contains "$UOUT" '"is_error":true' "dispatch: unknown tool → is_error"
 
 # truncation path: output > 8000 bytes must still emit a tool_result (SIGPIPE-safe)
 BIGFILE=$(mktemp)
-head -c 20000 /dev/zero | tr '\0' 'x' > "$BIGFILE"
+head -c 200000 /dev/zero | tr '\0' 'x' > "$BIGFILE"
 BIGTOOL=$(jq -nc --arg p "$BIGFILE" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"tb",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
 BOUT=$(echo "$BIGTOOL" | "$DIR/shai-dispatch"); BRC=$?
 assert_eq "$BRC" "1" "dispatch: large output still exits 1 (no SIGPIPE crash)"
