@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 MODEL="${SHAI_MODEL:-claude-opus-4-8}"
 MAX_TOKENS="16000"
 USE_TOOLS=false
@@ -12,12 +12,30 @@ TOOLS_FILE="$DIR/tools.json"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --tools) USE_TOOLS=true; shift ;;
-    --model) MODEL="$2"; shift 2 ;;
-    --max-tokens) MAX_TOKENS="$2"; shift 2 ;;
-    --dry-run) DRY_RUN=true; shift ;;
-    --health-check) HEALTH_CHECK=true; shift ;;
-    *) echo "Unknown option: $1" >&2; exit 2 ;;
+    --tools)
+      USE_TOOLS=true
+      shift
+      ;;
+    --model)
+      MODEL="$2"
+      shift 2
+      ;;
+    --max-tokens)
+      MAX_TOKENS="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --health-check)
+      HEALTH_CHECK=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 2
+      ;;
   esac
 done
 
@@ -62,7 +80,10 @@ RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' 
   -H "content-type: application/json" \
   -H "x-api-key: $ANTHROPIC_API_KEY" \
   -H "anthropic-version: 2023-06-01" \
-  -d @-) || { jq -nc '{type:"error", source:"system", payload:{text:"request failed (curl)"}}'; exit 0; }
+  -d @-) || {
+  jq -nc '{type:"error", source:"system", payload:{text:"request failed (curl)"}}'
+  exit 0
+}
 
 HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -n1)
 BODY=$(printf '%s' "$RESPONSE" | sed '$d')
