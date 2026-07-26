@@ -1,2 +1,5 @@
 # Downloaded, pinned lint tools (see tests/install-lint-tools.sh)
 bin/
+
+# Claude Code Superpowers Plugin Files
+docs/superpowers
