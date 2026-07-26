@@ -1,5 +1,7 @@
 # shai — AI assistant the Unix way
 
+[![CI](https://github.com/ChristopherBilg/shai/actions/workflows/ci.yml/badge.svg)](https://github.com/ChristopherBilg/shai/actions/workflows/ci.yml)
+
 Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl`, `jq`) over an append-only JSONL history, calling the Anthropic Claude API. A fresh build in the spirit of [llayer](https://github.com/ChristopherBilg/llayer).
 
 ## Requirements
@@ -29,8 +31,15 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 
 ## Tests
 ```shell
-./tests/tests.sh    # fully offline: curl + gh are stubbed
+./tests/run.sh          # all unit + integration suites, fully offline (curl + gh stubbed)
+./tests/conventions.sh  # project standards/hygiene checks
 ```
+Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (into `bin/`):
+```shell
+./bin/shellcheck shai shai-* tests/*.sh
+./bin/shfmt -d shai shai-* tests/*.sh
+```
+CI runs all of the above on every push and pull request.
 
 ## Scope
 This is an MVP. Design and deferred work (streaming, write tools + permission gate, concurrency, MCP, …) are documented in `docs/superpowers/specs/2026-07-21-shai-unix-ai-assistant-mvp-design.md`.
