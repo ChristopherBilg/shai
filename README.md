@@ -42,4 +42,4 @@ Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (
 CI runs all of the above on every push and pull request.
 
 ## Scope
-This is an MVP. Design and deferred work (streaming, write tools + permission gate, concurrency, MCP, …) are documented in `docs/superpowers/specs/2026-07-21-shai-unix-ai-assistant-mvp-design.md`.
+This is an MVP. Design and deferred work (streaming, write tools + permission gate, concurrency, MCP, …) are documented in `AI-Assistant-Unix-Philosophy-Design.md`.
