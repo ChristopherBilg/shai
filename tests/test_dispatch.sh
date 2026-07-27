@@ -1,4 +1,6 @@
 #!/bin/bash
+# test_dispatch.sh — unit tests for shai-dispatch
+# Covers: shai-dispatch — tool execution, truncation, exit codes, option-injection guarding
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

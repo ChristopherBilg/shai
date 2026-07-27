@@ -1,4 +1,6 @@
 #!/bin/bash
+# test_read.sh — unit tests for shai-read
+# Covers: shai-read — envelope shape, source selection, empty input, multi-line
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

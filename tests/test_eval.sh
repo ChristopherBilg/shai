@@ -1,4 +1,6 @@
 #!/bin/bash
+# test_eval.sh — unit tests for shai-eval
+# Covers: shai-eval — payload build, error-event invariants, dry-run, health-check
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

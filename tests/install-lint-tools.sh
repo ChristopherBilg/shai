@@ -1,6 +1,7 @@
 #!/bin/bash
 # Download pinned shellcheck + shfmt static binaries into ./bin, verified against
 # tests/lint-tools.sha256 (a trust-on-first-use lockfile). Used by CI and locally.
+# Usage: ./tests/install-lint-tools.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
 cd "$ROOT"

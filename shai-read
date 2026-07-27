@@ -1,4 +1,9 @@
 #!/bin/bash
+# shai-read — wrap raw stdin text into a message event
+# Usage: printf '%s' text | shai-read [--system]
+# Reads: raw text on stdin
+# Writes: one JSON message event (source user, or system with --system); empty in → empty out
+# Exit: 0 always
 set -euo pipefail
 
 SOURCE="user"

@@ -1,3 +1,5 @@
+# AI Assistant — Unix Philosophy Design
+
 > From: https://gemini.google.com/app/315bbbf29f13601f
 
 # you asked

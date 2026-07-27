@@ -1,3 +1,4 @@
+# .editorconfig — shared editor/formatter defaults (LF, UTF-8, 2-space indent)
 root = true
 
 [*]

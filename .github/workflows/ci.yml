@@ -1,3 +1,4 @@
+# ci.yml — CI pipeline: test suite, shellcheck, shfmt, conventions, and docs checks on push
 name: CI
 
 on: [push]

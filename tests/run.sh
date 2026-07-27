@@ -1,5 +1,6 @@
 #!/bin/bash
 # Test runner: run each tests/test_*.sh as an isolated subprocess, aggregate results.
+# Usage: ./tests/run.sh
 set -uo pipefail
 RUN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 

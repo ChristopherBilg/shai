@@ -1,4 +1,6 @@
 #!/bin/bash
+# test_shai.sh — integration tests for shai
+# Covers: shai — REPL wiring and the dispatch re-eval loop round-trip
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

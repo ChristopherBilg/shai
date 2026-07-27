@@ -1,6 +1,7 @@
 #!/bin/bash
 # Shared test helpers + offline stubs. Sourced by tests/test_*.sh.
 # No `set -e`: assertions must keep running after a failure.
+# Usage: source "$(dirname "${BASH_SOURCE[0]}")/lib.sh" from a test_*.sh
 set -uo pipefail
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
