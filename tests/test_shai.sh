@@ -75,10 +75,7 @@ SHAI_TMP_D="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP_D")
 CSTUB_D="$(mktemp -d)"
 _CLEANUP_DIRS+=("$CSTUB_D")
-export SHAI_ROUND_COUNT="$CSTUB_D/count"
-echo 0 >"$SHAI_ROUND_COUNT"
-printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"type":"message","content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}\nJSON\nelse\n  cat <<JSON\n{"type":"message","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}\nJSON\nfi\necho "200"\n' >"$CSTUB_D/curl"
-chmod +x "$CSTUB_D/curl"
+write_roundtrip_curl_stub "$CSTUB_D"
 DISPOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_D:$PATH" SHAI_HOME="$SHAI_TMP_D" "$DIR/shai" 2>/dev/null)
 assert_contains "$DISPOUT" "⏺ list_directory(path: .)" "shai: default REPL prints dispatch marker"
 unset SHAI_ROUND_COUNT
@@ -88,15 +85,22 @@ SHAI_TMP_Q="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP_Q")
 CSTUB_Q="$(mktemp -d)"
 _CLEANUP_DIRS+=("$CSTUB_Q")
-export SHAI_ROUND_COUNT="$CSTUB_Q/count"
-echo 0 >"$SHAI_ROUND_COUNT"
-printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"type":"message","content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}\nJSON\nelse\n  cat <<JSON\n{"type":"message","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}\nJSON\nfi\necho "200"\n' >"$CSTUB_Q/curl"
-chmod +x "$CSTUB_Q/curl"
+write_roundtrip_curl_stub "$CSTUB_Q"
 QUIETOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_Q:$PATH" SHAI_HOME="$SHAI_TMP_Q" "$DIR/shai" --quiet 2>/dev/null)
 assert_eq "$(grep -c '⏺' <<<"$QUIETOUT" || true)" "0" "shai: --quiet suppresses dispatch markers"
 QHIST=$(cat "$SHAI_TMP_Q/history.jsonl" 2>/dev/null || echo "")
 assert_contains "$QHIST" '"type":"tool_result"' "shai: --quiet still records the tool round-trip"
 assert_contains "$QHIST" '"type":"tool_use"' "shai: --quiet still records the tool_use"
+unset SHAI_ROUND_COUNT
+
+# new: the short -q flag suppresses dispatch markers just like --quiet
+SHAI_TMP_SQ="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_SQ")
+CSTUB_SQ="$(mktemp -d)"
+_CLEANUP_DIRS+=("$CSTUB_SQ")
+write_roundtrip_curl_stub "$CSTUB_SQ"
+SQOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_SQ:$PATH" SHAI_HOME="$SHAI_TMP_SQ" "$DIR/shai" -q 2>/dev/null)
+assert_eq "$(grep -c '⏺' <<<"$SQOUT" || true)" "0" "shai: -q suppresses dispatch markers (short form)"
 unset SHAI_ROUND_COUNT
 
 finish

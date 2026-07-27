@@ -79,6 +79,16 @@ write_gh_stub() {
   chmod +x "$STUB/gh"
 }
 
+# write_roundtrip_curl_stub <dir>: stateful curl stub for a full tool round-trip.
+# First call returns a list_directory tool_use, second returns end_turn text.
+# Exports SHAI_ROUND_COUNT (the counter file); callers unset it when done.
+write_roundtrip_curl_stub() {
+  export SHAI_ROUND_COUNT="$1/count"
+  echo 0 >"$SHAI_ROUND_COUNT"
+  printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"type":"message","content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}\nJSON\nelse\n  cat <<JSON\n{"type":"message","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}\nJSON\nfi\necho "200"\n' >"$1/curl"
+  chmod +x "$1/curl"
+}
+
 # finish: print summary and exit non-zero if any assertion failed.
 finish() {
   if [ "$FAILED" -eq 0 ]; then echo -e "  ${GREEN}PASS${NC}"; else echo -e "  ${RED}FAIL${NC}"; fi
