@@ -119,7 +119,12 @@ check_shell() {
       }
       ;;
   esac
-  [ "$bad" -eq 0 ] && ok "documented: $f"
+  # NOTE: never end this function on a bare `test && cmd` — under `set -e` a
+  # failing test would make check_shell return 1 and abort the whole run at the
+  # first bad file. Failures are recorded via the global `fail` (in note()); this
+  # function must always return 0 so main() can aggregate and print the banner.
+  if [ "$bad" -eq 0 ]; then ok "documented: $f"; fi
+  return 0
 }
 
 check_file() {

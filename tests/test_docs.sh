@@ -75,6 +75,30 @@ printf '[{"name":"t","description":"","input_schema":{"properties":{}}}]\n' >"$F
 printf 'just some notes\n' >"$FIX/notes.txt"
 printf 'deadbeef  shellcheck\n' >"$FIX/tests/lint-tools.sha256"
 
+cat >"$FIX/tests/test_bad.sh" <<'EOF'
+#!/bin/bash
+# test_bad.sh — a test file missing its Covers line
+set -uo pipefail
+EOF
+
+cat >"$FIX/tests/badinfra.sh" <<'EOF'
+#!/bin/bash
+# badinfra.sh — an infra script missing its Usage line
+set -uo pipefail
+EOF
+
+cat >"$FIX/documentation-thing" <<'EOF'
+#!/bin/bash
+# documentation-thing
+# Usage: documentation-thing
+# Reads: x
+# Writes: y
+# Exit: 0
+set -euo pipefail
+EOF
+
+printf '# conf.yaml — example .yaml variant for tests\nname: y\n' >"$FIX/conf.yaml"
+
 # run_docs <files...> : sets OUT and RC, running the checker inside $FIX
 run_docs() {
   OUT="$(cd "$FIX" && "$DIR/tests/docs.sh" "$@" 2>&1)"
@@ -132,5 +156,29 @@ assert_contains "$OUT" "exempt:" "exempt: prints exempt"
 run_docs good-run bad-run
 assert_eq "$RC" "1" "aggregate: one bad among many fails"
 assert_contains "$OUT" "documented: good-run" "aggregate: still reports the good one"
+
+run_docs tests/test_bad.sh
+assert_eq "$RC" "1" "test: missing Covers fails"
+assert_contains "$OUT" "Covers" "test: names the missing Covers field"
+
+run_docs tests/badinfra.sh
+assert_eq "$RC" "1" "infra: missing Usage fails"
+
+run_docs documentation-thing
+assert_eq "$RC" "1" "runtime: purpose equal to basename fails"
+
+run_docs conf.yaml
+assert_eq "$RC" "0" ".yaml variant passes"
+
+run_docs good-run
+assert_contains "$OUT" "DOCS OK" "banner: DOCS OK printed on all-pass"
+
+# Regression guard for the check_shell early-abort bug: the FAILING shell file
+# is listed FIRST, so a passing file after it proves aggregation continues and
+# the banner still prints.
+run_docs bad-run good-run
+assert_eq "$RC" "1" "aggregate: bad-first still fails"
+assert_contains "$OUT" "documented: good-run" "aggregate: examines files after a failing shell script"
+assert_contains "$OUT" "DOCS FAILED" "aggregate: prints the DOCS FAILED banner"
 
 finish
