@@ -79,7 +79,7 @@ The scripts:
   `--debug` surfaces verbose `tool_use`/`tool_result` lines. `--dispatches` surfaces only the
   tool calls, each as a tidy `⏺ name(args)` line (no results); `shai` passes it by default.
 
-**The re-eval loop** (in `shai:35`): the model may request tools → `shai-dispatch` runs them
+**The re-eval loop** (in `shai:41`): the model may request tools → `shai-dispatch` runs them
 and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the model sees the
 results → repeat until a turn ends with no tool call.
 

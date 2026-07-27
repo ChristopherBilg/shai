@@ -96,6 +96,7 @@ QUIETOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_Q:$PATH" SHAI_HOME="$SHA
 assert_eq "$(grep -c '⏺' <<<"$QUIETOUT" || true)" "0" "shai: --quiet suppresses dispatch markers"
 QHIST=$(cat "$SHAI_TMP_Q/history.jsonl" 2>/dev/null || echo "")
 assert_contains "$QHIST" '"type":"tool_result"' "shai: --quiet still records the tool round-trip"
+assert_contains "$QHIST" '"type":"tool_use"' "shai: --quiet still records the tool_use"
 unset SHAI_ROUND_COUNT
 
 finish
