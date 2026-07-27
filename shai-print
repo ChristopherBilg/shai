@@ -1,8 +1,8 @@
 #!/bin/bash
 # shai-print — render an event to human-readable text
-# Usage: cat event.json | shai-print [--debug]
+# Usage: cat event.json | shai-print [--debug|--dispatches]
 # Reads: one JSON event on stdin
-# Writes: formatted text to stdout; --debug also shows tool_use/tool_result lines
+# Writes: formatted text to stdout; --debug adds tool_use/tool_result lines, --dispatches adds "⏺ name(args)" tool-call lines
 # Exit: 0 for well-formed event input
 set -euo pipefail
 

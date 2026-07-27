@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_print.sh — unit tests for shai-print
-# Covers: shai-print — event rendering, --debug show/hide
+# Covers: shai-print — event rendering, --debug and --dispatches show/hide
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
