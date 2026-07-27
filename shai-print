@@ -8,6 +8,9 @@ case "${1:-}" in
   --dispatches) DISPATCHES=true ;;
 esac
 
+# --dispatches joins tool args as an unescaped "key: value, ..." string, so a value
+# containing ", " or ")" would read ambiguously. Fine for the current read-only tools,
+# whose inputs are all scalars (number, repo, path).
 jq -r --argjson debug "$DEBUG" --argjson dispatches "$DISPATCHES" '
   if .type == "message" and .source == "assistant" then
     (.payload.content[]? | select(.type=="text") | .text),
