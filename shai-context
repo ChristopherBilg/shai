@@ -3,7 +3,7 @@
 # Usage: cat history.jsonl | shai-context [--window N]
 # Reads: the JSONL event log on stdin
 # Writes: one JSON {system, messages} request object
-# Exit: 0 always
+# Exit: 0 normally; 1 if --window is given without a value
 set -euo pipefail
 
 WINDOW="10"
