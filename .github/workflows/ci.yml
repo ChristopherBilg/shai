@@ -1,3 +1,4 @@
+# ci.yml — CI pipeline: test suite, shellcheck, shfmt, conventions, and docs checks on push
 name: CI
 
 on: [push]
@@ -34,3 +35,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Project conventions
         run: ./tests/conventions.sh
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Documentation checks (fail-closed)
+        run: ./tests/docs.sh

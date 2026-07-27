@@ -1,4 +1,9 @@
 #!/bin/bash
+# shai — REPL/orchestrator: seed the system prompt, then run the eval+dispatch loop
+# Usage: shai [-q|--quiet]   (interactive; reads prompts until exit/quit/EOF)
+# Reads: interactive prompt lines on stdin (or piped input)
+# Writes: assistant turns via shai-print (tool dispatches shown by default; -q/--quiet hides them); appends events to $SHAI_HOME/history.jsonl
+# Exit: 0 on clean exit; 1 if ANTHROPIC_API_KEY is missing (health check)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"

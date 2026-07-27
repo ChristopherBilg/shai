@@ -1,4 +1,6 @@
 #!/bin/bash
+# test_context.sh — unit tests for shai-context
+# Covers: shai-context — windowing, system extraction, tool_result folding, request shape
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

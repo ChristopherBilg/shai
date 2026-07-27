@@ -1,5 +1,6 @@
 #!/bin/bash
 # Project standards/conventions checker. Run in CI and locally.
+# Usage: ./tests/conventions.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
 cd "$ROOT"

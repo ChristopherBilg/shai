@@ -1,4 +1,9 @@
 #!/bin/bash
+# shai-eval — the only network hop: call the Anthropic Messages API
+# Usage: cat request.json | shai-eval [--tools|--model M|--max-tokens N|--dry-run|--health-check]
+# Reads: a {system, messages} request JSON on stdin
+# Writes: one assistant event, or an error event (never crashes the loop); --dry-run prints payload
+# Exit: 0 always; --health-check exits 1 if ANTHROPIC_API_KEY missing; 2 on bad CLI args
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"

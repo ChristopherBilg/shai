@@ -101,6 +101,20 @@ results → repeat until a turn ends with no tool call.
   `.shellcheckrc`.
 - Formatting is 2-space indent with indented `case` branches; enforced by `shfmt` and
   `.editorconfig`.
+- **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
+  *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
+  undocumented **or of an unrecognized type**. Per type:
+  - **Runtime scripts** (`shai`, `shai-*`): a header block after the shebang with a purpose line
+    plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
+  - **Test files** (`tests/test_*.sh`): purpose line + `# Covers:`.
+  - **Infra scripts** (other `tests/*.sh`): purpose line + `# Usage:`.
+  - **YAML / dotfiles / Markdown**: a leading `#` purpose comment / an H1 title.
+  - **`tools.json`**: every tool and input property has a non-empty `description` (jq-checked).
+  - Only `tests/lint-tools.sha256` is exempt (generated, comment-hostile).
+
+  To add a new file type: add a classification branch and its check to `tests/docs.sh` (with a
+  fixture case in `tests/test_docs.sh`), or add the path to the checker's `EXEMPT` array with a
+  reason. Never silence the check by loosening a rule.
 
 ## Testing model
 
