@@ -56,8 +56,9 @@ The scripts:
 
 - **`shai`** — the REPL / orchestrator. Seeds the system prompt into empty history, reads a
   line, appends it as a user event, then runs `shai-context | shai-eval --tools`, `tee`ing
-  the result into `history.jsonl`, `latest.json`, and `shai-print`. It then loops
-  `shai-dispatch` until no tool ran (see the re-eval loop below).
+  the result into `history.jsonl`, `latest.json`, and `shai-print --dispatches` (the default,
+  so each tool call shows as a `⏺ name(args)` line; `./shai --quiet` / `-q` disables it). It
+  then loops `shai-dispatch` until no tool ran (see the re-eval loop below).
 - **`shai-read [--system]`** (`shai-read:1`) — wraps raw stdin text into a `message` event.
 - **`shai-context [--window N]`** (`shai-context:1`) — a pure `jq` reducer. Reads the whole
   JSONL log, extracts the system prompt, keeps the last `N` **user turns** (default 10;
@@ -74,8 +75,9 @@ The scripts:
   `tool_use` block via `run_tool`, and emits `tool_result` events. **Exit 1 if any tool
   ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool output is truncated to
   `MAX_BYTES=8000`.
-- **`shai-print [--debug]`** (`shai-print:1`) — renders an event to human text. `--debug`
-  also surfaces `tool_use`/`tool_result` lines.
+- **`shai-print [--debug|--dispatches]`** (`shai-print:1`) — renders an event to human text.
+  `--debug` surfaces verbose `tool_use`/`tool_result` lines. `--dispatches` surfaces only the
+  tool calls, each as a tidy `⏺ name(args)` line (no results); `shai` passes it by default.
 
 **The re-eval loop** (in `shai:35`): the model may request tools → `shai-dispatch` runs them
 and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the model sees the
