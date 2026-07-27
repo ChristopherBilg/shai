@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 HISTORY="$STATE_DIR/history.jsonl"
 LATEST="$STATE_DIR/latest.json"
@@ -13,24 +13,27 @@ mkdir -p "$STATE_DIR"
 [ -f "$HISTORY" ] || touch "$HISTORY"
 
 if [ ! -s "$HISTORY" ]; then
-  printf '%s' "$SYSTEM_PROMPT" | "$DIR/shai-read" --system >> "$HISTORY"
+  printf '%s' "$SYSTEM_PROMPT" | "$DIR/shai-read" --system >>"$HISTORY"
 fi
 
 # `|| [ -n "$line" ]` keeps a final prompt that has no trailing newline (piped input)
 while read -r -p "> " line || [ -n "$line" ]; do
   case "$line" in
     "") continue ;;
-    exit|quit) printf "Goodbye.\n"; break ;;
+    exit | quit)
+      printf "Goodbye.\n"
+      break
+      ;;
   esac
 
-  printf '%s\n' "$line" | "$DIR/shai-read" >> "$HISTORY"
+  printf '%s\n' "$line" | "$DIR/shai-read" >>"$HISTORY"
 
-  cat "$HISTORY" | "$DIR/shai-context" | "$DIR/shai-eval" --tools \
-    | tee -a "$HISTORY" | tee "$LATEST" | "$DIR/shai-print"
+  cat "$HISTORY" | "$DIR/shai-context" | "$DIR/shai-eval" --tools |
+    tee -a "$HISTORY" | tee "$LATEST" | "$DIR/shai-print"
 
   # shai-dispatch exits 1 when a tool ran (re-evaluate) and 0 when the turn is done
-  until cat "$LATEST" | "$DIR/shai-dispatch" >> "$HISTORY"; do
-    cat "$HISTORY" | "$DIR/shai-context" | "$DIR/shai-eval" --tools \
-      | tee -a "$HISTORY" | tee "$LATEST" | "$DIR/shai-print"
+  until cat "$LATEST" | "$DIR/shai-dispatch" >>"$HISTORY"; do
+    cat "$HISTORY" | "$DIR/shai-context" | "$DIR/shai-eval" --tools |
+      tee -a "$HISTORY" | tee "$LATEST" | "$DIR/shai-print"
   done
 done

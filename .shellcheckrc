@@ -1,0 +1,6 @@
+# Follow `source`d files (e.g. tests/lib.sh) when linting.
+external-sources=true
+# Disabled on purpose for this project:
+#   SC2016 - jq programs are single-quoted; the $vars inside are jq vars, not shell.
+#   SC2002 - the pipeline scripts use `cat file | filter` deliberately for readability.
+disable=SC2016,SC2002
