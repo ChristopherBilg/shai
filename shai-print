@@ -2,12 +2,17 @@
 set -euo pipefail
 
 DEBUG=false
-[ "${1:-}" = "--debug" ] && DEBUG=true
+DISPATCHES=false
+case "${1:-}" in
+  --debug) DEBUG=true ;;
+  --dispatches) DISPATCHES=true ;;
+esac
 
-jq -r --argjson debug "$DEBUG" '
+jq -r --argjson debug "$DEBUG" --argjson dispatches "$DISPATCHES" '
   if .type == "message" and .source == "assistant" then
     (.payload.content[]? | select(.type=="text") | .text),
-    (if $debug then (.payload.content[]? | select(.type=="tool_use") | "[tool_use: \(.name) \(.input|@json)]") else empty end)
+    (if $debug then (.payload.content[]? | select(.type=="tool_use") | "[tool_use: \(.name) \(.input|@json)]") else empty end),
+    (if $dispatches then (.payload.content[]? | select(.type=="tool_use") | "⏺ \(.name)(\((.input // {}) | to_entries | map("\(.key): \(.value)") | join(", ")))") else empty end)
   elif .type == "tool_result" and $debug then
     "[tool_result: \(.payload.content)]"
   elif .type == "error" then
