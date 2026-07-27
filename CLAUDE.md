@@ -102,20 +102,12 @@ results → repeat until a turn ends with no tool call.
 
 ## Testing model
 
-`tests/run.sh` runs each `tests/test_*.sh` in its own subprocess and aggregates. Suites source
-`tests/lib.sh`, which provides `assert_eq` / `assert_contains` / `assert_exit` and `finish`
-(sets the exit code). Tests are hermetic and offline: `make_stub_bin` prepends a temp dir to
-`PATH`, and `write_curl_stub` / `write_gh_stub` replace `curl`/`gh`; `ANTHROPIC_API_KEY` is set
-to a fake value. Do not add tests that hit the network.
+Tests are hermetic and offline (`curl`/`gh` stubbed, `ANTHROPIC_API_KEY` faked). Do not add
+tests that hit the network.
 
 Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
 `tests/install-lint-tools.sh` and checksum-verified against `tests/lint-tools.sha256`
 (trust-on-first-use).
-
-## CI
-
-`.github/workflows/ci.yml` runs four independent jobs on every push and PR — `test`,
-`shellcheck`, `shfmt`, `conventions` — all of which must pass.
 
 ## Design reference
 
