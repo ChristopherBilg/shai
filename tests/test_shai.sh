@@ -70,4 +70,32 @@ printf 'hello\nexit\n' | env -u ANTHROPIC_API_KEY SHAI_HOME="$SHAI_TMP3" "$DIR/s
 assert_exit 1 "shai: missing key aborts at health-check (exit 1)" -- bash -c 'printf "" | env -u ANTHROPIC_API_KEY SHAI_HOME="'"$SHAI_TMP3"'" "'"$DIR"'/shai"'
 assert_eq "$(test -s "$SHAI_TMP3/history.jsonl" && echo nonempty || echo empty)" "empty" "shai: no history written when health-check fails"
 
+# new: by default the REPL prints a "⏺ <tool>(<args>)" dispatch line for each tool call
+SHAI_TMP_D="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_D")
+CSTUB_D="$(mktemp -d)"
+_CLEANUP_DIRS+=("$CSTUB_D")
+export SHAI_ROUND_COUNT="$CSTUB_D/count"
+echo 0 >"$SHAI_ROUND_COUNT"
+printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"type":"message","content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}\nJSON\nelse\n  cat <<JSON\n{"type":"message","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}\nJSON\nfi\necho "200"\n' >"$CSTUB_D/curl"
+chmod +x "$CSTUB_D/curl"
+DISPOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_D:$PATH" SHAI_HOME="$SHAI_TMP_D" "$DIR/shai" 2>/dev/null)
+assert_contains "$DISPOUT" "⏺ list_directory(path: .)" "shai: default REPL prints dispatch marker"
+unset SHAI_ROUND_COUNT
+
+# new: --quiet suppresses dispatch markers, but the tool round-trip is still recorded
+SHAI_TMP_Q="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_Q")
+CSTUB_Q="$(mktemp -d)"
+_CLEANUP_DIRS+=("$CSTUB_Q")
+export SHAI_ROUND_COUNT="$CSTUB_Q/count"
+echo 0 >"$SHAI_ROUND_COUNT"
+printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"type":"message","content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}\nJSON\nelse\n  cat <<JSON\n{"type":"message","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}\nJSON\nfi\necho "200"\n' >"$CSTUB_Q/curl"
+chmod +x "$CSTUB_Q/curl"
+QUIETOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_Q:$PATH" SHAI_HOME="$SHAI_TMP_Q" "$DIR/shai" --quiet 2>/dev/null)
+assert_eq "$(grep -c '⏺' <<<"$QUIETOUT" || true)" "0" "shai: --quiet suppresses dispatch markers"
+QHIST=$(cat "$SHAI_TMP_Q/history.jsonl" 2>/dev/null || echo "")
+assert_contains "$QHIST" '"type":"tool_result"' "shai: --quiet still records the tool round-trip"
+unset SHAI_ROUND_COUNT
+
 finish
