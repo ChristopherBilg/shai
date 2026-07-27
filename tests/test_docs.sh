@@ -45,9 +45,9 @@ cat >"$FIX/misnamed-run" <<'EOF'
 #!/bin/bash
 # misnamed-run — usage does not name the script itself
 # Usage: run the thing somehow
-# Reads: x
-# Writes: y
-# Exit: 0
+# Reads: stdin
+# Writes: stdout
+# Exit: 0 ok
 set -euo pipefail
 EOF
 
@@ -91,9 +91,9 @@ cat >"$FIX/documentation-thing" <<'EOF'
 #!/bin/bash
 # documentation-thing
 # Usage: documentation-thing
-# Reads: x
-# Writes: y
-# Exit: 0
+# Reads: stdin
+# Writes: stdout
+# Exit: 0 ok
 set -euo pipefail
 EOF
 
@@ -120,6 +120,7 @@ assert_contains "$OUT" "purpose line" "runtime: names the purpose problem"
 
 run_docs misnamed-run
 assert_eq "$RC" "1" "runtime: Usage not naming the script fails"
+assert_contains "$OUT" "does not name" "runtime: Usage-not-naming failure is the reported reason"
 
 run_docs tests/test_good.sh
 assert_eq "$RC" "0" "test: compliant passes"
@@ -166,6 +167,7 @@ assert_eq "$RC" "1" "infra: missing Usage fails"
 
 run_docs documentation-thing
 assert_eq "$RC" "1" "runtime: purpose equal to basename fails"
+assert_contains "$OUT" "purpose line" "runtime: purpose-equals-basename failure is the reported reason"
 
 run_docs conf.yaml
 assert_eq "$RC" "0" ".yaml variant passes"

@@ -3,7 +3,7 @@
 # Usage: cat event.json | shai-print [--debug]
 # Reads: one JSON event on stdin
 # Writes: formatted text to stdout; --debug also shows tool_use/tool_result lines
-# Exit: 0 always
+# Exit: 0 for well-formed event input
 set -euo pipefail
 
 DEBUG=false
