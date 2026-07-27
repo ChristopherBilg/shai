@@ -72,4 +72,37 @@ printf 'hello\nexit\n' | env -u ANTHROPIC_API_KEY SHAI_HOME="$SHAI_TMP3" "$DIR/s
 assert_exit 1 "shai: missing key aborts at health-check (exit 1)" -- bash -c 'printf "" | env -u ANTHROPIC_API_KEY SHAI_HOME="'"$SHAI_TMP3"'" "'"$DIR"'/shai"'
 assert_eq "$(test -s "$SHAI_TMP3/history.jsonl" && echo nonempty || echo empty)" "empty" "shai: no history written when health-check fails"
 
+# new: by default the REPL prints a "⏺ <tool>(<args>)" dispatch line for each tool call
+SHAI_TMP_D="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_D")
+CSTUB_D="$(mktemp -d)"
+_CLEANUP_DIRS+=("$CSTUB_D")
+write_roundtrip_curl_stub "$CSTUB_D"
+DISPOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_D:$PATH" SHAI_HOME="$SHAI_TMP_D" "$DIR/shai" 2>/dev/null)
+assert_contains "$DISPOUT" "⏺ list_directory(path: .)" "shai: default REPL prints dispatch marker"
+unset SHAI_ROUND_COUNT
+
+# new: --quiet suppresses dispatch markers, but the tool round-trip is still recorded
+SHAI_TMP_Q="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_Q")
+CSTUB_Q="$(mktemp -d)"
+_CLEANUP_DIRS+=("$CSTUB_Q")
+write_roundtrip_curl_stub "$CSTUB_Q"
+QUIETOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_Q:$PATH" SHAI_HOME="$SHAI_TMP_Q" "$DIR/shai" --quiet 2>/dev/null)
+assert_eq "$(grep -c '⏺' <<<"$QUIETOUT" || true)" "0" "shai: --quiet suppresses dispatch markers"
+QHIST=$(cat "$SHAI_TMP_Q/history.jsonl" 2>/dev/null || echo "")
+assert_contains "$QHIST" '"type":"tool_result"' "shai: --quiet still records the tool round-trip"
+assert_contains "$QHIST" '"type":"tool_use"' "shai: --quiet still records the tool_use"
+unset SHAI_ROUND_COUNT
+
+# new: the short -q flag suppresses dispatch markers just like --quiet
+SHAI_TMP_SQ="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_SQ")
+CSTUB_SQ="$(mktemp -d)"
+_CLEANUP_DIRS+=("$CSTUB_SQ")
+write_roundtrip_curl_stub "$CSTUB_SQ"
+SQOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_SQ:$PATH" SHAI_HOME="$SHAI_TMP_SQ" "$DIR/shai" -q 2>/dev/null)
+assert_eq "$(grep -c '⏺' <<<"$SQOUT" || true)" "0" "shai: -q suppresses dispatch markers (short form)"
+unset SHAI_ROUND_COUNT
+
 finish

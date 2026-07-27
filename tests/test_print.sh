@@ -34,4 +34,23 @@ MIXOUT=$(echo "$MIX" | "$DIR/shai-print" --debug)
 assert_eq "$(printf '%s' "$MIXOUT" | head -n1)" "thinking" "print: --debug prints text before tool_use"
 assert_contains "$MIXOUT" '[tool_use: gh_pr_view' "print: --debug shows the tool_use annotation"
 
+# new: --dispatches renders tool_use as a tidy "⏺ name(args)" line
+DISP=$(echo "$TOOL_MSG" | "$DIR/shai-print" --dispatches)
+assert_eq "$DISP" "⏺ gh_pr_view(number: 123)" "print: --dispatches renders tool_use as marker line"
+
+# new: --dispatches still prints assistant text
+assert_eq "$(echo "$NOTOOL" | "$DIR/shai-print" --dispatches)" "hi" "print: --dispatches still prints assistant text"
+
+# new: --dispatches prints text before the marker in a mixed message
+MIXDISP=$(echo "$MIX" | "$DIR/shai-print" --dispatches)
+assert_eq "$(printf '%s' "$MIXDISP" | head -n1)" "thinking" "print: --dispatches prints text before the marker"
+assert_contains "$MIXDISP" "⏺ gh_pr_view(number: 1)" "print: --dispatches marker follows text"
+
+# new: --dispatches hides tool_result (results are never shown)
+assert_eq "$(echo "$TOOL_RES" | "$DIR/shai-print" --dispatches)" "" "print: --dispatches hides tool_result"
+
+# new: --dispatches handles empty tool input
+EMPTY_TOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t2","name":"list_directory","input":{}}],"stop_reason":"tool_use"}}'
+assert_eq "$(echo "$EMPTY_TOOL" | "$DIR/shai-print" --dispatches)" "⏺ list_directory()" "print: --dispatches handles empty input"
+
 finish
