@@ -17,10 +17,24 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --model)
+      [ "$#" -lt 2 ] && {
+        echo "error: --model requires a value" >&2
+        exit 2
+      }
       MODEL="$2"
       shift 2
       ;;
     --max-tokens)
+      [ "$#" -lt 2 ] && {
+        echo "error: --max-tokens requires a value" >&2
+        exit 2
+      }
+      case "$2" in
+        '' | 0* | *[!0-9]*)
+          echo "error: --max-tokens must be a positive integer" >&2
+          exit 2
+          ;;
+      esac
       MAX_TOKENS="$2"
       shift 2
       ;;

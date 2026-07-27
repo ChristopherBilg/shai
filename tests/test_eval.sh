@@ -68,6 +68,22 @@ assert_contains "$DRYOVR" '"max_tokens":42' "eval: --max-tokens override in payl
 # new: unknown option → exit 2
 assert_exit 2 "eval: unknown option exits 2" -- "$DIR/shai-eval" --bogus
 
+# new: value-taking options validate their argument (controlled exit 2, not a set -u/jq crash)
+MODELERR=$("$DIR/shai-eval" --model </dev/null 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: --model without value exits 2"
+assert_contains "$MODELERR" "--model requires a value" "eval: --model without value → clear message"
+
+MTNOVAL=$("$DIR/shai-eval" --max-tokens </dev/null 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: --max-tokens without value exits 2"
+assert_contains "$MTNOVAL" "--max-tokens requires a value" "eval: --max-tokens without value → clear message"
+
+MTBAD=$(echo '{"messages":[]}' | "$DIR/shai-eval" --dry-run --max-tokens abc 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: --max-tokens non-integer exits 2"
+assert_contains "$MTBAD" "--max-tokens must be a positive integer" "eval: --max-tokens non-integer → clear message"
+
 # new: empty stdin → exit 0, no output
 EEMPTY=$(printf '' | "$DIR/shai-eval")
 RC=$?
