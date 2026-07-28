@@ -1,6 +1,6 @@
 # shai — Design-vs-Implementation Gap Analysis
 
-_Working notes, generated 2026-07-27. **Not committed** — scratch reference, not part of the tracked repo._
+_Working notes, generated 2026-07-27; updated 2026-07-28 as the first three partials landed. Tracked in-repo._
 
 **Design reference:** `AI-Assistant-Unix-Philosophy-Design.md` (the origin Gemini conversation; uses `pa-*` naming, implemented as `shai-*`).
 **Method:** every concrete proposal in the design doc, classified against the current scripts (`shai`, `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-print`, `tools.json`).
@@ -19,26 +19,17 @@ _Working notes, generated 2026-07-27. **Not committed** — scratch reference, n
 - **Read-only tools** — `gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file` (`tools.json` + `run_tool` in `shai-dispatch`).
 - **Loop-safe error handling** — every API/curl/parse failure becomes an `error` event with exit 0; `error` events are dropped in `shai-context` so failures never contaminate future context. (One slice of the design's "Resumability & Error Handling".)
 - **Per-tool timeouts** — `timeout` wraps tool execution in `shai-dispatch`. (One slice of the design's concurrency "hard timeouts on network-bound tools".)
+- **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai:13`) teaches the convention. *(done 2026-07-28)*
+- **Always-on request observability** (design "Operational reality #2") — `shai-eval` best-effort dumps the exact finalized request to `$SHAI_HOME/last_request.json` before every real call. *(done 2026-07-28)*
+- **Resumability** (design "Operational reality #4") — `shai-retry` classifies the history tail and resumes an interrupted run (dispatch a dangling tool_use, or re-eval after an error / tool_result / user turn) without re-prompting. *(done 2026-07-28)*
 
 ---
 
 ## ⚠️ Partial — started, but not to the doc's spec
 
-- **Context-contamination defense** (design "Operational reality #3")
-  - Have: the system-prompt instruction to treat tool output as untrusted (`shai:13`).
-  - Missing: the doc's **XML boundary tagging** — `shai-read` does not wrap external input as `<external_data source="…">…</external_data>`, and tool results (from `shai-dispatch`) are not source-tagged.
-
-- **Pipeline observability** (design "Operational reality #2")
-  - Have: `shai-eval --dry-run` prints the exact payload **on demand**.
-  - Missing: the doc's **always-on** silent dump of every finalized request to a debug file (e.g. `~/.shai_debug/last_request.json`) for after-the-fact inspection.
-
-- **Model agnosticism** (design extensibility pillar #2)
-  - Have: `SHAI_MODEL` env var swaps the model (`shai-eval:10`).
+- **Model agnosticism** (design extensibility pillar #2) — *the lone remaining partial; a true multi-provider adapter is split into its own spec.*
+  - Have: `SHAI_MODEL` env var swaps the model (`shai-eval`).
   - Missing: it only swaps *Anthropic* models — `shai-eval` is hardwired to the Anthropic URL/headers/response shape. No adapter layer for Ollama / other providers.
-
-- **Resumability** (design "Operational reality #4")
-  - Have: loop-safe error events (see above).
-  - Missing: a `shai-retry` utility that detects an incomplete assistant turn in the log and resumes from it.
 
 ---
 
@@ -84,4 +75,4 @@ _Working notes, generated 2026-07-27. **Not committed** — scratch reference, n
 
 ## Note on scope
 
-`CLAUDE.md`'s "Deferred beyond the MVP" line names four headliners — **streaming, write tools + permission gate, concurrency, MCP**. The design doc's real surface is larger. The easy-to-overlook items are the **⚠️ partial** ones above (XML `<external_data>` tagging, always-on `last_request.json` observability, a true model-agnostic adapter): they *look* done but only the simplest slice exists.
+`CLAUDE.md`'s "Deferred beyond the MVP" line names four headliners — **streaming, write tools + permission gate, concurrency, MCP**. The design doc's real surface is larger. As of 2026-07-28, three former ⚠️ partials are ✅ done (XML `<external_data>` tagging, always-on `last_request.json` observability, `shai-retry` resumability); **model agnosticism** is the lone remaining partial, its true multi-provider adapter deferred to its own spec.
