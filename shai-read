@@ -43,7 +43,7 @@ if [ "$EXTERNAL" = true ]; then
   printf '%s' "$input" | jq -c -Rs --arg src "$EXT_SOURCE" '
     ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
     | (if ($s0 | length) > 0 then $s0 else "external" end) as $safe_src
-    | (gsub("</?external_data>?"; "[external_data]"; "i")) as $safe
+    | (gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")) as $safe
     | {type: "message", source: "user",
        payload: {text: ("<external_data source=\"" + $safe_src + "\">\n" + $safe + "\n</external_data>")}}'
 else

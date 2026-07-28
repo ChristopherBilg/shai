@@ -48,7 +48,7 @@ while IFS= read -r block; do
   jq -nc --arg id "$tool_id" --arg content "$output" --arg src "$tool_name" --argjson is_error "$is_error" '
     ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
     | (if ($s0 | length) > 0 then $s0 else "tool" end) as $safe_src
-    | ($content | gsub("</?external_data>?"; "[external_data]"; "i")) as $safe
+    | ($content | gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")) as $safe
     | {type:"tool_result", source:"tool",
        payload:{tool_use_id:$id,
                 content:("<external_data source=\"" + $safe_src + "\">\n" + $safe + "\n</external_data>"),
