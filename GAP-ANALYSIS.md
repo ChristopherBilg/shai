@@ -1,6 +1,7 @@
 # shai — Design-vs-Implementation Gap Analysis
 
-_Working notes, generated 2026-07-27; updated 2026-07-28 as the first three partials landed. Tracked in-repo._
+_Working notes, generated 2026-07-27; updated 2026-07-28 as the first three partials landed, then
+again to record the ordering constraints among the open items. Tracked in-repo._
 
 **Design reference:** `AI-Assistant-Unix-Philosophy-Design.md` (the origin Gemini conversation; uses `pa-*` naming, implemented as `shai-*`).
 **Method:** every concrete proposal in the design doc, classified against the current scripts (`shai`, `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-print`, `tools.json`).
@@ -35,28 +36,72 @@ _Working notes, generated 2026-07-27; updated 2026-07-28 as the first three part
 
 ## ❌ Not started — grouped by the design doc's sections
 
+> **This order is not a plan.** It mirrors the design doc's section order, which is the chronology
+> of a five-exchange conversation — it encodes no dependency or value judgement. See
+> [Ordering constraints](#ordering-constraints) for what actually has to precede what.
+
 ### Edge cases (§ "The Edge Cases")
-- **Token-aware context** — a real tokenizer (Python/Rust `tiktoken`-style) replacing turn-count truncation, to preserve system prompt + latest request while dropping least-relevant history.
-- **Streaming** — buffering mid-stream tool calls; streamed responses. (Current pipeline is fully buffered/non-streaming.)
+- **Token-aware context** — a real tokenizer (Python/Rust `tiktoken`-style) replacing turn-count truncation, to preserve system prompt + latest request while dropping least-relevant history. ⚑ *Conflicts with the zero-dependency rule — needs a decision, not just an implementation.*
+- **Streaming** — buffering mid-stream tool calls; streamed responses. (Current pipeline is fully buffered/non-streaming.) *Unconstrained, but the most invasive reshape of the pipeline: `shai-eval` stops emitting a single buffered event.*
 
 ### Architectural choices (§ 2nd exchange)
-- **Router topology** — a fast Haiku classifier that routes input to a mode-specific system prompt + tool subset, instead of one monolith prompt loading every tool every time.
+- **Router topology** — a fast Haiku classifier that routes input to a mode-specific system prompt + tool subset, instead of one monolith prompt loading every tool every time. *Unconstrained; its tool-subset logic needs rework if MCP lands afterward.*
 
 ### Extensibility (§ 3rd exchange)
-- **MCP** — stdio MCP servers discovered/attached dynamically instead of hardcoded `run_tool` cases.
-- **Input "translators"** — separate single-purpose scripts converting PDF / image / web page → markdown or base64 text before piping into `shai-read`.
-- **"Tee" middleware hooks** — the split-the-stream pattern exposed as a real extension point (local analytics DB, embeddings, RAG) grafted onto the pipeline without touching the core loop. (`shai` uses `tee` internally, but not as a user-facing hook.)
+- **MCP** — stdio MCP servers discovered/attached dynamically instead of hardcoded `run_tool` cases. ⚠️ **Must follow the permission gate** — see [Ordering constraints](#ordering-constraints).
+- **Input "translators"** — separate single-purpose scripts converting PDF / image / web page → markdown or base64 text before piping into `shai-read`. *Unconstrained; fully standalone.*
+- **"Tee" middleware hooks** — the split-the-stream pattern exposed as a real extension point (local analytics DB, embeddings, RAG) grafted onto the pipeline without touching the core loop. (`shai` uses `tee` internally, but not as a user-facing hook.) *Unconstrained; benefits from the envelope's `version` field but does not require it.*
 
 ### Operational realities (§ 4th exchange)
-- **Execution permission matrix + write tools** — the "`rm -rf` problem": read ops auto-approved; write/execute ops pause the pipeline, render the proposed command, and require `Y`/Enter via `/dev/tty`. Today every tool is read-only, so the gate does not exist yet.
+- **Execution permission matrix + write tools** — the "`rm -rf` problem": read ops auto-approved; write/execute ops pause the pipeline, render the proposed command, and require `Y`/Enter via `/dev/tty`. Today every tool is read-only, so the gate does not exist yet. ⚠️ **Gates MCP, and breaks `shai-retry` on arrival** — see [Ordering constraints](#ordering-constraints).
 
 ### Concurrency (§ 5th exchange — the entire section is open)
-- **Standard execution envelope** — wrap every payload in `{version, meta:{run_id, session_id, parent_span_id, span_id, timestamp, source}, payload}`.
-- **Partitioned storage** — replace the single global log with `sessions/<session_id>.jsonl` (finalized turns) + `runs/<run_id>.jsonl` (raw intermediate trace).
-- **Env-var context propagation** — `SHAI_SESSION_ID` / `SHAI_RUN_ID` / `SHAI_SCHEMA_VERSION` set at the root wrapper, inherited by child filters.
-- **`flock` atomic appends** — guard history writes against interleaving when payloads exceed `PIPE_BUF` (~4KB).
-- **Idempotent, non-destructive retries** — replay a failed run into a new `run_id`, only committing to the session log on full success.
-- **Process supervision** — run background/polling workflows under `systemd --user` / `launchd` / `supervisord` to avoid orphan/zombie processes.
+- **Standard execution envelope** — wrap every payload in `{version, meta:{run_id, session_id, parent_span_id, span_id, timestamp, source}, payload}`. **Requires env-var context propagation** (below) to populate `meta` across a multi-process pipeline; do the two together. Breaking change to all six scripts and every shape-asserting test.
+- **Partitioned storage** — replace the single global log with `sessions/<session_id>.jsonl` (finalized turns) + `runs/<run_id>.jsonl` (raw intermediate trace). **Requires the execution envelope** — the IDs to partition by come from its `meta` block.
+- **Env-var context propagation** — `SHAI_SESSION_ID` / `SHAI_RUN_ID` / `SHAI_SCHEMA_VERSION` set at the root wrapper, inherited by child filters. **Pair with, or precede, the execution envelope**; inert on its own.
+- **`flock` atomic appends** — guard history writes against interleaving when payloads exceed `PIPE_BUF` (~4KB). *Unconstrained — no `flock` exists anywhere in the tree today, and it applies as-is to the current single log.*
+- **Idempotent, non-destructive retries** — replay a failed run into a new `run_id`, only committing to the session log on full success. **Requires all three of** the envelope, partitioned storage, and env-var propagation. Distinct from the shipped `shai-retry`, which resumes *in place*.
+- **Process supervision** — run background/polling workflows under `systemd --user` / `launchd` / `supervisord` to avoid orphan/zombie processes. *Unconstrained within this list, but supervises nothing until a background workflow exists (e.g. the Outlook/Teams push→pull bridge below).*
+
+---
+
+## Ordering constraints
+
+Derived 2026-07-28 by checking each open item against the current scripts. **Only three of the
+thirteen open items have a hard technical predecessor**, and all three sit inside the concurrency
+block — it holds nearly all the real coupling. Two further items are constrained by safety rather
+than by build order. The remaining eight can be sequenced purely on value.
+
+### Hard dependencies
+
+| Item | Requires | Why |
+|---|---|---|
+| Standard execution envelope | Env-var context propagation | `meta.{run_id, session_id, parent_span_id, span_id}` cannot be populated across a five-process pipeline without inherited ambient context. Build the envelope alone and each filter mints its own `run_id`. |
+| Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. |
+| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. |
+
+The written order satisfies the second and third of these and gets the first **backwards** —
+env-var propagation is listed two slots *after* the envelope that needs it.
+
+### Safety inversions
+
+- **MCP must not precede the permission gate.** The only thing making the absent gate safe today is
+  the all-tools-are-read-only invariant (`tools.json`: `gh_pr_view`, `gh_issue_view`,
+  `list_directory`, `print_file`). MCP attaches arbitrary third-party stdio servers whose tools are
+  not read-only, which destroys that invariant. Shipping MCP first opens a window where shai
+  executes third-party write/exec tools with no approval prompt. The written order puts MCP three
+  slots ahead of the gate.
+- **Write tools break the shipped `shai-retry`.** `shai-retry:49` re-dispatches a dangling
+  `tool_use` with no idempotency check — harmless while every tool is read-only, but with write
+  tools it re-executes a write that may already have partially run. The permission-gate item
+  therefore needs *either* idempotent non-destructive retries first, *or* a dispatch-side replay
+  guard of its own.
+
+### Constraint conflict (not an ordering problem)
+
+**Token-aware context** requires a real tokenizer, which breaks the project's stated
+zero-dependency rule (`bash`, `curl`, `jq`, plus `gh` for the GitHub tools). Settle that decision
+before the item is scheduled.
 
 ---
 
