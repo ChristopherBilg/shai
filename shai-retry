@@ -3,7 +3,7 @@
 # Usage: shai-retry [-q|--quiet]
 # Reads: nothing on stdin; operates on $SHAI_HOME state (history.jsonl, latest.json)
 # Writes: appends assistant/tool_result events to history.jsonl; prints turns via shai-print
-# Exit: 0 (including "nothing to resume"); 1 if ANTHROPIC_API_KEY is missing (health check)
+# Exit: 0 on success or when there's nothing to resume; 1 if a resume is needed but ANTHROPIC_API_KEY is missing
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -15,8 +15,6 @@ PRINT_OPTS=(--dispatches)
 case "${1:-}" in
   -q | --quiet) PRINT_OPTS=() ;;
 esac
-
-"$DIR/shai-eval" --health-check || exit 1
 
 if [ ! -s "$HISTORY" ]; then
   printf 'nothing to resume\n'
@@ -38,11 +36,15 @@ CLASS=$(tail -n 1 "$HISTORY" | jq -r '
   else "DONE" end
 ' 2>/dev/null || printf 'DONE')
 
+if [ "$CLASS" = "DONE" ]; then
+  printf 'nothing to resume\n'
+  exit 0
+fi
+
+# a resume makes a live model call, so require the key only once we know there is work
+"$DIR/shai-eval" --health-check || exit 1
+
 case "$CLASS" in
-  DONE)
-    printf 'nothing to resume\n'
-    exit 0
-    ;;
   DISPATCH)
     tail -n 1 "$HISTORY" >"$LATEST"
     ;;
