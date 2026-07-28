@@ -7,6 +7,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-eval"
 
+# isolate SHAI_HOME so the always-on request dump never writes to a real ~/.shai
+SHAI_HOME_TMP="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_HOME_TMP")
+export SHAI_HOME="$SHAI_HOME_TMP"
+
 # --- ported from tests/tests.sh:87-154: dry-run payload shape (no curl involved) ---
 DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools)
 assert_contains "$DRY" '"model":"claude-opus-4-8"' "eval: default model"
@@ -31,6 +36,12 @@ EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/s
 assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
 assert_contains "$EV" '"stop_reason":"end_turn"' "eval: stop_reason parsed"
 assert_contains "$EV" 'stub reply' "eval: content passed through"
+
+# a real call dumps the exact request payload
+assert_eq "$(test -f "$SHAI_HOME/last_request.json" && echo yes || echo no)" "yes" "eval: real call writes last_request.json"
+LASTREQ=$(cat "$SHAI_HOME/last_request.json")
+assert_contains "$LASTREQ" '"model":"claude-opus-4-8"' "eval: last_request.json holds the model"
+assert_contains "$LASTREQ" '"system":"S"' "eval: last_request.json holds the system"
 
 env -u ANTHROPIC_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
 assert_eq "$?" "1" "eval: health-check fails without key"
@@ -99,5 +110,27 @@ chmod +x "$STUB/curl"
 EVCURLFAIL=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_contains "$EVCURLFAIL" '"type":"error"' "eval: curl hard-failure → error event"
 assert_contains "$EVCURLFAIL" 'request failed (curl)' "eval: curl-failure message"
+
+# --dry-run writes no dump (fresh home)
+DRYHOME="$(mktemp -d)"
+_CLEANUP_DIRS+=("$DRYHOME")
+echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_HOME="$DRYHOME" "$DIR/shai-eval" --dry-run >/dev/null
+assert_eq "$(test -f "$DRYHOME/last_request.json" && echo yes || echo no)" "no" "eval: --dry-run writes no debug dump"
+
+# --health-check writes no dump (fresh home)
+HCHOME="$(mktemp -d)"
+_CLEANUP_DIRS+=("$HCHOME")
+SHAI_HOME="$HCHOME" "$DIR/shai-eval" --health-check
+assert_eq "$(test -f "$HCHOME/last_request.json" && echo yes || echo no)" "no" "eval: --health-check writes no debug dump"
+
+# an unwritable SHAI_HOME must not break the call (best-effort dump)
+make_stub_bin
+printf '%s' '{"type":"message","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}' | write_curl_stub 200
+UNWRITABLE="$(mktemp)" # a regular file — mkdir -p over it fails
+_CLEANUP_DIRS+=("$UNWRITABLE")
+EVUW=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_HOME="$UNWRITABLE" "$DIR/shai-eval")
+RC=$?
+assert_contains "$EVUW" '"source":"assistant"' "eval: unwritable SHAI_HOME still returns assistant event"
+assert_eq "$RC" "0" "eval: unwritable SHAI_HOME still exits 0"
 
 finish
