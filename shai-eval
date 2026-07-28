@@ -2,11 +2,13 @@
 # shai-eval — the only network hop: call the Anthropic Messages API
 # Usage: cat request.json | shai-eval [--tools|--model M|--max-tokens N|--dry-run|--health-check]
 # Reads: a {system, messages} request JSON on stdin
-# Writes: one assistant event, or an error event (never crashes the loop); --dry-run prints payload
+# Writes: one assistant/error event; on a real call, also dumps the request to
+#         $SHAI_HOME/last_request.json (best-effort); --dry-run prints payload
 # Exit: 0 always; --health-check exits 1 if ANTHROPIC_API_KEY missing; 2 on bad CLI args
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 MODEL="${SHAI_MODEL:-claude-opus-4-8}"
 MAX_TOKENS="16000"
 USE_TOOLS=false
@@ -94,6 +96,9 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   jq -nc '{type:"error", source:"system", payload:{text:"ANTHROPIC_API_KEY is not set"}}'
   exit 0
 fi
+
+# best-effort observability: dump the exact request we're about to send (never fail the loop)
+{ mkdir -p "$STATE_DIR" && printf '%s\n' "$PAYLOAD" >"$STATE_DIR/last_request.json"; } 2>/dev/null || true
 
 RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' -X POST "$API_URL" \
   -H "content-type: application/json" \

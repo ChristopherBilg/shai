@@ -1,0 +1,59 @@
+#!/bin/bash
+# shai-retry — resume an interrupted run from the append-only log (no re-prompt)
+# Usage: shai-retry [-q|--quiet]
+# Reads: nothing on stdin; operates on $SHAI_HOME state (history.jsonl, latest.json)
+# Writes: appends assistant/tool_result events to history.jsonl; prints turns via shai-print
+# Exit: 0 on success or when there's nothing to resume; 1 if a resume is needed but ANTHROPIC_API_KEY is missing
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+HISTORY="$STATE_DIR/history.jsonl"
+LATEST="$STATE_DIR/latest.json"
+
+PRINT_OPTS=(--dispatches)
+case "${1:-}" in
+  -q | --quiet) PRINT_OPTS=() ;;
+esac
+
+if [ ! -s "$HISTORY" ]; then
+  printf 'nothing to resume\n'
+  exit 0
+fi
+
+run_eval() {
+  cat "$HISTORY" | "$DIR/shai-context" | "$DIR/shai-eval" --tools |
+    tee -a "$HISTORY" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
+}
+
+# classify the true tail of history (latest.json is not updated by shai-dispatch)
+CLASS=$(tail -n 1 "$HISTORY" | jq -r '
+  if .type=="message" and .source=="assistant" then
+    (if ([.payload.content[]? | select(.type=="tool_use")] | length) > 0 then "DISPATCH" else "DONE" end)
+  elif .type=="error" then "EVAL"
+  elif .type=="tool_result" then "EVAL"
+  elif .type=="message" and .source=="user" then "EVAL"
+  else "DONE" end
+' 2>/dev/null || printf 'DONE')
+
+if [ "$CLASS" = "DONE" ]; then
+  printf 'nothing to resume\n'
+  exit 0
+fi
+
+# a resume makes a live model call, so require the key only once we know there is work
+"$DIR/shai-eval" --health-check || exit 1
+
+case "$CLASS" in
+  DISPATCH)
+    tail -n 1 "$HISTORY" >"$LATEST"
+    ;;
+  EVAL)
+    run_eval
+    ;;
+esac
+
+# drive the turn to completion: shai-dispatch exits 1 while a tool ran, 0 when the turn is done
+until cat "$LATEST" | "$DIR/shai-dispatch" >>"$HISTORY"; do
+  run_eval
+done
