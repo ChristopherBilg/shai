@@ -1,14 +1,37 @@
 #!/bin/bash
 # shai-read — wrap raw stdin text into a message event
-# Usage: printf '%s' text | shai-read [--system]
+# Usage: printf '%s' text | shai-read [--system|--external SOURCE]
 # Reads: raw text on stdin
-# Writes: one JSON message event (source user, or system with --system); empty in → empty out
-# Exit: 0 always
+# Writes: one JSON message event — user; system with --system; or a user message whose text is
+#         fenced in <external_data source="SOURCE"> with --external. Empty in → empty out.
+# Exit: 0 on success; 2 on bad flags (missing --external value, or --system + --external combined)
 set -euo pipefail
 
 SOURCE="user"
-if [ "${1:-}" = "--system" ]; then
-  SOURCE="system"
+EXTERNAL=false
+EXT_SOURCE=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --system)
+      SOURCE="system"
+      shift
+      ;;
+    --external)
+      [ "$#" -lt 2 ] && {
+        echo "error: --external requires a source value" >&2
+        exit 2
+      }
+      EXTERNAL=true
+      EXT_SOURCE="$2"
+      shift 2
+      ;;
+    *) break ;;
+  esac
+done
+
+if [ "$SOURCE" = "system" ] && [ "$EXTERNAL" = true ]; then
+  echo "error: --system and --external cannot be combined" >&2
+  exit 2
 fi
 
 input=$(cat)
@@ -16,5 +39,14 @@ if [ -z "$input" ]; then
   exit 0
 fi
 
-printf '%s' "$input" | jq -c -Rs --arg source "$SOURCE" \
-  '{type: "message", source: $source, payload: {text: .}}'
+if [ "$EXTERNAL" = true ]; then
+  printf '%s' "$input" | jq -c -Rs --arg src "$EXT_SOURCE" '
+    ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
+    | (if ($s0 | length) > 0 then $s0 else "external" end) as $safe_src
+    | (gsub("</?external_data>?"; "[external_data]"; "i")) as $safe
+    | {type: "message", source: "user",
+       payload: {text: ("<external_data source=\"" + $safe_src + "\">\n" + $safe + "\n</external_data>")}}'
+else
+  printf '%s' "$input" | jq -c -Rs --arg source "$SOURCE" \
+    '{type: "message", source: $source, payload: {text: .}}'
+fi
