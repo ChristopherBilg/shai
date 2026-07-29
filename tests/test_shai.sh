@@ -168,4 +168,19 @@ assert_eq "$BLOCKRC" "0" "shai: unwritable runs/ degrades, exit 0"
 BLOCKEVENTS=$(jq -r 'select(.type=="message" and .source=="assistant") | .type' "$BLOCKH/history.jsonl" | wc -l)
 assert_eq "$BLOCKEVENTS" "2" "shai: turn still fully recorded when runs/ is unwritable"
 
+# --- mkdir can succeed while the leaf is still unwritable (restrictive umask) ---
+UMH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$UMH")
+mkdir -p "$UMH/runs"
+printf '%s\n' '{"type":"message","source":"system","payload":{"text":"SYS"}}' >"$UMH/history.jsonl"
+: >"$UMH/latest.json" # pre-create writable: isolates the run-log path
+write_roundtrip_curl_stub "$STUB"
+(
+  umask 0222
+  printf 'what is in this dir?\nexit\n' | SHAI_HOME="$UMH" "$DIR/shai" >/dev/null 2>&1
+)
+unset SHAI_ROUND_COUNT
+UMEVENTS=$(jq -r 'select(.type=="message" and .source=="assistant") | .type' "$UMH/history.jsonl" | wc -l)
+assert_eq "$UMEVENTS" "2" "shai: turn survives when the run dir is created unwritable"
+
 finish
