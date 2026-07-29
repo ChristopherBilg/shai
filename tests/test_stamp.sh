@@ -68,4 +68,10 @@ assert_eq "$MULTI" "run_m" "stamp: every line in a multi-line stream stamped"
 NONL=$(printf '{"z":9}' | SHAI_RUN_ID=run_n "$DIR/shai-stamp" | jq -r '.meta.run_id')
 assert_eq "$NONL" "run_n" "stamp: final line without trailing newline processed"
 
+# --- 11. a reader that closes early must not make us exit non-zero ---
+printf '{"a":1}\n' | "$DIR/shai-stamp" | true
+assert_eq "${PIPESTATUS[1]}" "0" "stamp: SIGPIPE from a closed reader still exits 0"
+printf '{"a":1}\n' | "$DIR/shai-stamp" | false
+assert_eq "${PIPESTATUS[1]}" "0" "stamp: exit 0 even when the reader fails"
+
 finish
