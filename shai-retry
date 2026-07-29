@@ -34,18 +34,6 @@ SHAI_RUN_ID="$(mint_id run)"
 export SHAI_RUN_ID
 SPAN=0
 SHAI_SPAN_ID=""
-# best-effort: if the run dir can't be made (read-only / full / occupied $SHAI_HOME), trace to
-# /dev/null so the resume still completes. `mkdir` succeeding is NOT proof the target is writable
-# (restrictive umask, inherited perms, disk-full, SELinux), so probe the actual append — otherwise
-# the `>>"$RUN_LOG"` redirect fails and `set -e` aborts the resume.
-# The brace group is required: `: >>f 2>/dev/null` still prints, because bash applies redirections
-# left to right and the failing `>>` reports before `2>/dev/null` takes effect.
-if mkdir -p "$RUNS_DIR/$SHAI_RUN_ID" 2>/dev/null &&
-  { : >>"$RUNS_DIR/$SHAI_RUN_ID/events.jsonl"; } 2>/dev/null; then
-  RUN_LOG="$RUNS_DIR/$SHAI_RUN_ID/events.jsonl"
-else
-  RUN_LOG=/dev/null
-fi
 
 PRINT_OPTS=(--dispatches)
 case "${1:-}" in
@@ -76,6 +64,19 @@ CLASS=$(tail -n 1 "$HISTORY" | jq -r '
 if [ "$CLASS" = "DONE" ]; then
   printf 'nothing to resume\n'
   exit 0
+fi
+
+# best-effort: if the run dir can't be made (read-only / full / occupied $SHAI_HOME), trace to
+# /dev/null so the resume still completes. `mkdir` succeeding is NOT proof the target is writable
+# (restrictive umask, inherited perms, disk-full, SELinux), so probe the actual append — otherwise
+# the `>>"$RUN_LOG"` redirect fails and `set -e` aborts the resume.
+# The brace group is required: `: >>f 2>/dev/null` still prints, because bash applies redirections
+# left to right and the failing `>>` reports before `2>/dev/null` takes effect.
+if mkdir -p "$RUNS_DIR/$SHAI_RUN_ID" 2>/dev/null &&
+  { : >>"$RUNS_DIR/$SHAI_RUN_ID/events.jsonl"; } 2>/dev/null; then
+  RUN_LOG="$RUNS_DIR/$SHAI_RUN_ID/events.jsonl"
+else
+  RUN_LOG=/dev/null
 fi
 
 # a resume makes a live model call, so require the key only once we know there is work

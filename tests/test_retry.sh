@@ -133,4 +133,19 @@ RRUN=$(jq -r 'select(has("meta")) | .meta.run_id' "$RTH/history.jsonl" | head -n
 assert_eq "$([ -f "$RTH/runs/$RRUN/events.jsonl" ] && echo yes)" "yes" \
   "retry: runs/<new_run_id>/events.jsonl created"
 
+# --- a no-op resume must not create a run directory ---
+NOOPH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$NOOPH")
+SHAI_HOME="$NOOPH" "$DIR/shai-retry" >/dev/null 2>&1
+assert_eq "$(find "$NOOPH/runs" -mindepth 1 -type d 2>/dev/null | wc -l)" "0" "retry: empty history creates no run dir"
+
+DONEH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$DONEH")
+{
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
+  printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}'
+} >"$DONEH/history.jsonl"
+SHAI_HOME="$DONEH" "$DIR/shai-retry" >/dev/null 2>&1
+assert_eq "$(find "$DONEH/runs" -mindepth 1 -type d 2>/dev/null | wc -l)" "0" "retry: completed history creates no run dir"
+
 finish
