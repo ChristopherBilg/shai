@@ -3,6 +3,7 @@
 # Covers: env-var stamping, schema-version override, unset vars → nulls, discriminator and
 #         payload preservation, malformed/non-object passthrough, empty input, multi-line
 #         input, missing trailing newline, and the exit-0-always invariant.
+# shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-stamp"
