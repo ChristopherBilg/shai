@@ -1,0 +1,37 @@
+#!/bin/bash
+# shai-stamp — add the execution envelope (version + meta) to each event on stdin
+# Usage: cat events.jsonl | shai-stamp
+# Reads: one JSON event per line on stdin; ambient trace context from the environment
+#        (SHAI_SCHEMA_VERSION, SHAI_SESSION_ID, SHAI_RUN_ID, SHAI_SPAN_ID, SHAI_PARENT_SPAN_ID)
+# Writes: the same events, each with `version` and `meta` added; an unset variable becomes null.
+#         A line that is not a JSON object is passed through verbatim rather than dropped.
+# Exit: 0 always — this filter must never break the eval/dispatch loop
+set -euo pipefail
+
+VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
+# one timestamp per invocation: events emitted by a single pipeline stage share an instant
+TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+while IFS= read -r line || [ -n "$line" ]; do
+  [ -z "$line" ] && continue
+  if out=$(printf '%s' "$line" | jq -c \
+    --arg version "$VERSION" \
+    --arg run "${SHAI_RUN_ID:-}" \
+    --arg session "${SHAI_SESSION_ID:-}" \
+    --arg span "${SHAI_SPAN_ID:-}" \
+    --arg parent "${SHAI_PARENT_SPAN_ID:-}" \
+    --arg ts "$TIMESTAMP" '
+    def nullable: if . == "" then null else . end;
+    if type == "object" then
+      . + {version: $version,
+           meta: {run_id: ($run | nullable),
+                  session_id: ($session | nullable),
+                  span_id: ($span | nullable),
+                  parent_span_id: ($parent | nullable),
+                  timestamp: $ts}}
+    else error("not an object") end' 2>/dev/null) && [ -n "$out" ]; then
+    printf '%s\n' "$out"
+  else
+    printf '%s\n' "$line"
+  fi
+done
