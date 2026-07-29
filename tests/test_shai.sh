@@ -156,4 +156,16 @@ CTXOUT=$(cat "$ENVH/history.jsonl" | "$DIR/shai-context")
 assert_eq "$(printf '%s' "$CTXOUT" | jq 'has("meta") or has("version")')" "false" \
   "shai: shai-context leaks no meta/version into the API request"
 
+# --- an unwritable run dir must degrade, never abort the REPL ---
+BLOCKH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$BLOCKH")
+printf 'blocked' >"$BLOCKH/runs" # occupy the path so mkdir -p fails
+write_roundtrip_curl_stub "$STUB"
+printf 'what is in this dir?\nexit\n' | SHAI_HOME="$BLOCKH" "$DIR/shai" >/dev/null 2>&1
+BLOCKRC=$?
+unset SHAI_ROUND_COUNT
+assert_eq "$BLOCKRC" "0" "shai: unwritable runs/ degrades, exit 0"
+BLOCKEVENTS=$(jq -r 'select(.type=="message" and .source=="assistant") | .type' "$BLOCKH/history.jsonl" | wc -l)
+assert_eq "$BLOCKEVENTS" "2" "shai: turn still fully recorded when runs/ is unwritable"
+
 finish

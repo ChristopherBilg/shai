@@ -63,8 +63,15 @@ while read -r -p "> " line || [ -n "$line" ]; do
   export SHAI_RUN_ID
   SPAN=0
   SHAI_SPAN_ID=""
-  RUN_LOG="$RUNS_DIR/$SHAI_RUN_ID/events.jsonl"
-  mkdir -p "$RUNS_DIR/$SHAI_RUN_ID" 2>/dev/null || true
+  # best-effort: if the run dir can't be made (read-only / full / occupied $SHAI_HOME), trace to
+  # /dev/null so the turn still completes. The run log is observability, never a hard dependency.
+  # Guarding only `mkdir` is NOT enough — the later `>>"$RUN_LOG"` redirect would still fail and,
+  # under `set -e`, abort the REPL and lose the user's turn entirely.
+  if mkdir -p "$RUNS_DIR/$SHAI_RUN_ID" 2>/dev/null; then
+    RUN_LOG="$RUNS_DIR/$SHAI_RUN_ID/events.jsonl"
+  else
+    RUN_LOG=/dev/null
+  fi
   advance_span
 
   printf '%s\n' "$line" | "$DIR/shai-read" | "$DIR/shai-stamp" |
