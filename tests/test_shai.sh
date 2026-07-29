@@ -105,4 +105,55 @@ SQOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_SQ:$PATH" SHAI_HOME="$SHAI_
 assert_eq "$(grep -c '⏺' <<<"$SQOUT" || true)" "0" "shai: -q suppresses dispatch markers (short form)"
 unset SHAI_ROUND_COUNT
 
+# --- envelope + trace propagation ---------------------------------------------
+ENVH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$ENVH")
+write_roundtrip_curl_stub "$STUB"
+printf 'what is in this dir?\nexit\n' |
+  SHAI_HOME="$ENVH" SHAI_SESSION_ID=sess_inherited "$DIR/shai" >/dev/null 2>&1
+unset SHAI_ROUND_COUNT
+
+# an inherited session id must never be re-minted
+SESSIDS=$(jq -r '.meta.session_id' "$ENVH/history.jsonl" | sort -u)
+assert_eq "$SESSIDS" "sess_inherited" "shai: inherited SHAI_SESSION_ID honored verbatim"
+
+# every event carries the schema version, including the seeded system prompt
+UNVERSIONED=$(jq -r 'select(has("version") | not) | .type' "$ENVH/history.jsonl" | wc -l)
+assert_eq "$UNVERSIONED" "0" "shai: every event stamped with version"
+
+# the system prompt is seeded outside any turn: session yes, run/span no
+SYSRUN=$(jq -r 'select(.source=="system") | .meta.run_id' "$ENVH/history.jsonl")
+assert_eq "$SYSRUN" "null" "shai: seeded system prompt has null run_id"
+SYSSPAN=$(jq -r 'select(.source=="system") | .meta.span_id' "$ENVH/history.jsonl")
+assert_eq "$SYSSPAN" "null" "shai: seeded system prompt has null span_id"
+
+# one run per turn, and the turn's events share it
+RUNIDS=$(jq -r 'select(.source!="system") | .meta.run_id' "$ENVH/history.jsonl" | sort -u | wc -l)
+assert_eq "$RUNIDS" "1" "shai: one run_id per user turn"
+
+# a tool_result shares the span of the tool_use that requested it (dispatch runs in the
+# until CONDITION, which bash evaluates before the body advances the span)
+TRSPAN=$(jq -r 'select(.type=="tool_result") | .meta.span_id' "$ENVH/history.jsonl")
+assert_eq "$TRSPAN" "span_1" "shai: tool_result shares span_1 with its tool_use"
+
+# the re-eval opens span_2 and parents to span_1 — proof the dispatch signal survived stamping
+LASTSPAN=$(jq -r '[.[] | select(.type=="message" and .source=="assistant")] | .[-1] | .meta.span_id' \
+  <(jq -s '.' "$ENVH/history.jsonl"))
+assert_eq "$LASTSPAN" "span_2" "shai: re-eval advances to span_2 (dispatch exit-1 survived stamp)"
+LASTPARENT=$(jq -r '[.[] | select(.type=="message" and .source=="assistant")] | .[-1] | .meta.parent_span_id' \
+  <(jq -s '.' "$ENVH/history.jsonl"))
+assert_eq "$LASTPARENT" "span_1" "shai: span_2 parents to span_1"
+
+# the run log exists alongside an untouched global history
+RUNID=$(jq -r 'select(.type=="message" and .source=="user") | .meta.run_id' "$ENVH/history.jsonl")
+assert_eq "$([ -f "$ENVH/runs/$RUNID/events.jsonl" ] && echo yes)" "yes" \
+  "shai: runs/<run_id>/events.jsonl created"
+RUNEVENTS=$(wc -l <"$ENVH/runs/$RUNID/events.jsonl")
+assert_eq "$RUNEVENTS" "4" "shai: run log holds the turn's 4 events (user, asst, tool_result, asst)"
+
+# the envelope must never reach the API request
+CTXOUT=$(cat "$ENVH/history.jsonl" | "$DIR/shai-context")
+assert_eq "$(printf '%s' "$CTXOUT" | jq 'has("meta") or has("version")')" "false" \
+  "shai: shai-context leaks no meta/version into the API request"
+
 finish
