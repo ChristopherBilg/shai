@@ -1,9 +1,11 @@
 #!/bin/bash
 # shai-eval — the only network hop: call the Anthropic Messages API
 # Usage: cat request.json | shai-eval [--tools|--model M|--max-tokens N|--dry-run|--health-check]
-# Reads: a {system, messages} request JSON on stdin
+# Reads: a {system, messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
+#        environment to locate the per-span request dump
 # Writes: one assistant/error event; on a real call, also dumps the request to
-#         $SHAI_HOME/last_request.json (best-effort); --dry-run prints payload
+#         $SHAI_HOME/last_request.json and $SHAI_HOME/runs/<run_id>/<span_id>-request.json
+#         (both best-effort); --dry-run prints payload
 # Exit: 0 always; --health-check exits 1 if ANTHROPIC_API_KEY missing; 2 on bad CLI args
 set -euo pipefail
 
@@ -99,6 +101,13 @@ fi
 
 # best-effort observability: dump the exact request we're about to send (never fail the loop)
 { mkdir -p "$STATE_DIR" && printf '%s\n' "$PAYLOAD" >"$STATE_DIR/last_request.json"; } 2>/dev/null || true
+
+# per-span copy under the run dir so a multi-call turn keeps every request, not just the last
+if [ -n "${SHAI_RUN_ID:-}" ]; then
+  RUN_DIR="$STATE_DIR/runs/$SHAI_RUN_ID"
+  REQ_FILE="$RUN_DIR/${SHAI_SPAN_ID:-span_0}-request.json"
+  { mkdir -p "$RUN_DIR" && printf '%s\n' "$PAYLOAD" >"$REQ_FILE"; } 2>/dev/null || true
+fi
 
 RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' -X POST "$API_URL" \
   -H "content-type: application/json" \
