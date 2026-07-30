@@ -25,8 +25,10 @@ again to record the ordering constraints among the open items. Tracked in-repo._
 - **Resumability** (design "Operational reality #4") — `shai-retry` classifies the history tail and resumes an interrupted run (dispatch a dangling tool_use, or re-eval after an error / tool_result / user turn) without re-prompting. *(done 2026-07-28)*
 - **Standard execution envelope** (design concurrency §1) — every event carries
   `{version, meta:{run_id, session_id, span_id, parent_span_id, timestamp}}`, added by the
-  `shai-stamp` filter. Adopted **additively**: `type`/`source` stay top-level, so all four reader
-  filters and every existing test suite were untouched. *(done 2026-07-29)*
+  `shai-stamp` filter. Adopted **additively**: `type`/`source` stay top-level, so no reader
+  filter's selectors needed touching and no existing assertion broke — `shai-read`,
+  `shai-context`, `shai-dispatch`, and `shai-print` were left untouched entirely.
+  *(done 2026-07-29)*
 - **Env-var context propagation** (design concurrency §3) — `SHAI_SESSION_ID` / `SHAI_RUN_ID` /
   `SHAI_SPAN_ID` / `SHAI_PARENT_SPAN_ID` / `SHAI_SCHEMA_VERSION` minted at the root wrapper and
   inherited by child filters; an inherited session id always wins. *(done 2026-07-29)*
