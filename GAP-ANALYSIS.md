@@ -62,7 +62,7 @@ again to record the ordering constraints among the open items. Tracked in-repo._
 ### Operational realities (§ 4th exchange)
 - **Execution permission matrix + write tools** — the "`rm -rf` problem": read ops auto-approved; write/execute ops pause the pipeline, render the proposed command, and require `Y`/Enter via `/dev/tty`. Today every tool is read-only, so the gate does not exist yet. ⚠️ **Gates MCP, and breaks `shai-retry` on arrival** — see [Ordering constraints](#ordering-constraints).
 
-### Concurrency (§ 5th exchange — the entire section is open)
+### Concurrency (§ 5th exchange — 4 of 6 items still open)
 - **Partitioned storage** — the **run-log half is done**: `runs/<run_id>/events.jsonl` plus
   per-span request dumps, added alongside an untouched global `history.jsonl`. What remains is the
   breaking half: replacing the single global log with `sessions/<session_id>.jsonl`, and a
@@ -75,18 +75,19 @@ again to record the ordering constraints among the open items. Tracked in-repo._
 
 ## Ordering constraints
 
-Derived 2026-07-28 by checking each open item against the current scripts. **Only three of the
-thirteen open items have a hard technical predecessor**, and all three sit inside the concurrency
-block — it holds nearly all the real coupling. Two further items are constrained by safety rather
-than by build order. The remaining eight can be sequenced purely on value.
+Derived 2026-07-28 by checking each open item against the current scripts; **revised 2026-07-29**
+after the execution envelope and env-var propagation shipped. Of the **eleven** remaining open
+items, only **one** still has an unmet hard technical predecessor — *idempotent, non-destructive
+retries*, which awaits partitioned storage. Two further items are constrained by safety rather
+than by build order. The rest can be sequenced purely on value.
 
 ### Hard dependencies
 
-| Item | Requires | Why |
-|---|---|---|
-| Standard execution envelope | Env-var context propagation | `meta.{run_id, session_id, parent_span_id, span_id}` cannot be populated across a five-process pipeline without inherited ambient context. Build the envelope alone and each filter mints its own `run_id`. |
-| Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. |
-| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. |
+| Item | Requires | Why | Status |
+|---|---|---|---|
+| Standard execution envelope | Env-var context propagation | `meta.{run_id, session_id, parent_span_id, span_id}` cannot be populated across a five-process pipeline without inherited ambient context. Build the envelope alone and each filter mints its own `run_id`. | ✅ satisfied — both shipped 2026-07-29 |
+| Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. | ✅ predecessor shipped; only its session-log half remains |
+| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. | ⧗ still blocked on partitioned storage |
 
 **Resolved 2026-07-28.** Both were implemented together, propagation first. The envelope turned out
 **not** to be a "breaking change to all six scripts and every shape-asserting test" — that holds
