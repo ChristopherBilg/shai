@@ -1,7 +1,8 @@
 # shai — Design-vs-Implementation Gap Analysis
 
 _Working notes, generated 2026-07-27; updated 2026-07-28 as the first three partials landed, then
-again to record the ordering constraints among the open items. Tracked in-repo._
+again to record the ordering constraints among the open items; revised 2026-07-29 when the
+execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 **Design reference:** `AI-Assistant-Unix-Philosophy-Design.md` (the origin Gemini conversation; uses `pa-*` naming, implemented as `shai-*`).
 **Method:** every concrete proposal in the design doc, classified against the current scripts (`shai`, `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-print`, `tools.json`).
