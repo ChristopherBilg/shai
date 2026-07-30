@@ -26,10 +26,10 @@ again to record the ordering constraints among the open items. Tracked in-repo._
 - **Standard execution envelope** (design concurrency §1) — every event carries
   `{version, meta:{run_id, session_id, span_id, parent_span_id, timestamp}}`, added by the
   `shai-stamp` filter. Adopted **additively**: `type`/`source` stay top-level, so all four reader
-  filters and every existing test suite were untouched. *(done 2026-07-28)*
+  filters and every existing test suite were untouched. *(done 2026-07-29)*
 - **Env-var context propagation** (design concurrency §3) — `SHAI_SESSION_ID` / `SHAI_RUN_ID` /
   `SHAI_SPAN_ID` / `SHAI_PARENT_SPAN_ID` / `SHAI_SCHEMA_VERSION` minted at the root wrapper and
-  inherited by child filters; an inherited session id always wins. *(done 2026-07-28)*
+  inherited by child filters; an inherited session id always wins. *(done 2026-07-29)*
 
 ---
 
@@ -89,11 +89,14 @@ than by build order. The rest can be sequenced purely on value.
 | Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. | ✅ predecessor shipped; only its session-log half remains |
 | Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. | ⧗ still blocked on partitioned storage |
 
-**Resolved 2026-07-28.** Both were implemented together, propagation first. The envelope turned out
+**Resolved 2026-07-29.** Both were implemented together, propagation first. The envelope turned out
 **not** to be a "breaking change to all six scripts and every shape-asserting test" — that holds
 only for the doc's *literal* envelope. Measured before implementing: the four reader filters read
 only `.type`, `.source`, and `.payload.*`, and no test asserted exact object shape. An additive
-envelope therefore left five filters and all eight suites unmodified.
+envelope therefore required no change to any reader filter's selectors and broke no existing
+assertion — every edit to the four readers and the eight original suites was purely additive,
+and `shai-context`, `shai-dispatch`, `shai-print`, `shai-read`, and five of the eight suites
+were left untouched entirely.
 
 ### Safety inversions
 

@@ -39,7 +39,7 @@ by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its
 | Variable | Scope | Notes |
 |---|---|---|
 | `SHAI_SCHEMA_VERSION` | constant | defaults to `1.0` |
-| `SHAI_SESSION_ID` | one REPL launch | **an inherited value always wins** — an nvim/tmux/cron wrapper owns the session |
+| `SHAI_SESSION_ID` | one REPL launch (or one `shai-retry` invocation) | **an inherited value always wins** — an nvim/tmux/cron wrapper owns the session |
 | `SHAI_RUN_ID` | one user turn | minted per turn, not per launch |
 | `SHAI_SPAN_ID` | one eval iteration | plus the tool results that eval requested |
 | `SHAI_PARENT_SPAN_ID` | previous span | forms a linear chain within a run |
@@ -47,6 +47,8 @@ by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its
 Unset variables become explicit `null`s, so hand-run pipelines work with no ambient context.
 State gains `runs/<run_id>/events.jsonl` and `runs/<run_id>/<span_id>-request.json`;
 `history.jsonl` remains the single global log.
+A hand-run `shai-eval` with `SHAI_RUN_ID` set but no `SHAI_SPAN_ID` dumps to `span_0-request.json`
+(real spans start at `span_1`, so it can never collide).
 
 ## Architecture
 
@@ -104,8 +106,9 @@ The scripts:
   `--debug` surfaces verbose `tool_use`/`tool_result` lines. `--dispatches` surfaces only the
   tool calls, each as a tidy `⏺ name(args)` line (no results); `shai` passes it by default.
 - **`shai-stamp`** (`shai-stamp:1`) — adds the execution envelope (`version` + `meta`) to each
-  event on stdin, reading its context from the environment. The only script that reads the trace
-  env vars. **Invariant: it must never fail the pipeline or drop an event** — a line that is not a
+  event on stdin, reading its context from the environment. The only script that reads the *full*
+  trace context (`shai-eval` reads `SHAI_RUN_ID`/`SHAI_SPAN_ID` too, just for its dump path).
+  **Invariant: it must never fail the pipeline or drop an event** — a line that is not a
   JSON object is emitted verbatim, and it exits 0 always. `shai` inserts it at every write site.
 - **`shai-retry [-q|--quiet]`** (`shai-retry:1`) — resumes an interrupted run from
   `history.jsonl` with no re-prompt: classifies the tail (assistant+`tool_use` → dispatch;
