@@ -148,4 +148,14 @@ _CLEANUP_DIRS+=("$DONEH")
 SHAI_HOME="$DONEH" "$DIR/shai-retry" >/dev/null 2>&1
 assert_eq "$(find "$DONEH/runs" -mindepth 1 -type d 2>/dev/null | wc -l)" "0" "retry: completed history creates no run dir"
 
+# --- pending work but no API key must not create a run dir either ---
+NOKEYH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$NOKEYH")
+{
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
+  printf '%s\n' '{"type":"error","source":"system","payload":{"text":"boom"}}'
+} >"$NOKEYH/history.jsonl"
+env -u ANTHROPIC_API_KEY SHAI_HOME="$NOKEYH" "$DIR/shai-retry" >/dev/null 2>&1
+assert_eq "$(find "$NOKEYH/runs" -mindepth 1 -type d 2>/dev/null | wc -l)" "0" "retry: missing key creates no run dir"
+
 finish

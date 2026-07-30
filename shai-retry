@@ -66,6 +66,9 @@ if [ "$CLASS" = "DONE" ]; then
   exit 0
 fi
 
+# a resume makes a live model call, so require the key only once we know there is work
+"$DIR/shai-eval" --health-check || exit 1
+
 # best-effort: if the run dir can't be made (read-only / full / occupied $SHAI_HOME), trace to
 # /dev/null so the resume still completes. `mkdir` succeeding is NOT proof the target is writable
 # (restrictive umask, inherited perms, disk-full, SELinux), so probe the actual append — otherwise
@@ -78,9 +81,6 @@ if mkdir -p "$RUNS_DIR/$SHAI_RUN_ID" 2>/dev/null &&
 else
   RUN_LOG=/dev/null
 fi
-
-# a resume makes a live model call, so require the key only once we know there is work
-"$DIR/shai-eval" --health-check || exit 1
 
 case "$CLASS" in
   DISPATCH)
