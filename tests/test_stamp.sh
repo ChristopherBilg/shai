@@ -75,4 +75,20 @@ assert_eq "${PIPESTATUS[1]}" "0" "stamp: SIGPIPE from a closed reader still exit
 printf '{"a":1}\n' | "$DIR/shai-stamp" | false
 assert_eq "${PIPESTATUS[1]}" "0" "stamp: exit 0 even when the reader fails"
 
+# --- 12. a blank line is DELIBERATELY skipped, not passed through ---
+# The one exception to verbatim passthrough: a blank carries no event, and one reaching the tail
+# of history.jsonl would make shai-retry's classifier report "nothing to resume" for a resumable
+# run. Pinned here so the behavior stays deliberate rather than incidental.
+BLANKOUT=$(printf '{"a":1}\n\n{"b":2}\n' | SHAI_RUN_ID=run_blank "$DIR/shai-stamp")
+BLANKRC=$?
+assert_eq "$(printf '%s\n' "$BLANKOUT" | wc -l)" "2" "stamp: a blank line between events is skipped"
+assert_eq "$BLANKRC" "0" "stamp: a blank line still exits 0"
+assert_eq "$(printf '%s\n' "$BLANKOUT" | jq -r '.meta.run_id' | sort -u)" "run_blank" \
+  "stamp: the surrounding events are still stamped"
+assert_eq "$(printf '%s\n' "$BLANKOUT" | jq -sr '[.[].a, .[].b] | map(select(. != null)) | @tsv')" \
+  "$(printf '1\t2')" "stamp: skipping a blank drops neither neighbouring event"
+# whitespace-only is NOT blank: it is a non-empty non-object line, so it passes through verbatim
+WSOUT=$(printf '   \n' | "$DIR/shai-stamp")
+assert_eq "$WSOUT" "   " "stamp: a whitespace-only line passes through verbatim"
+
 finish

@@ -108,8 +108,11 @@ The scripts:
 - **`shai-stamp`** (`shai-stamp:1`) — adds the execution envelope (`version` + `meta`) to each
   event on stdin, reading its context from the environment. The only script that reads the *full*
   trace context (`shai-eval` reads `SHAI_RUN_ID`/`SHAI_SPAN_ID` too, just for its dump path).
-  **Invariant: it must never fail the pipeline or drop an event** — a line that is not a
+  **Invariant: it must never fail the pipeline or drop an event** — a non-empty line that is not a
   JSON object is emitted verbatim, and it exits 0 always. `shai` inserts it at every write site.
+  A **blank** line is the one deliberate exception: it is skipped, because it carries no event and
+  a blank reaching the tail of `history.jsonl` would make `shai-retry`'s classifier report
+  "nothing to resume" for a resumable run. No filter emits one, so this only guards hand-run input.
 - **`shai-retry [-q|--quiet]`** (`shai-retry:1`) — resumes an interrupted run from
   `history.jsonl` with no re-prompt: classifies the tail (assistant+`tool_use` → dispatch;
   `error`/`tool_result`/`user` → re-eval; complete or empty → no-op) and drives the same

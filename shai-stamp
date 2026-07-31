@@ -4,7 +4,8 @@
 # Reads: one JSON event per line on stdin; ambient trace context from the environment
 #        (SHAI_SCHEMA_VERSION, SHAI_SESSION_ID, SHAI_RUN_ID, SHAI_SPAN_ID, SHAI_PARENT_SPAN_ID)
 # Writes: the same events, each with `version` and `meta` added; an unset variable becomes null.
-#         A line that is not a JSON object is passed through verbatim rather than dropped.
+#         A non-empty line that is not a JSON object is passed through verbatim, never dropped.
+#         A blank line IS skipped — see the note at the read loop for why.
 # Exit: 0 always — this filter must never break the eval/dispatch loop
 set -euo pipefail
 
@@ -16,6 +17,11 @@ trap '' PIPE
 VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
 
 while IFS= read -r line || [ -n "$line" ]; do
+  # A blank line is skipped, not passed through — the one deliberate exception to verbatim
+  # passthrough. It carries no event, and letting one reach the tail of history.jsonl would
+  # make shai-retry's tail classifier report "nothing to resume" for a genuinely resumable
+  # run. No pipeline stage emits one (shai-read/shai-eval/shai-dispatch all emit nothing
+  # rather than an empty line), so this only guards hand-run input.
   [ -z "$line" ] && continue
   # per line, not per invocation: this filter is a concurrent pipeline stage, so process-start
   # time is when the pipeline forked, not when the upstream stage emitted this event
