@@ -34,6 +34,19 @@ AFTER=$(wc -l <"$SHOME/history.jsonl")
 assert_contains "$OUT" "nothing to resume" "retry: completed turn → nothing to resume"
 assert_eq "$AFTER" "$BEFORE" "retry: completed turn appends no history"
 
+# a blank/garbled tail must be a no-op, not a fall-through that dispatches stale latest.json
+BLANKH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$BLANKH")
+{
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
+  printf '\n'
+} >"$BLANKH/history.jsonl"
+printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"stale1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}' >"$BLANKH/latest.json"
+BLANKBEFORE=$(wc -l <"$BLANKH/history.jsonl")
+BLANKOUT=$(SHAI_HOME="$BLANKH" "$DIR/shai-retry" 2>&1)
+assert_contains "$BLANKOUT" "nothing to resume" "retry: blank tail is a no-op"
+assert_eq "$(wc -l <"$BLANKH/history.jsonl")" "$BLANKBEFORE" "retry: blank tail appends nothing"
+
 # EVAL: an error tail re-evaluates to a fresh assistant turn
 new_home
 make_stub_bin

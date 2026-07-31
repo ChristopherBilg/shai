@@ -38,6 +38,12 @@ SHAI_SESSION_ID="${SHAI_SESSION_ID:-$(mint_id sess)}"
 export SHAI_SESSION_ID
 export SHAI_SCHEMA_VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
 
+# a run and span are minted per turn and must never be inherited: the system prompt is seeded
+# outside any turn, so it has to stamp with a null run/span
+export SHAI_RUN_ID=""
+export SHAI_SPAN_ID=""
+export SHAI_PARENT_SPAN_ID=""
+
 "$DIR/shai-eval" --health-check || exit 1
 
 mkdir -p "$STATE_DIR"

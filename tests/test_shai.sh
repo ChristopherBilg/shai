@@ -127,6 +127,18 @@ assert_eq "$SYSRUN" "null" "shai: seeded system prompt has null run_id"
 SYSSPAN=$(jq -r 'select(.source=="system") | .meta.span_id' "$ENVH/history.jsonl")
 assert_eq "$SYSSPAN" "null" "shai: seeded system prompt has null span_id"
 
+# an inherited run/span must NOT leak into the seeded system prompt
+LEAKH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$LEAKH")
+write_roundtrip_curl_stub "$STUB"
+printf 'hi\nexit\n' | SHAI_HOME="$LEAKH" SHAI_RUN_ID=INHERITED_RUN SHAI_SPAN_ID=INHERITED_SPAN \
+  SHAI_PARENT_SPAN_ID=INHERITED_PARENT "$DIR/shai" >/dev/null 2>&1
+unset SHAI_ROUND_COUNT
+assert_eq "$(jq -r 'select(.source=="system") | .meta.run_id' "$LEAKH/history.jsonl")" "null" \
+  "shai: inherited SHAI_RUN_ID does not leak into the seeded system prompt"
+assert_eq "$(jq -r 'select(.source=="system") | .meta.span_id' "$LEAKH/history.jsonl")" "null" \
+  "shai: inherited SHAI_SPAN_ID does not leak into the seeded system prompt"
+
 # one run per turn, and the turn's events share it
 RUNIDS=$(jq -r 'select(.source!="system") | .meta.run_id' "$ENVH/history.jsonl" | sort -u | wc -l)
 assert_eq "$RUNIDS" "1" "shai: one run_id per user turn"
@@ -182,5 +194,18 @@ write_roundtrip_curl_stub "$STUB"
 unset SHAI_ROUND_COUNT
 UMEVENTS=$(jq -r 'select(.type=="message" and .source=="assistant") | .type' "$UMH/history.jsonl" | wc -l)
 assert_eq "$UMEVENTS" "2" "shai: turn survives when the run dir is created unwritable"
+
+# --- minted id shape: sortable prefix + hex suffix (a $RANDOM scheme collides) ---
+MINTH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$MINTH")
+write_roundtrip_curl_stub "$STUB"
+printf 'hi\nexit\n' | SHAI_HOME="$MINTH" "$DIR/shai" >/dev/null 2>&1
+unset SHAI_ROUND_COUNT
+MINTSESS=$(jq -r 'select(.source=="system") | .meta.session_id' "$MINTH/history.jsonl")
+MINTRUN=$(jq -r 'select(.type=="message" and .source=="user") | .meta.run_id' "$MINTH/history.jsonl")
+assert_eq "$(printf '%s' "$MINTSESS" | grep -cE '^sess_[0-9]{8}T[0-9]{6}_[0-9a-f]{8}$')" "1" \
+  "shai: minted session id keeps its sortable prefix + 8 hex chars"
+assert_eq "$(printf '%s' "$MINTRUN" | grep -cE '^run_[0-9]{8}T[0-9]{6}_[0-9a-f]{8}$')" "1" \
+  "shai: minted run id keeps its sortable prefix + 8 hex chars"
 
 finish

@@ -14,14 +14,14 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 ## ✅ Done — core pipeline & the "day-one" architectural choices
 
 - **Append-only JSONL state** — `~/.shai/history.jsonl` (+ `latest.json`). Design choice #1 ("State Storage Format").
-- **The 5 filters** — `shai-read → shai-context → shai-eval → shai-dispatch → shai-print`, each a pure stdin→stdout filter, plus the `shai` REPL/orchestrator and the re-eval/dispatch loop (`shai:46`).
+- **The 5 filters** — `shai-read → shai-context → shai-eval → shai-dispatch → shai-print`, each a pure stdin→stdout filter, plus the `shai` REPL/orchestrator and the re-eval/dispatch loop (`shai:96`).
 - **Naive context truncation** — last N user turns (default 10) in `shai-context`. This is exactly design choice #2's *recommended starting point* ("start with naive truncation… isolate this logic entirely inside `pa-context`").
 - **Tool-output truncation** — `MAX_BYTES=8000` in `shai-dispatch`. Design choice #4 ("force all local command outputs through a strict truncator").
 - **Synchronous / blocking execution** — design choice #5's explicit v1.0 recommendation.
 - **Read-only tools** — `gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file` (`tools.json` + `run_tool` in `shai-dispatch`).
 - **Loop-safe error handling** — every API/curl/parse failure becomes an `error` event with exit 0; `error` events are dropped in `shai-context` so failures never contaminate future context. (One slice of the design's "Resumability & Error Handling".)
 - **Per-tool timeouts** — `timeout` wraps tool execution in `shai-dispatch`. (One slice of the design's concurrency "hard timeouts on network-bound tools".)
-- **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai:13`) teaches the convention. *(done 2026-07-28)*
+- **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai:16`) teaches the convention. *(done 2026-07-28)*
 - **Always-on request observability** (design "Operational reality #2") — `shai-eval` best-effort dumps the exact finalized request to `$SHAI_HOME/last_request.json` before every real call. *(done 2026-07-28)*
 - **Resumability** (design "Operational reality #4") — `shai-retry` classifies the history tail and resumes an interrupted run (dispatch a dangling tool_use, or re-eval after an error / tool_result / user turn) without re-prompting. *(done 2026-07-28)*
 - **Standard execution envelope** (design concurrency §1) — every event carries

@@ -61,10 +61,15 @@ CLASS=$(tail -n 1 "$HISTORY" | jq -r '
   else "DONE" end
 ' 2>/dev/null || printf 'DONE')
 
-if [ "$CLASS" = "DONE" ]; then
-  printf 'nothing to resume\n'
-  exit 0
-fi
+# anything other than a class we handle (including "" from a blank/garbled tail) is a no-op:
+# falling through would dispatch a stale latest.json and orphan a tool_result
+case "$CLASS" in
+  DISPATCH | EVAL) ;;
+  *)
+    printf 'nothing to resume\n'
+    exit 0
+    ;;
+esac
 
 # a resume makes a live model call, so require the key only once we know there is work
 "$DIR/shai-eval" --health-check || exit 1
