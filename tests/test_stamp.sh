@@ -91,4 +91,30 @@ assert_eq "$(printf '%s\n' "$BLANKOUT" | jq -sr '[.[].a, .[].b] | map(select(. !
 WSOUT=$(printf '   \n' | "$DIR/shai-stamp")
 assert_eq "$WSOUT" "   " "stamp: a whitespace-only line passes through verbatim"
 
+# --- 13. a failing `date` must not break the exit-0 contract or drop events ---
+# Unguarded, `TIMESTAMP="$(date ...)"` under `set -e` exits mid-stream, loses every remaining
+# event, and hands the until-loop a bogus "a tool ran" signal. Stub a `date` that works once
+# then fails, so the failure lands partway through the stream.
+DATEBIN="$(mktemp -d)"
+_CLEANUP_DIRS+=("$DATEBIN")
+{
+  printf '#!/bin/bash\n'
+  printf 'C="%s/n"\n' "$DATEBIN"
+  printf 'n=$(cat "$C" 2>/dev/null); [ -z "$n" ] && n=0\n'
+  printf 'echo $((n + 1)) >"$C"\n'
+  printf '[ "$n" -lt 1 ] && exec /usr/bin/date "$@"\n'
+  printf 'exit 1\n'
+} >"$DATEBIN/date"
+chmod +x "$DATEBIN/date"
+echo 0 >"$DATEBIN/n"
+DOUT=$(printf '{"a":1}\n{"b":2}\n{"c":3}\n' |
+  PATH="$DATEBIN:$PATH" SHAI_RUN_ID=run_date "$DIR/shai-stamp" 2>/dev/null)
+DRC=$?
+assert_eq "$DRC" "0" "stamp: a failing date still exits 0"
+assert_eq "$(printf '%s' "$DOUT" | grep -c .)" "3" "stamp: a failing date drops no events"
+assert_eq "$(printf '%s\n' "$DOUT" | jq -r '.meta.run_id' | sort -u)" "run_date" \
+  "stamp: events are still stamped when date fails"
+assert_eq "$(printf '%s\n' "$DOUT" | jq -r '.meta.timestamp' | tail -n1)" "null" \
+  "stamp: an unavailable timestamp becomes null, not an empty string"
+
 finish

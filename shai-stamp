@@ -3,7 +3,8 @@
 # Usage: cat events.jsonl | shai-stamp
 # Reads: one JSON event per line on stdin; ambient trace context from the environment
 #        (SHAI_SCHEMA_VERSION, SHAI_SESSION_ID, SHAI_RUN_ID, SHAI_SPAN_ID, SHAI_PARENT_SPAN_ID)
-# Writes: the same events, each with `version` and `meta` added; an unset variable becomes null.
+# Writes: the same events, each with `version` and `meta` added; an unset variable becomes null,
+#         as does `timestamp` if `date` itself fails.
 #         A non-empty line that is not a JSON object is passed through verbatim, never dropped.
 #         A blank line IS skipped — see the note at the read loop for why.
 # Exit: 0 always — this filter must never break the eval/dispatch loop
@@ -24,8 +25,12 @@ while IFS= read -r line || [ -n "$line" ]; do
   # rather than an empty line), so this only guards hand-run input.
   [ -z "$line" ] && continue
   # per line, not per invocation: this filter is a concurrent pipeline stage, so process-start
-  # time is when the pipeline forked, not when the upstream stage emitted this event
-  TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  # time is when the pipeline forked, not when the upstream stage emitted this event.
+  # `|| true` keeps a failing `date` from tripping `set -e` — without it the filter exits
+  # non-zero mid-stream, drops every remaining event, and hands the until-loop a bogus
+  # "a tool ran" signal. An empty value becomes a null timestamp below, matching how every
+  # other meta field represents "not available".
+  TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
   if out=$(printf '%s' "$line" | jq -c \
     --arg version "$VERSION" \
     --arg run "${SHAI_RUN_ID:-}" \
@@ -40,7 +45,7 @@ while IFS= read -r line || [ -n "$line" ]; do
                   session_id: ($session | nullable),
                   span_id: ($span | nullable),
                   parent_span_id: ($parent | nullable),
-                  timestamp: $ts}}
+                  timestamp: ($ts | nullable)}}
     else error("not an object") end' 2>/dev/null) && [ -n "$out" ]; then
     printf '%s\n' "$out" 2>/dev/null || true
   else
