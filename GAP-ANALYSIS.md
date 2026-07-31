@@ -1,7 +1,8 @@
 # shai — Design-vs-Implementation Gap Analysis
 
 _Working notes, generated 2026-07-27; updated 2026-07-28 as the first three partials landed, then
-again to record the ordering constraints among the open items. Tracked in-repo._
+again to record the ordering constraints among the open items; revised 2026-07-29 when the
+execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 **Design reference:** `AI-Assistant-Unix-Philosophy-Design.md` (the origin Gemini conversation; uses `pa-*` naming, implemented as `shai-*`).
 **Method:** every concrete proposal in the design doc, classified against the current scripts (`shai`, `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-print`, `tools.json`).
@@ -13,16 +14,25 @@ again to record the ordering constraints among the open items. Tracked in-repo._
 ## ✅ Done — core pipeline & the "day-one" architectural choices
 
 - **Append-only JSONL state** — `~/.shai/history.jsonl` (+ `latest.json`). Design choice #1 ("State Storage Format").
-- **The 5 filters** — `shai-read → shai-context → shai-eval → shai-dispatch → shai-print`, each a pure stdin→stdout filter, plus the `shai` REPL/orchestrator and the re-eval/dispatch loop (`shai:46`).
+- **The 5 filters** — `shai-read → shai-context → shai-eval → shai-dispatch → shai-print`, each a pure stdin→stdout filter, plus the `shai` REPL/orchestrator and the re-eval/dispatch loop (`shai:96`).
 - **Naive context truncation** — last N user turns (default 10) in `shai-context`. This is exactly design choice #2's *recommended starting point* ("start with naive truncation… isolate this logic entirely inside `pa-context`").
 - **Tool-output truncation** — `MAX_BYTES=8000` in `shai-dispatch`. Design choice #4 ("force all local command outputs through a strict truncator").
 - **Synchronous / blocking execution** — design choice #5's explicit v1.0 recommendation.
 - **Read-only tools** — `gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file` (`tools.json` + `run_tool` in `shai-dispatch`).
 - **Loop-safe error handling** — every API/curl/parse failure becomes an `error` event with exit 0; `error` events are dropped in `shai-context` so failures never contaminate future context. (One slice of the design's "Resumability & Error Handling".)
 - **Per-tool timeouts** — `timeout` wraps tool execution in `shai-dispatch`. (One slice of the design's concurrency "hard timeouts on network-bound tools".)
-- **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai:13`) teaches the convention. *(done 2026-07-28)*
+- **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai:16`) teaches the convention. *(done 2026-07-28)*
 - **Always-on request observability** (design "Operational reality #2") — `shai-eval` best-effort dumps the exact finalized request to `$SHAI_HOME/last_request.json` before every real call. *(done 2026-07-28)*
 - **Resumability** (design "Operational reality #4") — `shai-retry` classifies the history tail and resumes an interrupted run (dispatch a dangling tool_use, or re-eval after an error / tool_result / user turn) without re-prompting. *(done 2026-07-28)*
+- **Standard execution envelope** (design concurrency §1) — every event carries
+  `{version, meta:{run_id, session_id, span_id, parent_span_id, timestamp}}`, added by the
+  `shai-stamp` filter. Adopted **additively**: `type`/`source` stay top-level, so no reader
+  filter's selectors needed touching and no existing assertion broke — `shai-read`,
+  `shai-context`, `shai-dispatch`, and `shai-print` were left untouched entirely.
+  *(done 2026-07-29)*
+- **Env-var context propagation** (design concurrency §3) — `SHAI_SESSION_ID` / `SHAI_RUN_ID` /
+  `SHAI_SPAN_ID` / `SHAI_PARENT_SPAN_ID` / `SHAI_SCHEMA_VERSION` minted at the root wrapper and
+  inherited by child filters; an inherited session id always wins. *(done 2026-07-29)*
 
 ---
 
@@ -55,10 +65,11 @@ again to record the ordering constraints among the open items. Tracked in-repo._
 ### Operational realities (§ 4th exchange)
 - **Execution permission matrix + write tools** — the "`rm -rf` problem": read ops auto-approved; write/execute ops pause the pipeline, render the proposed command, and require `Y`/Enter via `/dev/tty`. Today every tool is read-only, so the gate does not exist yet. ⚠️ **Gates MCP, and breaks `shai-retry` on arrival** — see [Ordering constraints](#ordering-constraints).
 
-### Concurrency (§ 5th exchange — the entire section is open)
-- **Standard execution envelope** — wrap every payload in `{version, meta:{run_id, session_id, parent_span_id, span_id, timestamp, source}, payload}`. **Requires env-var context propagation** (below) to populate `meta` across a multi-process pipeline; do the two together. Breaking change to all six scripts and every shape-asserting test.
-- **Partitioned storage** — replace the single global log with `sessions/<session_id>.jsonl` (finalized turns) + `runs/<run_id>.jsonl` (raw intermediate trace). **Requires the execution envelope** — the IDs to partition by come from its `meta` block.
-- **Env-var context propagation** — `SHAI_SESSION_ID` / `SHAI_RUN_ID` / `SHAI_SCHEMA_VERSION` set at the root wrapper, inherited by child filters. **Pair with, or precede, the execution envelope**; inert on its own.
+### Concurrency (§ 5th exchange — 4 of 6 items still open)
+- **Partitioned storage** — the **run-log half is done**: `runs/<run_id>/events.jsonl` plus
+  per-span request dumps, added alongside an untouched global `history.jsonl`. What remains is the
+  breaking half: replacing the single global log with `sessions/<session_id>.jsonl`, and a
+  retention policy for `runs/` (which currently accrues one directory per turn, unpruned).
 - **`flock` atomic appends** — guard history writes against interleaving when payloads exceed `PIPE_BUF` (~4KB). *Unconstrained — no `flock` exists anywhere in the tree today, and it applies as-is to the current single log.*
 - **Idempotent, non-destructive retries** — replay a failed run into a new `run_id`, only committing to the session log on full success. **Requires all three of** the envelope, partitioned storage, and env-var propagation. Distinct from the shipped `shai-retry`, which resumes *in place*.
 - **Process supervision** — run background/polling workflows under `systemd --user` / `launchd` / `supervisord` to avoid orphan/zombie processes. *Unconstrained within this list, but supervises nothing until a background workflow exists (e.g. the Outlook/Teams push→pull bridge below).*
@@ -67,21 +78,28 @@ again to record the ordering constraints among the open items. Tracked in-repo._
 
 ## Ordering constraints
 
-Derived 2026-07-28 by checking each open item against the current scripts. **Only three of the
-thirteen open items have a hard technical predecessor**, and all three sit inside the concurrency
-block — it holds nearly all the real coupling. Two further items are constrained by safety rather
-than by build order. The remaining eight can be sequenced purely on value.
+Derived 2026-07-28 by checking each open item against the current scripts; **revised 2026-07-29**
+after the execution envelope and env-var propagation shipped. Of the **eleven** remaining open
+items, only **one** still has an unmet hard technical predecessor — *idempotent, non-destructive
+retries*, which awaits partitioned storage. Two further items are constrained by safety rather
+than by build order. The rest can be sequenced purely on value.
 
 ### Hard dependencies
 
-| Item | Requires | Why |
-|---|---|---|
-| Standard execution envelope | Env-var context propagation | `meta.{run_id, session_id, parent_span_id, span_id}` cannot be populated across a five-process pipeline without inherited ambient context. Build the envelope alone and each filter mints its own `run_id`. |
-| Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. |
-| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. |
+| Item | Requires | Why | Status |
+|---|---|---|---|
+| Standard execution envelope | Env-var context propagation | `meta.{run_id, session_id, parent_span_id, span_id}` cannot be populated across a five-process pipeline without inherited ambient context. Build the envelope alone and each filter mints its own `run_id`. | ✅ satisfied — both shipped 2026-07-29 |
+| Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. | ✅ predecessor shipped; only its session-log half remains |
+| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. | ⧗ still blocked on partitioned storage |
 
-The written order satisfies the second and third of these and gets the first **backwards** —
-env-var propagation is listed two slots *after* the envelope that needs it.
+**Resolved 2026-07-29.** Both were implemented together, propagation first. The envelope turned out
+**not** to be a "breaking change to all six scripts and every shape-asserting test" — that holds
+only for the doc's *literal* envelope. Measured before implementing: the four reader filters read
+only `.type`, `.source`, and `.payload.*`, and no test asserted exact object shape. An additive
+envelope therefore required no change to any reader filter's selectors and broke no existing
+assertion — every edit to the four readers and the eight original suites was purely additive,
+and `shai-context`, `shai-dispatch`, `shai-print`, `shai-read`, and five of the eight suites
+were left untouched entirely.
 
 ### Safety inversions
 

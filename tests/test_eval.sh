@@ -133,4 +133,47 @@ RC=$?
 assert_contains "$EVUW" '"source":"assistant"' "eval: unwritable SHAI_HOME still returns assistant event"
 assert_eq "$RC" "0" "eval: unwritable SHAI_HOME still exits 0"
 
+# --- per-span request dumps ---------------------------------------------------
+EVH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$EVH")
+write_curl_stub 200 <<'JSON'
+{"type":"message","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}
+JSON
+
+echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_HOME="$EVH" SHAI_RUN_ID=run_dump SHAI_SPAN_ID=span_7 "$DIR/shai-eval" >/dev/null
+assert_eq "$([ -f "$EVH/runs/run_dump/span_7-request.json" ] && echo yes)" "yes" \
+  "eval: per-span request dump written"
+assert_eq "$(jq -r '.messages[0].content' "$EVH/runs/run_dump/span_7-request.json")" "hi" \
+  "eval: per-span dump holds the finalized payload"
+assert_eq "$([ -f "$EVH/last_request.json" ] && echo yes)" "yes" \
+  "eval: last_request.json still written for compatibility"
+
+# span unset → span_0 fallback, so it can never collide with a real span_1
+EVH2="$(mktemp -d)"
+_CLEANUP_DIRS+=("$EVH2")
+echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
+  env -u SHAI_SPAN_ID SHAI_HOME="$EVH2" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
+assert_eq "$([ -f "$EVH2/runs/run_nospan/span_0-request.json" ] && echo yes)" "yes" \
+  "eval: unset span falls back to span_0"
+
+# no run id → no runs/ dir at all (hand-run pipelines are unaffected)
+EVH3="$(mktemp -d)"
+_CLEANUP_DIRS+=("$EVH3")
+echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
+  env -u SHAI_RUN_ID -u SHAI_SPAN_ID SHAI_HOME="$EVH3" "$DIR/shai-eval" >/dev/null
+assert_eq "$([ -d "$EVH3/runs" ] && echo yes || echo no)" "no" \
+  "eval: no run id → no runs/ directory created"
+
+# the dump is best-effort: an unwritable runs path must not fail the call
+EVH4="$(mktemp -d)"
+_CLEANUP_DIRS+=("$EVH4")
+printf 'not a directory' >"$EVH4/runs"
+OUT4=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_HOME="$EVH4" SHAI_RUN_ID=run_blocked SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
+RC4=$?
+assert_eq "$RC4" "0" "eval: unwritable runs path still exits 0"
+assert_eq "$(printf '%s' "$OUT4" | jq -r '.source')" "assistant" \
+  "eval: unwritable runs path still emits the assistant event"
+
 finish

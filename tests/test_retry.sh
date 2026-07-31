@@ -34,6 +34,19 @@ AFTER=$(wc -l <"$SHOME/history.jsonl")
 assert_contains "$OUT" "nothing to resume" "retry: completed turn → nothing to resume"
 assert_eq "$AFTER" "$BEFORE" "retry: completed turn appends no history"
 
+# a blank/garbled tail must be a no-op, not a fall-through that dispatches stale latest.json
+BLANKH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$BLANKH")
+{
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
+  printf '\n'
+} >"$BLANKH/history.jsonl"
+printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"stale1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}' >"$BLANKH/latest.json"
+BLANKBEFORE=$(wc -l <"$BLANKH/history.jsonl")
+BLANKOUT=$(SHAI_HOME="$BLANKH" "$DIR/shai-retry" 2>&1)
+assert_contains "$BLANKOUT" "nothing to resume" "retry: blank tail is a no-op"
+assert_eq "$(wc -l <"$BLANKH/history.jsonl")" "$BLANKBEFORE" "retry: blank tail appends nothing"
+
 # EVAL: an error tail re-evaluates to a fresh assistant turn
 new_home
 make_stub_bin
@@ -93,5 +106,69 @@ cat >"$SHOME/history.jsonl" <<'JSON'
 {"type":"error","source":"system","payload":{"text":"boom"}}
 JSON
 assert_exit 1 "retry: work pending + no key → exit 1" -- env -u ANTHROPIC_API_KEY SHAI_HOME="$SHOME" "$DIR/shai-retry"
+
+# --- envelope + trace propagation on resume ----------------------------------
+RTH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$RTH")
+write_roundtrip_curl_stub "$STUB"
+# a deliberately UNSTAMPED history, as written by a pre-envelope shai: resume must still work
+{
+  printf '%s\n' '{"type":"message","source":"system","payload":{"text":"SYS"}}'
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
+  printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}'
+} >"$RTH/history.jsonl"
+
+SHAI_HOME="$RTH" SHAI_SESSION_ID=sess_resume "$DIR/shai-retry" -q >/dev/null 2>&1
+unset SHAI_ROUND_COUNT
+
+# the pre-existing unstamped events are untouched; only new ones are stamped
+UNSTAMPED=$(jq -r 'select(has("meta") | not) | .type' "$RTH/history.jsonl" | wc -l)
+assert_eq "$UNSTAMPED" "3" "retry: pre-envelope history left as-is (backward compatible)"
+
+# the recovered dispatch opens span_1 of the NEW run
+FIRSTNEW=$(jq -r 'select(has("meta")) | .meta.span_id' "$RTH/history.jsonl" | head -n1)
+assert_eq "$FIRSTNEW" "span_1" "retry: recovered tool_result opens span_1"
+
+# the resume is a new run, and every new event shares it
+NEWRUNS=$(jq -r 'select(has("meta")) | .meta.run_id' "$RTH/history.jsonl" | sort -u | wc -l)
+assert_eq "$NEWRUNS" "1" "retry: one fresh run_id for the whole resume"
+
+# session id is inherited, not re-minted
+RSESS=$(jq -r 'select(has("meta")) | .meta.session_id' "$RTH/history.jsonl" | sort -u)
+assert_eq "$RSESS" "sess_resume" "retry: inherited session id honored"
+
+# the loop advanced past span_1, proving dispatch's exit-1 survived | shai-stamp
+MAXSPAN=$(jq -r 'select(has("meta")) | .meta.span_id' "$RTH/history.jsonl" | sort -u | tail -n1)
+assert_eq "$MAXSPAN" "span_3" "retry: loop advanced to span_3 (dispatch signal survived stamp)"
+
+# the resume wrote its own run log
+RRUN=$(jq -r 'select(has("meta")) | .meta.run_id' "$RTH/history.jsonl" | head -n1)
+assert_eq "$([ -f "$RTH/runs/$RRUN/events.jsonl" ] && echo yes)" "yes" \
+  "retry: runs/<new_run_id>/events.jsonl created"
+
+# --- a no-op resume must not create a run directory ---
+NOOPH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$NOOPH")
+SHAI_HOME="$NOOPH" "$DIR/shai-retry" >/dev/null 2>&1
+assert_eq "$(find "$NOOPH/runs" -mindepth 1 -type d 2>/dev/null | wc -l)" "0" "retry: empty history creates no run dir"
+
+DONEH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$DONEH")
+{
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
+  printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}'
+} >"$DONEH/history.jsonl"
+SHAI_HOME="$DONEH" "$DIR/shai-retry" >/dev/null 2>&1
+assert_eq "$(find "$DONEH/runs" -mindepth 1 -type d 2>/dev/null | wc -l)" "0" "retry: completed history creates no run dir"
+
+# --- pending work but no API key must not create a run dir either ---
+NOKEYH="$(mktemp -d)"
+_CLEANUP_DIRS+=("$NOKEYH")
+{
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
+  printf '%s\n' '{"type":"error","source":"system","payload":{"text":"boom"}}'
+} >"$NOKEYH/history.jsonl"
+env -u ANTHROPIC_API_KEY SHAI_HOME="$NOKEYH" "$DIR/shai-retry" >/dev/null 2>&1
+assert_eq "$(find "$NOKEYH/runs" -mindepth 1 -type d 2>/dev/null | wc -l)" "0" "retry: missing key creates no run dir"
 
 finish

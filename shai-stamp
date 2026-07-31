@@ -1,0 +1,54 @@
+#!/bin/bash
+# shai-stamp — add the execution envelope (version + meta) to each event on stdin
+# Usage: cat events.jsonl | shai-stamp
+# Reads: one JSON event per line on stdin; ambient trace context from the environment
+#        (SHAI_SCHEMA_VERSION, SHAI_SESSION_ID, SHAI_RUN_ID, SHAI_SPAN_ID, SHAI_PARENT_SPAN_ID)
+# Writes: the same events, each with `version` and `meta` added; an unset variable becomes null,
+#         as does `timestamp` if `date` itself fails.
+#         A non-empty line that is not a JSON object is passed through verbatim, never dropped.
+#         A blank line IS skipped — see the note at the read loop for why.
+# Exit: 0 always — this filter must never break the eval/dispatch loop
+set -euo pipefail
+
+# A downstream reader that closes early (e.g. a failed tee redirect) must not kill this
+# filter: its contract is exit 0, always. Ignoring PIPE turns the fatal signal into a
+# write error, and the guarded printfs below keep that error from tripping `set -e`.
+trap '' PIPE
+
+VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
+
+while IFS= read -r line || [ -n "$line" ]; do
+  # A blank line is skipped, not passed through — the one deliberate exception to verbatim
+  # passthrough. It carries no event, and letting one reach the tail of history.jsonl would
+  # make shai-retry's tail classifier report "nothing to resume" for a genuinely resumable
+  # run. No pipeline stage emits one (shai-read/shai-eval/shai-dispatch all emit nothing
+  # rather than an empty line), so this only guards hand-run input.
+  [ -z "$line" ] && continue
+  # per line, not per invocation: this filter is a concurrent pipeline stage, so process-start
+  # time is when the pipeline forked, not when the upstream stage emitted this event.
+  # `|| true` keeps a failing `date` from tripping `set -e` — without it the filter exits
+  # non-zero mid-stream, drops every remaining event, and hands the until-loop a bogus
+  # "a tool ran" signal. An empty value becomes a null timestamp below, matching how every
+  # other meta field represents "not available".
+  TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  if out=$(printf '%s' "$line" | jq -c \
+    --arg version "$VERSION" \
+    --arg run "${SHAI_RUN_ID:-}" \
+    --arg session "${SHAI_SESSION_ID:-}" \
+    --arg span "${SHAI_SPAN_ID:-}" \
+    --arg parent "${SHAI_PARENT_SPAN_ID:-}" \
+    --arg ts "$TIMESTAMP" '
+    def nullable: if . == "" then null else . end;
+    if type == "object" then
+      . + {version: $version,
+           meta: {run_id: ($run | nullable),
+                  session_id: ($session | nullable),
+                  span_id: ($span | nullable),
+                  parent_span_id: ($parent | nullable),
+                  timestamp: ($ts | nullable)}}
+    else error("not an object") end' 2>/dev/null) && [ -n "$out" ]; then
+    printf '%s\n' "$out" 2>/dev/null || true
+  else
+    printf '%s\n' "$line" 2>/dev/null || true
+  fi
+done

@@ -18,7 +18,7 @@ jobs:
       - name: Install pinned lint tools
         run: ./tests/install-lint-tools.sh
       - name: ShellCheck all scripts
-        run: ./bin/shellcheck shai shai-read shai-context shai-eval shai-dispatch shai-print tests/*.sh
+        run: ./bin/shellcheck shai shai-* tests/*.sh
 
   shfmt:
     runs-on: ubuntu-latest
@@ -27,7 +27,7 @@ jobs:
       - name: Install pinned lint tools
         run: ./tests/install-lint-tools.sh
       - name: shfmt diff check
-        run: ./bin/shfmt -d shai shai-read shai-context shai-eval shai-dispatch shai-print tests/*.sh
+        run: ./bin/shfmt -d shai shai-* tests/*.sh
 
   conventions:
     runs-on: ubuntu-latest
