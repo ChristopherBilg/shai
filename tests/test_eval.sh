@@ -37,11 +37,6 @@ assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed cur
 assert_contains "$EV" '"stop_reason":"end_turn"' "eval: stop_reason parsed"
 assert_contains "$EV" 'stub reply' "eval: content passed through"
 
-# a real call dumps the exact request payload
-assert_eq "$(test -f "$SHAI_HOME/last_request.json" && echo yes || echo no)" "yes" "eval: real call writes last_request.json"
-LASTREQ=$(cat "$SHAI_HOME/last_request.json")
-assert_contains "$LASTREQ" '"model":"claude-opus-4-8"' "eval: last_request.json holds the model"
-assert_contains "$LASTREQ" '"system":"S"' "eval: last_request.json holds the system"
 
 env -u ANTHROPIC_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
 assert_eq "$?" "1" "eval: health-check fails without key"
@@ -115,13 +110,13 @@ assert_contains "$EVCURLFAIL" 'request failed (curl)' "eval: curl-failure messag
 DRYHOME="$(mktemp -d)"
 _CLEANUP_DIRS+=("$DRYHOME")
 echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_HOME="$DRYHOME" "$DIR/shai-eval" --dry-run >/dev/null
-assert_eq "$(test -f "$DRYHOME/last_request.json" && echo yes || echo no)" "no" "eval: --dry-run writes no debug dump"
+assert_eq "$(find "$DRYHOME/runs" -name '*-request.json' 2>/dev/null | wc -l | tr -d ' ')" "0" "eval: --dry-run writes no debug dump"
 
 # --health-check writes no dump (fresh home)
 HCHOME="$(mktemp -d)"
 _CLEANUP_DIRS+=("$HCHOME")
 SHAI_HOME="$HCHOME" "$DIR/shai-eval" --health-check
-assert_eq "$(test -f "$HCHOME/last_request.json" && echo yes || echo no)" "no" "eval: --health-check writes no debug dump"
+assert_eq "$(find "$HCHOME/runs" -name '*-request.json' 2>/dev/null | wc -l | tr -d ' ')" "0" "eval: --health-check writes no debug dump"
 
 # an unwritable SHAI_HOME must not break the call (best-effort dump)
 make_stub_bin
@@ -146,9 +141,6 @@ assert_eq "$([ -f "$EVH/runs/run_dump/span_7-request.json" ] && echo yes)" "yes"
   "eval: per-span request dump written"
 assert_eq "$(jq -r '.messages[0].content' "$EVH/runs/run_dump/span_7-request.json")" "hi" \
   "eval: per-span dump holds the finalized payload"
-assert_eq "$([ -f "$EVH/last_request.json" ] && echo yes)" "yes" \
-  "eval: last_request.json still written for compatibility"
-
 # span unset → span_0 fallback, so it can never collide with a real span_1
 EVH2="$(mktemp -d)"
 _CLEANUP_DIRS+=("$EVH2")

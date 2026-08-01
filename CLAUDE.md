@@ -59,8 +59,8 @@ Data flows as one JSON **event** per line. Each script is a pure stdin→stdout 
 only shared state is the append-only session log. To rewind the assistant's memory, slice
 the file (`head -n 20 ~/.shai/sessions/<session_id>.jsonl`) — there is no database.
 
-State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs) and `latest.json`
-(the most recent event, used by the dispatch loop).
+State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs) and
+`sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop).
 
 **The event schema is the contract between every script.** Records in `sessions/<session_id>.jsonl`:
 
@@ -99,7 +99,7 @@ The scripts:
   `error` event with exit 0 (the sole exception: `--health-check` exits 1 when the key is
   missing). `--dry-run` prints the payload without calling out; `--tools` attaches
   `tools.json`. Before each real call it best-effort dumps the exact request to
-  `$SHAI_HOME/last_request.json` (observability; never fails the loop).
+  `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` (observability; never fails the loop).
 - **`shai-dispatch`** (`shai-dispatch:1`) — reads the latest assistant event, runs each
   `tool_use` block via `run_tool`, and emits `tool_result` events. **Exit 1 if any tool
   ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool output is truncated to

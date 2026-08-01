@@ -22,7 +22,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 - **Loop-safe error handling** — every API/curl/parse failure becomes an `error` event with exit 0; `error` events are dropped in `shai-context` so failures never contaminate future context. (One slice of the design's "Resumability & Error Handling".)
 - **Per-tool timeouts** — `timeout` wraps tool execution in `shai-dispatch`. (One slice of the design's concurrency "hard timeouts on network-bound tools".)
 - **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai:16`) teaches the convention. *(done 2026-07-28)*
-- **Always-on request observability** (design "Operational reality #2") — `shai-eval` best-effort dumps the exact finalized request to `$SHAI_HOME/last_request.json` before every real call. *(done 2026-07-28)*
+- **Always-on request observability** (design "Operational reality #2") — `shai-eval` best-effort dumps the exact finalized request to `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` before every real call. *(done 2026-07-28)*
 - **Resumability** (design "Operational reality #4") — `shai-retry` classifies the history tail and resumes an interrupted run (dispatch a dangling tool_use, or re-eval after an error / tool_result / user turn) without re-prompting. *(done 2026-07-28)*
 - **Standard execution envelope** (design concurrency §1) — every event carries
   `{version, meta:{run_id, session_id, span_id, parent_span_id, timestamp}}`, added by the
@@ -141,4 +141,4 @@ before the item is scheduled.
 
 ## Note on scope
 
-`CLAUDE.md`'s "Deferred beyond the MVP" line names four headliners — **streaming, write tools + permission gate, concurrency, MCP**. The design doc's real surface is larger. As of 2026-07-28, three former ⚠️ partials are ✅ done (XML `<external_data>` tagging, always-on `last_request.json` observability, `shai-retry` resumability); **model agnosticism** is the lone remaining partial, its true multi-provider adapter deferred to its own spec.
+`CLAUDE.md`'s "Deferred beyond the MVP" line names four headliners — **streaming, write tools + permission gate, concurrency, MCP**. The design doc's real surface is larger. As of 2026-07-28, three former ⚠️ partials are ✅ done (XML `<external_data>` tagging, always-on request-dump observability, `shai-retry` resumability); **model agnosticism** is the lone remaining partial, its true multi-provider adapter deferred to its own spec.
