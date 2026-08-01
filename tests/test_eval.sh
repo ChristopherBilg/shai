@@ -37,7 +37,6 @@ assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed cur
 assert_contains "$EV" '"stop_reason":"end_turn"' "eval: stop_reason parsed"
 assert_contains "$EV" 'stub reply' "eval: content passed through"
 
-
 env -u ANTHROPIC_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
 assert_eq "$?" "1" "eval: health-check fails without key"
 
