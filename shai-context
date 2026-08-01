@@ -1,6 +1,6 @@
 #!/bin/bash
-# shai-context — pure jq reducer: build the Anthropic {system,messages} request from history
-# Usage: cat history.jsonl | shai-context [--window N]
+# shai-context — pure jq reducer: build the Anthropic {system,messages} request from the event log
+# Usage: cat sessions/<id>.jsonl | shai-context [--window N]
 # Reads: the JSONL event log on stdin
 # Writes: one JSON {system, messages} request object
 # Exit: 0 normally; 1 if --window is given without a value

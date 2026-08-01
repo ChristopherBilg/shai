@@ -24,6 +24,9 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is standalone)
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
 
+# Retention:
+./shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]  # manual retention
+
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
 ./bin/shellcheck shai shai-* tests/*.sh
@@ -46,20 +49,20 @@ by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its
 
 Unset variables become explicit `null`s, so hand-run pipelines work with no ambient context.
 State gains `runs/<run_id>/events.jsonl` and `runs/<run_id>/<span_id>-request.json`;
-`history.jsonl` remains the single global log.
+`sessions/<session_id>.jsonl` is the session log.
 A hand-run `shai-eval` with `SHAI_RUN_ID` set but no `SHAI_SPAN_ID` dumps to `span_0-request.json`
 (real spans start at `span_1`, so it can never collide).
 
 ## Architecture
 
 Data flows as one JSON **event** per line. Each script is a pure stdin→stdout filter; the
-only shared state is the append-only history file. To rewind the assistant's memory, slice
-the file (`head -n 20 ~/.shai/history.jsonl`) — there is no database.
+only shared state is the append-only session log. To rewind the assistant's memory, slice
+the file (`head -n 20 ~/.shai/sessions/<session_id>.jsonl`) — there is no database.
 
-State lives in `$SHAI_HOME`: `history.jsonl` (the full append-only log) and `latest.json`
-(the most recent event, used by the dispatch loop).
+State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs) and
+`sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop).
 
-**The event schema is the contract between every script.** Records in `history.jsonl`:
+**The event schema is the contract between every script.** Records in `sessions/<session_id>.jsonl`:
 
 | type + source | payload | written by |
 |---|---|---|
@@ -75,13 +78,13 @@ Every event additionally carries an **execution envelope**, added by `shai-stamp
 top-level because four filters' `jq` selectors discriminate on them, and `payload` keeps its
 existing per-event shape. This deliberately diverges from the design doc's literal envelope
 (which moves `source` into `meta`); the field *set* is adopted in full, the placement is not.
-Unstamped events from before the envelope still parse, so old `history.jsonl` files keep working.
+Unstamped events from before the envelope still parse, so old session logs keep working.
 
 The scripts:
 
-- **`shai`** — the REPL / orchestrator. Seeds the system prompt into empty history, reads a
+- **`shai`** — the REPL / orchestrator. Seeds the system prompt into empty session, reads a
   line, appends it as a user event, then runs `shai-context | shai-eval --tools`, `tee`ing
-  the result into `history.jsonl`, `latest.json`, and `shai-print --dispatches` (the default,
+  the result into `sessions/$SHAI_SESSION_ID.jsonl`, `latest.json`, and `shai-print --dispatches` (the default,
   so each tool call shows as a `⏺ name(args)` line; `./shai --quiet` / `-q` disables it). It
   then loops `shai-dispatch` until no tool ran (see the re-eval loop below).
 - **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source + content sanitized) as a `user` message; interactive REPL input stays unwrapped.
@@ -96,7 +99,7 @@ The scripts:
   `error` event with exit 0 (the sole exception: `--health-check` exits 1 when the key is
   missing). `--dry-run` prints the payload without calling out; `--tools` attaches
   `tools.json`. Before each real call it best-effort dumps the exact request to
-  `$SHAI_HOME/last_request.json` (observability; never fails the loop).
+  `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` (observability; never fails the loop).
 - **`shai-dispatch`** (`shai-dispatch:1`) — reads the latest assistant event, runs each
   `tool_use` block via `run_tool`, and emits `tool_result` events. **Exit 1 if any tool
   ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool output is truncated to
@@ -111,12 +114,15 @@ The scripts:
   **Invariant: it must never fail the pipeline or drop an event** — a non-empty line that is not a
   JSON object is emitted verbatim, and it exits 0 always. `shai` inserts it at every write site.
   A **blank** line is the one deliberate exception: it is skipped, because it carries no event and
-  a blank reaching the tail of `history.jsonl` would make `shai-retry`'s classifier report
+  a blank reaching the tail of a session log would make `shai-retry`'s classifier report
   "nothing to resume" for a resumable run. No filter emits one, so this only guards hand-run input.
 - **`shai-retry [-q|--quiet]`** (`shai-retry:1`) — resumes an interrupted run from
-  `history.jsonl` with no re-prompt: classifies the tail (assistant+`tool_use` → dispatch;
+  `sessions/<session_id>.jsonl` with no re-prompt: classifies the tail (assistant+`tool_use` → dispatch;
   `error`/`tool_result`/`user` → re-eval; complete or empty → no-op) and drives the same
   eval/dispatch loop as `shai` to completion.
+- **`shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
+  retention: removes session log files and/or run directories, optionally filtered by date.
+  Interactive prompts for confirmation; non-interactive skips it.
 
 **The re-eval loop** (in `shai:96`): the model may request tools → `shai-dispatch` runs them
 and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the model sees the

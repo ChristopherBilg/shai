@@ -1,0 +1,101 @@
+#!/bin/bash
+# shai-prune — manually remove session logs and run directories
+# Usage: shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]
+# Reads: $SHAI_HOME/sessions/*.jsonl and $SHAI_HOME/runs/*/
+# Writes: removes selected files/directories (or lists them with --dry-run)
+# Exit: 0 on success or nothing to prune; 1 on invalid arguments
+set -euo pipefail
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+SESSIONS_DIR="$STATE_DIR/sessions"
+RUNS_DIR="$STATE_DIR/runs"
+
+do_sessions=false
+do_runs=false
+dry_run=false
+before=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --sessions) do_sessions=true ;;
+    --runs) do_runs=true ;;
+    --dry-run) dry_run=true ;;
+    --before)
+      shift
+      before="${1:-}"
+      if [ -z "$before" ]; then
+        printf 'error: --before requires a YYYY-MM-DD argument\n' >&2
+        exit 1
+      fi
+      ;;
+    *)
+      printf 'error: unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if ! "$do_sessions" && ! "$do_runs"; then
+  do_sessions=true
+  do_runs=true
+fi
+
+FIND_BEFORE=()
+REF=""
+if [ -n "$before" ]; then
+  if ! [[ "$before" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    printf 'error: --before requires YYYY-MM-DD format (got "%s")\n' "$before" >&2
+    exit 1
+  fi
+  REF=$(mktemp)
+  cleanup_ref() { [ -n "$REF" ] && rm -f "$REF"; }
+  trap cleanup_ref EXIT
+  touch -t "$(printf '%s' "$before" | tr -d '-')0000" "$REF"
+  FIND_BEFORE=(! -newer "$REF")
+fi
+
+TARGETS=()
+
+if "$do_sessions" && [ -d "$SESSIONS_DIR" ]; then
+  while IFS= read -r -d '' f; do
+    TARGETS+=("$f")
+  done < <(find "$SESSIONS_DIR" -maxdepth 1 -type f -name '*.jsonl' "${FIND_BEFORE[@]}" -print0 2>/dev/null)
+fi
+
+if "$do_runs" && [ -d "$RUNS_DIR" ]; then
+  while IFS= read -r -d '' d; do
+    TARGETS+=("$d")
+  done < <(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d "${FIND_BEFORE[@]}" -print0 2>/dev/null)
+fi
+
+if [ ${#TARGETS[@]} -eq 0 ]; then
+  printf 'nothing to prune\n'
+  exit 0
+fi
+
+for t in "${TARGETS[@]}"; do
+  printf '%s\n' "$t"
+done
+
+if "$dry_run"; then
+  printf '\n%d item(s) would be removed (dry run)\n' "${#TARGETS[@]}"
+  exit 0
+fi
+
+if [ -t 0 ]; then
+  printf '\nremove %d item(s)? [y/N] ' "${#TARGETS[@]}" >/dev/tty
+  read -r confirm </dev/tty
+  case "$confirm" in
+    y | Y | yes | YES) ;;
+    *)
+      printf 'aborted\n'
+      exit 0
+      ;;
+  esac
+fi
+
+for t in "${TARGETS[@]}"; do
+  rm -rf "$t"
+done
+printf 'removed %d item(s)\n' "${#TARGETS[@]}"

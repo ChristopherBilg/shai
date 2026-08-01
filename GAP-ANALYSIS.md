@@ -13,7 +13,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 ## ✅ Done — core pipeline & the "day-one" architectural choices
 
-- **Append-only JSONL state** — `~/.shai/history.jsonl` (+ `latest.json`). Design choice #1 ("State Storage Format").
+- **Append-only JSONL state** — `~/.shai/sessions/<session_id>.jsonl` (+ `latest.json`). Design choice #1 ("State Storage Format").
 - **The 5 filters** — `shai-read → shai-context → shai-eval → shai-dispatch → shai-print`, each a pure stdin→stdout filter, plus the `shai` REPL/orchestrator and the re-eval/dispatch loop (`shai:96`).
 - **Naive context truncation** — last N user turns (default 10) in `shai-context`. This is exactly design choice #2's *recommended starting point* ("start with naive truncation… isolate this logic entirely inside `pa-context`").
 - **Tool-output truncation** — `MAX_BYTES=8000` in `shai-dispatch`. Design choice #4 ("force all local command outputs through a strict truncator").
@@ -22,7 +22,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 - **Loop-safe error handling** — every API/curl/parse failure becomes an `error` event with exit 0; `error` events are dropped in `shai-context` so failures never contaminate future context. (One slice of the design's "Resumability & Error Handling".)
 - **Per-tool timeouts** — `timeout` wraps tool execution in `shai-dispatch`. (One slice of the design's concurrency "hard timeouts on network-bound tools".)
 - **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai:16`) teaches the convention. *(done 2026-07-28)*
-- **Always-on request observability** (design "Operational reality #2") — `shai-eval` best-effort dumps the exact finalized request to `$SHAI_HOME/last_request.json` before every real call. *(done 2026-07-28)*
+- **Always-on request observability** (design "Operational reality #2") — `shai-eval` best-effort dumps the exact finalized request to `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` before every real call. *(done 2026-07-28)*
 - **Resumability** (design "Operational reality #4") — `shai-retry` classifies the history tail and resumes an interrupted run (dispatch a dangling tool_use, or re-eval after an error / tool_result / user turn) without re-prompting. *(done 2026-07-28)*
 - **Standard execution envelope** (design concurrency §1) — every event carries
   `{version, meta:{run_id, session_id, span_id, parent_span_id, timestamp}}`, added by the
@@ -33,6 +33,14 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 - **Env-var context propagation** (design concurrency §3) — `SHAI_SESSION_ID` / `SHAI_RUN_ID` /
   `SHAI_SPAN_ID` / `SHAI_PARENT_SPAN_ID` / `SHAI_SCHEMA_VERSION` minted at the root wrapper and
   inherited by child filters; an inherited session id always wins. *(done 2026-07-29)*
+- **Partitioned storage** (design concurrency §2) — `sessions/<session_id>.jsonl` replaces the
+  global `history.jsonl`; `runs/<run_id>/events.jsonl` already shipped. Manual retention via
+  `shai-prune`. Per-session file isolation eliminates the need for `flock`-style atomic append
+  guards — concurrent sessions write to separate files by construction. *(done 2026-07-31)*
+- **`flock` atomic appends** (design concurrency §2) — eliminated by design: per-session file
+  isolation removes the concurrent-append surface, so no locking mechanism is needed. The
+  user contract is: don't run `shai` and `shai-retry` on the same session concurrently.
+  *(done 2026-07-31)*
 
 ---
 
@@ -65,13 +73,8 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 ### Operational realities (§ 4th exchange)
 - **Execution permission matrix + write tools** — the "`rm -rf` problem": read ops auto-approved; write/execute ops pause the pipeline, render the proposed command, and require `Y`/Enter via `/dev/tty`. Today every tool is read-only, so the gate does not exist yet. ⚠️ **Gates MCP, and breaks `shai-retry` on arrival** — see [Ordering constraints](#ordering-constraints).
 
-### Concurrency (§ 5th exchange — 4 of 6 items still open)
-- **Partitioned storage** — the **run-log half is done**: `runs/<run_id>/events.jsonl` plus
-  per-span request dumps, added alongside an untouched global `history.jsonl`. What remains is the
-  breaking half: replacing the single global log with `sessions/<session_id>.jsonl`, and a
-  retention policy for `runs/` (which currently accrues one directory per turn, unpruned).
-- **`flock` atomic appends** — guard history writes against interleaving when payloads exceed `PIPE_BUF` (~4KB). *Unconstrained — no `flock` exists anywhere in the tree today, and it applies as-is to the current single log.*
-- **Idempotent, non-destructive retries** — replay a failed run into a new `run_id`, only committing to the session log on full success. **Requires all three of** the envelope, partitioned storage, and env-var propagation. Distinct from the shipped `shai-retry`, which resumes *in place*.
+### Concurrency (§ 5th exchange — 2 of 6 items still open)
+- **Idempotent, non-destructive retries** — replay a failed run into a new `run_id`, only committing to the session log on full success. **Requires all three of** the envelope, partitioned storage, and env-var propagation — **all now satisfied**. Distinct from the shipped `shai-retry`, which resumes *in place*.
 - **Process supervision** — run background/polling workflows under `systemd --user` / `launchd` / `supervisord` to avoid orphan/zombie processes. *Unconstrained within this list, but supervises nothing until a background workflow exists (e.g. the Outlook/Teams push→pull bridge below).*
 
 ---
@@ -79,18 +82,18 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 ## Ordering constraints
 
 Derived 2026-07-28 by checking each open item against the current scripts; **revised 2026-07-29**
-after the execution envelope and env-var propagation shipped. Of the **eleven** remaining open
-items, only **one** still has an unmet hard technical predecessor — *idempotent, non-destructive
-retries*, which awaits partitioned storage. Two further items are constrained by safety rather
-than by build order. The rest can be sequenced purely on value.
+after the execution envelope and env-var propagation shipped; **revised 2026-07-31** after
+partitioned storage and `flock` atomic appends shipped. Of the **nine** remaining open
+items, **none** have unmet hard technical predecessors. Two items are constrained by safety
+rather than by build order. The rest can be sequenced purely on value.
 
 ### Hard dependencies
 
 | Item | Requires | Why | Status |
 |---|---|---|---|
 | Standard execution envelope | Env-var context propagation | `meta.{run_id, session_id, parent_span_id, span_id}` cannot be populated across a five-process pipeline without inherited ambient context. Build the envelope alone and each filter mints its own `run_id`. | ✅ satisfied — both shipped 2026-07-29 |
-| Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. | ✅ predecessor shipped; only its session-log half remains |
-| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. | ⧗ still blocked on partitioned storage |
+| Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. | ✅ satisfied — both shipped 2026-07-31 |
+| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. | ✅ all prerequisites now satisfied |
 
 **Resolved 2026-07-29.** Both were implemented together, propagation first. The envelope turned out
 **not** to be a "breaking change to all six scripts and every shape-asserting test" — that holds
@@ -138,4 +141,4 @@ before the item is scheduled.
 
 ## Note on scope
 
-`CLAUDE.md`'s "Deferred beyond the MVP" line names four headliners — **streaming, write tools + permission gate, concurrency, MCP**. The design doc's real surface is larger. As of 2026-07-28, three former ⚠️ partials are ✅ done (XML `<external_data>` tagging, always-on `last_request.json` observability, `shai-retry` resumability); **model agnosticism** is the lone remaining partial, its true multi-provider adapter deferred to its own spec.
+`CLAUDE.md`'s "Deferred beyond the MVP" line names four headliners — **streaming, write tools + permission gate, concurrency, MCP**. The design doc's real surface is larger. As of 2026-07-28, three former ⚠️ partials are ✅ done (XML `<external_data>` tagging, always-on request-dump observability, `shai-retry` resumability); **model agnosticism** is the lone remaining partial, its true multi-provider adapter deferred to its own spec.
