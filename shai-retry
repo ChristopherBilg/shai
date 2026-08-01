@@ -10,7 +10,6 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
-LATEST="$STATE_DIR/latest.json"
 RUNS_DIR="$STATE_DIR/runs"
 
 # mint_id <prefix> — UTC-sortable id with 4 urandom bytes for collision resistance
@@ -27,11 +26,16 @@ advance_span() {
 
 # an inherited session always wins; a resume is a NEW run, per the design doc
 SHAI_SESSION_ID="${SHAI_SESSION_ID:-$(mint_id sess)}"
+if [[ "$SHAI_SESSION_ID" =~ [/] ]] || [[ "$SHAI_SESSION_ID" == *..* ]]; then
+  printf 'error: SHAI_SESSION_ID must not contain / or .. (got "%s")\n' "$SHAI_SESSION_ID" >&2
+  exit 1
+fi
 export SHAI_SESSION_ID
 export SHAI_SCHEMA_VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
 
 SESSIONS_DIR="$STATE_DIR/sessions"
 SESSION_LOG="$SESSIONS_DIR/$SHAI_SESSION_ID.jsonl"
+LATEST="$SESSIONS_DIR/$SHAI_SESSION_ID.latest.json"
 
 SHAI_RUN_ID="$(mint_id run)"
 export SHAI_RUN_ID

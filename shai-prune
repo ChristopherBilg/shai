@@ -44,13 +44,16 @@ fi
 FIND_BEFORE=()
 REF=""
 if [ -n "$before" ]; then
+  if ! [[ "$before" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    printf 'error: --before requires YYYY-MM-DD format (got "%s")\n' "$before" >&2
+    exit 1
+  fi
   REF=$(mktemp)
-  # portable mtime reference: touch -t YYYYMMDDhhmm
+  cleanup_ref() { [ -n "$REF" ] && rm -f "$REF"; }
+  trap cleanup_ref EXIT
   touch -t "$(printf '%s' "$before" | tr -d '-')0000" "$REF"
   FIND_BEFORE=(! -newer "$REF")
 fi
-cleanup_ref() { [ -n "$REF" ] && rm -f "$REF"; }
-trap cleanup_ref EXIT
 
 TARGETS=()
 

@@ -44,8 +44,7 @@ mkdir -p "$BLANKH/sessions"
   printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
   printf '\n'
 } >"$BLANKH/sessions/test.jsonl"
-# latest.json stays as-is (it's not session-partitioned)
-printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"stale1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}' >"$BLANKH/latest.json"
+printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"stale1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}' >"$BLANKH/sessions/test.latest.json"
 BLANKBEFORE=$(wc -l <"$BLANKH/sessions/test.jsonl")
 BLANKOUT=$(SHAI_HOME="$BLANKH" SHAI_SESSION_ID=test "$DIR/shai-retry" 2>&1)
 assert_contains "$BLANKOUT" "nothing to resume" "retry: blank tail is a no-op"

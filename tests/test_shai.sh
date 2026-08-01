@@ -186,7 +186,7 @@ _CLEANUP_DIRS+=("$UMH")
 mkdir -p "$UMH/runs"
 mkdir -p "$UMH/sessions"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"SYS"}}' >"$UMH/sessions/test.jsonl"
-: >"$UMH/latest.json" # pre-create writable: isolates the run-log path
+: >"$UMH/sessions/test.latest.json" # pre-create writable: isolates the run-log path
 write_roundtrip_curl_stub "$STUB"
 (
   umask 0222

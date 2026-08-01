@@ -19,7 +19,7 @@ new_home() {
 
 # --sessions prunes only session files
 new_home
-echo n | SHAI_HOME="$PHOME" "$DIR/shai-prune" --sessions </dev/null >/dev/null 2>&1
+SHAI_HOME="$PHOME" "$DIR/shai-prune" --sessions </dev/null >/dev/null 2>&1
 assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "0" \
   "prune: --sessions removes session files"
 assert_eq "$(find "$PHOME/runs/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "2" \
