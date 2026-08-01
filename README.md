@@ -18,7 +18,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 > exit
 ```
 
-State lives in `~/.shai/`: `history.jsonl` (the append-only log), `latest.json` (the most recent event), `last_request.json` (the most recent API request), and `runs/<run_id>/` holding a per-turn `events.jsonl` plus a `<span_id>-request.json` for each API call in that turn. Rewind the assistant's memory by slicing the log, e.g. `head -n 20 ~/.shai/history.jsonl` or truncating the file.
+State lives in `~/.shai/`: `sessions/<session_id>.jsonl` (per-session append-only logs), `latest.json` (the most recent event), `last_request.json` (the most recent API request), and `runs/<run_id>/` holding a per-turn `events.jsonl` plus a `<span_id>-request.json` for each API call in that turn. Rewind the assistant's memory by slicing the log, e.g. `head -n 20 ~/.shai/sessions/<session_id>.jsonl` or truncating the file.
 
 ## Composability
 Every stage is a filter, so you can run the pipeline by hand:
