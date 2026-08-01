@@ -1,7 +1,7 @@
 #!/bin/bash
 # shai-retry — resume an interrupted run from the append-only log (no re-prompt)
 # Usage: shai-retry [-q|--quiet]
-# Reads: nothing on stdin; operates on $SHAI_HOME state (sessions/<session_id>.jsonl, latest.json);
+# Reads: nothing on stdin; operates on $SHAI_HOME state (sessions/<session_id>.jsonl, sessions/<session_id>.latest.json);
 #        SHAI_SESSION_ID / SHAI_SCHEMA_VERSION from the environment if already set
 # Writes: appends stamped assistant/tool_result events to sessions/<session_id>.jsonl and to
 #         $SHAI_HOME/runs/<run_id>/events.jsonl (a resume mints a fresh run id); prints via shai-print
@@ -58,7 +58,7 @@ run_eval() {
     tee -a "$SESSION_LOG" | tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
 }
 
-# classify the true tail of history (latest.json is not updated by shai-dispatch)
+# classify the true tail of the session log (the latest file is not updated by shai-dispatch)
 CLASS=$(tail -n 1 "$SESSION_LOG" | jq -r '
   if .type=="message" and .source=="assistant" then
     (if ([.payload.content[]? | select(.type=="tool_use")] | length) > 0 then "DISPATCH" else "DONE" end)

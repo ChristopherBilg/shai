@@ -60,7 +60,7 @@ TARGETS=()
 if "$do_sessions" && [ -d "$SESSIONS_DIR" ]; then
   while IFS= read -r -d '' f; do
     TARGETS+=("$f")
-  done < <(find "$SESSIONS_DIR" -maxdepth 1 -name '*.jsonl' "${FIND_BEFORE[@]}" -print0 2>/dev/null)
+  done < <(find "$SESSIONS_DIR" -maxdepth 1 -type f -name '*.jsonl' "${FIND_BEFORE[@]}" -print0 2>/dev/null)
 fi
 
 if "$do_runs" && [ -d "$RUNS_DIR" ]; then
