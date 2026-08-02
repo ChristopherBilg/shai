@@ -48,6 +48,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -n "$REPLAY_RUN" ]; then
+  if [[ "$REPLAY_RUN" =~ [/] ]] || [[ "$REPLAY_RUN" == *..* ]]; then
+    printf 'error: run_id must not contain / or .. (got "%s")\n' "$REPLAY_RUN" >&2
+    exit 1
+  fi
   FAILED_RUN_LOG="$RUNS_DIR/$REPLAY_RUN/events.jsonl"
   if [ ! -s "$FAILED_RUN_LOG" ]; then
     printf 'error: run log not found: %s\n' "$FAILED_RUN_LOG" >&2
@@ -57,6 +61,11 @@ if [ -n "$REPLAY_RUN" ]; then
   REPLAY_SESSION=$(jq -r 'select(has("meta")) | .meta.session_id // empty' "$FAILED_RUN_LOG" | head -n1)
   if [ -z "$REPLAY_SESSION" ]; then
     printf 'error: run log has no session_id metadata\n' >&2
+    exit 1
+  fi
+
+  if [[ "$REPLAY_SESSION" =~ [/] ]] || [[ "$REPLAY_SESSION" == *..* ]]; then
+    printf 'error: session_id in run log must not contain / or .. (got "%s")\n' "$REPLAY_SESSION" >&2
     exit 1
   fi
 
