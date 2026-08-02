@@ -36,8 +36,8 @@ advance_span() {
 commit_run() {
   [ -s "$RUN_LOG" ] || return 0
   local last_type last_source
-  last_type=$(tail -n 1 "$RUN_LOG" | jq -r '.type // empty')
-  last_source=$(tail -n 1 "$RUN_LOG" | jq -r '.source // empty')
+  last_type=$(tail -n 1 "$RUN_LOG" | jq -r '.type // empty' 2>/dev/null) || return 0
+  last_source=$(tail -n 1 "$RUN_LOG" | jq -r '.source // empty' 2>/dev/null) || return 0
   if [ "$last_type" = "message" ] && [ "$last_source" = "assistant" ]; then
     jq -c 'select(.type != "error")' "$RUN_LOG" >>"$SESSION_LOG"
   fi
