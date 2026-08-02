@@ -6,7 +6,7 @@
 # Writes: --run: buffers in runs/<new_run_id>/events.jsonl, commits on success;
 #         no flags: appends to sessions/<session_id>.jsonl (in-place resume);
 #         prints via shai-print
-# Exit: 0 on success or nothing to resume; 1 if API key missing or run log not found
+# Exit: 0 on success or nothing to resume; 1 if API key missing, run log not found, or replay failed
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -72,6 +72,7 @@ if [ -n "$REPLAY_RUN" ]; then
   SHAI_SESSION_ID="$REPLAY_SESSION"
   export SHAI_SESSION_ID
   SESSIONS_DIR="$STATE_DIR/sessions"
+  mkdir -p "$SESSIONS_DIR"
   SESSION_LOG="$SESSIONS_DIR/$SHAI_SESSION_ID.jsonl"
   LATEST="$SESSIONS_DIR/$SHAI_SESSION_ID.latest.json"
 
@@ -105,24 +106,25 @@ if [ -n "$REPLAY_RUN" ]; then
   printf '%s\n' "$USER_TEXT" | "$DIR/shai-read" | "$DIR/shai-stamp" |
     jq -c --arg retry_of "$REPLAY_RUN" '.meta.retry_of = $retry_of' >>"$RUN_LOG"
 
-  cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+  cat "$SESSION_LOG" "$RUN_LOG" 2>/dev/null | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
     tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
 
   until cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" >>"$RUN_LOG"; do
     advance_span
-    cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+    cat "$SESSION_LOG" "$RUN_LOG" 2>/dev/null | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
       tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
   done
 
   LAST_TYPE=$(tail -n 1 "$RUN_LOG" | jq -r '.type // empty' 2>/dev/null) || LAST_TYPE=""
   LAST_SOURCE=$(tail -n 1 "$RUN_LOG" | jq -r '.source // empty' 2>/dev/null) || LAST_SOURCE=""
   if [ "$LAST_TYPE" = "message" ] && [ "$LAST_SOURCE" = "assistant" ]; then
-    jq -c 'select(.type != "error")' "$RUN_LOG" >>"$SESSION_LOG"
+    jq -c 'select(.type != "error")' "$RUN_LOG" >>"$SESSION_LOG" 2>/dev/null || true
     printf 'run %s replayed successfully as %s\n' "$REPLAY_RUN" "$SHAI_RUN_ID"
+    exit 0
   else
     printf 'replay failed — run log preserved at %s\n' "$RUNS_DIR/$SHAI_RUN_ID/events.jsonl" >&2
+    exit 1
   fi
-  exit 0
 fi
 
 # an inherited session always wins; a resume is a NEW run, per the design doc

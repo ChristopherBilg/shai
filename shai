@@ -39,7 +39,7 @@ commit_run() {
   last_type=$(tail -n 1 "$RUN_LOG" | jq -r '.type // empty' 2>/dev/null) || return 0
   last_source=$(tail -n 1 "$RUN_LOG" | jq -r '.source // empty' 2>/dev/null) || return 0
   if [ "$last_type" = "message" ] && [ "$last_source" = "assistant" ]; then
-    jq -c 'select(.type != "error")' "$RUN_LOG" >>"$SESSION_LOG"
+    jq -c 'select(.type != "error")' "$RUN_LOG" >>"$SESSION_LOG" 2>/dev/null || true
   fi
 }
 
