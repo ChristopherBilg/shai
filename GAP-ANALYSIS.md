@@ -41,6 +41,11 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
   isolation removes the concurrent-append surface, so no locking mechanism is needed. The
   user contract is: don't run `shai` and `shai-retry` on the same session concurrently.
   *(done 2026-07-31)*
+- **Idempotent, non-destructive retries** (design concurrency §4) — `shai` buffers events
+  in the run log during a turn and commits filtered events to the session log only on
+  success. `shai-retry --run <run_id>` replays a failed run under a new run_id with
+  `retry_of` metadata. Falls back to direct session-log writes when the run dir is
+  unavailable. *(done 2026-08-01)*
 
 ---
 
@@ -73,8 +78,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 ### Operational realities (§ 4th exchange)
 - **Execution permission matrix + write tools** — the "`rm -rf` problem": read ops auto-approved; write/execute ops pause the pipeline, render the proposed command, and require `Y`/Enter via `/dev/tty`. Today every tool is read-only, so the gate does not exist yet. ⚠️ **Gates MCP, and breaks `shai-retry` on arrival** — see [Ordering constraints](#ordering-constraints).
 
-### Concurrency (§ 5th exchange — 2 of 6 items still open)
-- **Idempotent, non-destructive retries** — replay a failed run into a new `run_id`, only committing to the session log on full success. **Requires all three of** the envelope, partitioned storage, and env-var propagation — **all now satisfied**. Distinct from the shipped `shai-retry`, which resumes *in place*.
+### Concurrency (§ 5th exchange — 1 of 6 items still open)
 - **Process supervision** — run background/polling workflows under `systemd --user` / `launchd` / `supervisord` to avoid orphan/zombie processes. *Unconstrained within this list, but supervises nothing until a background workflow exists (e.g. the Outlook/Teams push→pull bridge below).*
 
 ---
@@ -93,7 +97,7 @@ rather than by build order. The rest can be sequenced purely on value.
 |---|---|---|---|
 | Standard execution envelope | Env-var context propagation | `meta.{run_id, session_id, parent_span_id, span_id}` cannot be populated across a five-process pipeline without inherited ambient context. Build the envelope alone and each filter mints its own `run_id`. | ✅ satisfied — both shipped 2026-07-29 |
 | Partitioned storage | Standard execution envelope | `sessions/<session_id>.jsonl` + `runs/<run_id>.jsonl` needs the IDs to partition by. | ✅ satisfied — both shipped 2026-07-31 |
-| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. | ✅ all prerequisites now satisfied |
+| Idempotent, non-destructive retries | Envelope + partitioned storage + propagation | "Commit to the session log only on full success" presupposes both the run/session split and the IDs. | ✅ all prerequisites satisfied; implemented 2026-08-01 |
 
 **Resolved 2026-07-29.** Both were implemented together, propagation first. The envelope turned out
 **not** to be a "breaking change to all six scripts and every shape-asserting test" — that holds
