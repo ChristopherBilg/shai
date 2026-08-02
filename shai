@@ -4,7 +4,9 @@
 # Reads: interactive prompt lines on stdin (or piped input); SHAI_SESSION_ID / SHAI_SCHEMA_VERSION
 #        from the environment if already set (an inherited session id is never overwritten)
 # Writes: assistant turns via shai-print (tool dispatches shown by default; -q/--quiet hides them);
-#         appends stamped events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl and $SHAI_HOME/runs/<run_id>/events.jsonl
+#         buffers events in $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits
+#         finalized events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes
+#         directly if the run dir is unavailable)
 # Exit: 0 on clean exit; 1 if ANTHROPIC_API_KEY is missing (health check)
 set -euo pipefail
 
@@ -29,6 +31,16 @@ advance_span() {
   SPAN=$((SPAN + 1))
   export SHAI_PARENT_SPAN_ID="${SHAI_SPAN_ID:-}"
   export SHAI_SPAN_ID="span_$SPAN"
+}
+
+commit_run() {
+  [ -s "$RUN_LOG" ] || return 0
+  local last_type last_source
+  last_type=$(tail -n 1 "$RUN_LOG" | jq -r '.type // empty')
+  last_source=$(tail -n 1 "$RUN_LOG" | jq -r '.source // empty')
+  if [ "$last_type" = "message" ] && [ "$last_source" = "assistant" ]; then
+    jq -c 'select(.type != "error")' "$RUN_LOG" >>"$SESSION_LOG"
+  fi
 }
 
 # an inherited SHAI_SESSION_ID always wins: an nvim/tmux/cron wrapper owns the session
@@ -89,19 +101,29 @@ while read -r -p "> " line || [ -n "$line" ]; do
   fi
   advance_span
 
-  printf '%s\n' "$line" | "$DIR/shai-read" | "$DIR/shai-stamp" |
-    tee -a "$SESSION_LOG" >>"$RUN_LOG"
+  if [ "$RUN_LOG" != "/dev/null" ]; then
+    printf '%s\n' "$line" | "$DIR/shai-read" | "$DIR/shai-stamp" >>"$RUN_LOG"
 
-  cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
-    tee -a "$SESSION_LOG" | tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
+    cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+      tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
 
-  # shai-dispatch exits 1 when a tool ran (re-evaluate) and 0 when the turn is done.
-  # `set -o pipefail` is what carries that exit status through `| shai-stamp` — without
-  # it the pipeline would report shai-stamp's 0 and the loop would end after one pass.
-  until cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" |
-    tee -a "$SESSION_LOG" >>"$RUN_LOG"; do
-    advance_span
+    until cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" >>"$RUN_LOG"; do
+      advance_span
+      cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+        tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
+    done
+
+    commit_run
+  else
+    printf '%s\n' "$line" | "$DIR/shai-read" | "$DIR/shai-stamp" >>"$SESSION_LOG"
+
     cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
-      tee -a "$SESSION_LOG" | tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
-  done
+      tee -a "$SESSION_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
+
+    until cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" >>"$SESSION_LOG"; do
+      advance_span
+      cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+        tee -a "$SESSION_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
+    done
+  fi
 done
