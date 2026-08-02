@@ -77,4 +77,55 @@ BH=$(cat "$BLOCKH/sessions/test.jsonl" 2>/dev/null || echo "")
 assert_contains "$BH" '"source":"user"' "fallback: user event written directly to session log"
 assert_contains "$BH" 'fallback reply' "fallback: assistant event written directly to session log"
 
+# --- shai-retry --run tests ---------------------------------------------------
+
+# replay a failed run: creates a new run, commits to session log
+new_home
+make_stub_bin
+mkdir -p "$SHOME/runs/run_failed"
+{
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"replay me"},"version":"1.0","meta":{"run_id":"run_failed","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:00Z"}}'
+  printf '%s\n' '{"type":"error","source":"system","payload":{"text":"API timeout"},"version":"1.0","meta":{"run_id":"run_failed","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
+} >"$SHOME/runs/run_failed/events.jsonl"
+printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}' >"$SHIST"
+printf '%s' '{"type":"message","content":[{"type":"text","text":"replayed answer"}],"stop_reason":"end_turn"}' | write_curl_stub 200
+SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_failed >/dev/null 2>&1
+RH=$(cat "$SHIST")
+assert_contains "$RH" 'replay me' "replay: user message committed to session log"
+assert_contains "$RH" 'replayed answer' "replay: assistant response committed to session log"
+
+# replay records retry_of metadata in the new run
+# shellcheck disable=SC2010  # run dirs are mint_id-shaped, no special chars
+NEWRUN=$(ls "$SHOME/runs" | grep -v run_failed | head -n1)
+if [ -n "$NEWRUN" ]; then
+  NRLOG="$SHOME/runs/$NEWRUN/events.jsonl"
+  RETRY_OF=$(jq -r '.meta.retry_of // empty' "$NRLOG" | head -n1)
+  assert_eq "$RETRY_OF" "run_failed" "replay: new run records retry_of in meta"
+fi
+
+# already-committed run is a no-op
+new_home
+make_stub_bin
+mkdir -p "$SHOME/runs/run_done"
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":"done"},"version":"1.0","meta":{"run_id":"run_done","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:00Z"}}' >"$SHOME/runs/run_done/events.jsonl"
+{
+  printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}'
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"done"},"version":"1.0","meta":{"run_id":"run_done","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:00Z"}}'
+  printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"},"version":"1.0","meta":{"run_id":"run_done","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
+} >"$SHIST"
+BEFORE=$(wc -l <"$SHIST")
+OUT=$(SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_done 2>&1)
+AFTER=$(wc -l <"$SHIST")
+assert_contains "$OUT" "already committed" "replay: already-committed run detected"
+assert_eq "$AFTER" "$BEFORE" "replay: already-committed run appends nothing"
+
+# missing run log exits with error
+new_home
+assert_exit 1 "replay: missing run log exits 1" -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run nonexistent_run
+
+# existing no-flag behavior is preserved (nothing to resume on empty history)
+new_home
+OUT=$(SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-retry" 2>&1)
+assert_contains "$OUT" "nothing to resume" "replay: no-flag mode preserved"
+
 finish
