@@ -27,6 +27,9 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 # Retention:
 ./shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]  # manual retention
 
+# Replay a failed run (idempotent, non-destructive):
+./shai-retry --run <run_id>               # replay under a new run_id, commit on success
+
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
 ./bin/shellcheck shai shai-* tests/*.sh
@@ -83,10 +86,12 @@ Unstamped events from before the envelope still parse, so old session logs keep 
 The scripts:
 
 - **`shai`** — the REPL / orchestrator. Seeds the system prompt into empty session, reads a
-  line, appends it as a user event, then runs `shai-context | shai-eval --tools`, `tee`ing
-  the result into `sessions/$SHAI_SESSION_ID.jsonl`, `latest.json`, and `shai-print --dispatches` (the default,
-  so each tool call shows as a `⏺ name(args)` line; `./shai --quiet` / `-q` disables it). It
-  then loops `shai-dispatch` until no tool ran (see the re-eval loop below).
+  line, appends it as a user event to the run log, then runs `shai-context | shai-eval --tools`,
+  writing events to `runs/$SHAI_RUN_ID/events.jsonl` during execution. On successful turn
+  completion, `commit_run` appends finalized events (excluding errors) to the session log. Falls
+  back to direct session-log writes when the run dir is unavailable. Prints via `shai-print
+  --dispatches` by default (`./shai --quiet` / `-q` disables it). Then loops `shai-dispatch`
+  until no tool ran (see the re-eval loop below).
 - **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source + content sanitized) as a `user` message; interactive REPL input stays unwrapped.
 - **`shai-context [--window N]`** (`shai-context:1`) — a pure `jq` reducer. Reads the whole
   JSONL log, extracts the system prompt, keeps the last `N` **user turns** (default 10;
@@ -116,15 +121,18 @@ The scripts:
   A **blank** line is the one deliberate exception: it is skipped, because it carries no event and
   a blank reaching the tail of a session log would make `shai-retry`'s classifier report
   "nothing to resume" for a resumable run. No filter emits one, so this only guards hand-run input.
-- **`shai-retry [-q|--quiet]`** (`shai-retry:1`) — resumes an interrupted run from
-  `sessions/<session_id>.jsonl` with no re-prompt: classifies the tail (assistant+`tool_use` → dispatch;
-  `error`/`tool_result`/`user` → re-eval; complete or empty → no-op) and drives the same
-  eval/dispatch loop as `shai` to completion.
+- **`shai-retry [-q|--quiet] [--run <run_id>]`** (`shai-retry:1`) — without flags, resumes an
+  interrupted run from `sessions/<session_id>.jsonl` with no re-prompt: classifies the tail
+  (assistant+`tool_use` → dispatch; `error`/`tool_result`/`user` → re-eval; complete or empty →
+  no-op) and drives the same eval/dispatch loop as `shai` to completion. With `--run <run_id>`,
+  replays a failed run's user message under a new run_id using buffer-then-commit — events go to
+  the new run log during execution and are committed to the session log only on success. Records
+  `retry_of` in the envelope meta. Detects already-committed runs as no-ops.
 - **`shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
   retention: removes session log files and/or run directories, optionally filtered by date.
   Interactive prompts for confirmation; non-interactive skips it.
 
-**The re-eval loop** (in `shai:96`): the model may request tools → `shai-dispatch` runs them
+**The re-eval loop** (in `shai:110`): the model may request tools → `shai-dispatch` runs them
 and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the model sees the
 results → repeat until a turn ends with no tool call.
 
