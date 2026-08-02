@@ -128,4 +128,21 @@ new_home
 OUT=$(SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-retry" 2>&1)
 assert_contains "$OUT" "nothing to resume" "replay: no-flag mode preserved"
 
+# double replay is idempotent: second --run on the same failed run is a no-op
+new_home
+make_stub_bin
+mkdir -p "$SHOME/runs/run_double"
+{
+  printf '%s\n' '{"type":"message","source":"user","payload":{"text":"double me"},"version":"1.0","meta":{"run_id":"run_double","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:00Z"}}'
+  printf '%s\n' '{"type":"error","source":"system","payload":{"text":"timeout"},"version":"1.0","meta":{"run_id":"run_double","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
+} >"$SHOME/runs/run_double/events.jsonl"
+printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}' >"$SHIST"
+printf '%s' '{"type":"message","content":[{"type":"text","text":"doubled"}],"stop_reason":"end_turn"}' | write_curl_stub 200
+SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_double >/dev/null 2>&1
+AFTER_FIRST=$(wc -l <"$SHIST")
+OUT2=$(SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_double 2>&1)
+AFTER_SECOND=$(wc -l <"$SHIST")
+assert_contains "$OUT2" "already committed" "replay: double --run is idempotent"
+assert_eq "$AFTER_SECOND" "$AFTER_FIRST" "replay: second --run appends nothing"
+
 finish

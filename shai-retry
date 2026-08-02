@@ -66,7 +66,7 @@ if [ -n "$REPLAY_RUN" ]; then
   SESSION_LOG="$SESSIONS_DIR/$SHAI_SESSION_ID.jsonl"
   LATEST="$SESSIONS_DIR/$SHAI_SESSION_ID.latest.json"
 
-  if [ -f "$SESSION_LOG" ] && jq -e --arg rid "$REPLAY_RUN" 'select(.meta.run_id? == $rid)' "$SESSION_LOG" >/dev/null 2>&1; then
+  if [ -f "$SESSION_LOG" ] && jq -e --arg rid "$REPLAY_RUN" 'select(.meta.run_id? == $rid or .meta.retry_of? == $rid)' "$SESSION_LOG" >/dev/null 2>&1; then
     printf 'run %s already committed\n' "$REPLAY_RUN"
     exit 0
   fi
