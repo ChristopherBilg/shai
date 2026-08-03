@@ -30,6 +30,14 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 # Replay a failed run (idempotent, non-destructive):
 ./shai-retry --run <run_id>               # replay under a new run_id, commit on success
 
+# Process supervision (systemd --user):
+./shai-supervise install shai-heartbeat             # install + enable the heartbeat timer
+./shai-supervise install shai-heartbeat --interval 1h  # custom interval
+./shai-supervise uninstall|start|stop shai-heartbeat   # lifecycle management
+./shai-supervise status                             # list all shai-* units
+./shai-supervise logs shai-heartbeat                # tail journal
+./shai-heartbeat                                    # one-shot pipeline health check
+
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
 ./bin/shellcheck shai shai-* tests/*.sh
@@ -37,7 +45,8 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ```
 
 Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
-`SHAI_MODEL` (default `claude-opus-4-8`).
+`SHAI_MODEL` (default `claude-opus-4-8`), `SHAI_UNIT_DIR` (systemd unit directory, default
+`~/.config/systemd/user`).
 
 **Ambient trace context** — set by `shai`/`shai-retry`, inherited by every child filter, read only
 by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its request dump):
@@ -131,6 +140,21 @@ The scripts:
 - **`shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
   retention: removes session log files and/or run directories, optionally filtered by date.
   Interactive prompts for confirmation; non-interactive skips it.
+- **`shai-heartbeat`** (`shai-heartbeat:1`) — stub workflow: runs a canned prompt through
+  `shai-read | shai-context | shai-eval` (no `shai-stamp`, no session/run id) and checks the
+  reply is an `assistant` message, printing a timestamped PASS/FAIL line to stderr. Touches
+  nothing under `$SHAI_HOME` — a stateless liveness probe for the pipeline, meant to be run
+  periodically via `shai-supervise`. Exit 0 on pipeline success, 1 on failure.
+- **`shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]`**
+  (`shai-supervise:1`) — generates and manages a `systemd --user` `.service`+`.timer` pair that
+  runs any shai workflow script on a timer. `install` rejects script names containing `/` or
+  `..` (the script must resolve inside `shai-supervise`'s own directory), requires the script
+  to be executable and `ANTHROPIC_API_KEY` to be set, writes the units to `$SHAI_UNIT_DIR`
+  (default `~/.config/systemd/user`) embedding `ANTHROPIC_API_KEY`/`SHAI_HOME` as
+  `Environment=` lines, then `chmod 600`s the `.service` file (it holds the plaintext key)
+  before `daemon-reload`ing and enabling the timer. The other subcommands delegate to
+  `systemctl --user` / `journalctl --user`. Exit 0 on success, 1 on validation/systemctl
+  failure, 2 on usage error (unrecognized subcommand).
 
 **The re-eval loop** (in `shai:110`): the model may request tools → `shai-dispatch` runs them
 and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the model sees the

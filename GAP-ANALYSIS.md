@@ -46,6 +46,10 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
   success. `shai-retry --run <run_id>` replays a failed run under a new run_id with
   `retry_of` metadata. Falls back to direct session-log writes when the run dir is
   unavailable. *(done 2026-08-01)*
+- **Process supervision** (design concurrency §4.3) — `shai-supervise` generates and manages
+  `systemd --user` `.service` + `.timer` unit files for any shai workflow script.
+  `shai-heartbeat` is the stub consumer: exercises the full pipeline with a canned prompt,
+  reports pass/fail to the journal, and leaves no state behind. *(done 2026-08-02)*
 
 ---
 
@@ -78,16 +82,13 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 ### Operational realities (§ 4th exchange)
 - **Execution permission matrix + write tools** — the "`rm -rf` problem": read ops auto-approved; write/execute ops pause the pipeline, render the proposed command, and require `Y`/Enter via `/dev/tty`. Today every tool is read-only, so the gate does not exist yet. ⚠️ **Gates MCP, and breaks `shai-retry` on arrival** — see [Ordering constraints](#ordering-constraints).
 
-### Concurrency (§ 5th exchange — 1 of 6 items still open)
-- **Process supervision** — run background/polling workflows under `systemd --user` / `launchd` / `supervisord` to avoid orphan/zombie processes. *Unconstrained within this list, but supervises nothing until a background workflow exists (e.g. the Outlook/Teams push→pull bridge below).*
-
 ---
 
 ## Ordering constraints
 
 Derived 2026-07-28 by checking each open item against the current scripts; **revised 2026-07-29**
 after the execution envelope and env-var propagation shipped; **revised 2026-07-31** after
-partitioned storage and `flock` atomic appends shipped. Of the **nine** remaining open
+partitioned storage and `flock` atomic appends shipped. Of the **eight** remaining open
 items, **none** have unmet hard technical predecessors. Two items are constrained by safety
 rather than by build order. The rest can be sequenced purely on value.
 
