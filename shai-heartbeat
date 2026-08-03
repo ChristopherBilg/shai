@@ -1,0 +1,25 @@
+#!/bin/bash
+# shai-heartbeat — stub workflow: exercise the full pipeline and report pass/fail
+# Usage: shai-heartbeat
+# Reads: nothing on stdin; ANTHROPIC_API_KEY from environment
+# Writes: timestamped pass/fail line to stderr
+# Exit: 0 on pipeline success; 1 on pipeline failure
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
+RESULT=$(printf 'Respond with the single word OK\n' | "$DIR/shai-read" | "$DIR/shai-context" | "$DIR/shai-eval" 2>/dev/null) || {
+  printf '%s FAIL shai-heartbeat: pipeline error\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+  exit 1
+}
+
+TYPE=$(printf '%s' "$RESULT" | jq -r '.type // empty' 2>/dev/null) || TYPE=""
+SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE=""
+
+if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
+  printf '%s PASS shai-heartbeat\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+  exit 0
+else
+  printf '%s FAIL shai-heartbeat: type=%s source=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$TYPE" "$SOURCE" >&2
+  exit 1
+fi
