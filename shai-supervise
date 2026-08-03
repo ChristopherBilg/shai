@@ -1,29 +1,28 @@
 #!/bin/bash
 # shai-supervise — manage shai workflows under systemd --user
-# Usage: shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]
+# Usage: shai-supervise install|uninstall|start|stop|logs <script> [--interval <timespan>]
+#        shai-supervise status [script]
 # Reads: ANTHROPIC_API_KEY, SHAI_HOME from environment (install only); target script from $DIR
-# Writes: systemd unit files to ~/.config/systemd/user/ (install/uninstall)
+# Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall)
 # Exit: 0 on success; 1 on validation error or systemctl failure; 2 on usage error
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 UNIT_DIR="${SHAI_UNIT_DIR:-$HOME/.config/systemd/user}"
 
-# unit_name <script>: strip leading shai- if present, prepend shai-
+# unit_name <script>: validate, strip leading shai- if present, prepend shai-
 unit_name() {
   local script="$1"
+  if [[ "$script" =~ [/] ]] || [[ "$script" == *..* ]]; then
+    printf 'error: script name must not contain / or .. (got "%s")\n' "$script" >&2
+    exit 1
+  fi
   script="${script#shai-}"
   printf 'shai-%s' "$script"
 }
 
 cmd_install() {
   local script="$1" interval="${2:-15min}"
-
-  if [[ "$script" =~ [/] ]] || [[ "$script" == *..* ]]; then
-    printf 'error: script name must not contain / or .. (got "%s")\n' "$script" >&2
-    exit 1
-  fi
-
   local script_path="$DIR/$script"
 
   if [ ! -x "$script_path" ]; then

@@ -46,15 +46,18 @@ assert_exit 1 "validate: install missing script" -- "$DIR/shai-supervise" instal
 # --- validation: install non-existent script ---
 assert_exit 1 "validate: install non-existent script" -- "$DIR/shai-supervise" install nonexistent-script-xyz
 
-# --- validation: install rejects path traversal in script name ---
+# --- validation: path traversal rejected in all subcommands (guard is in unit_name) ---
 assert_exit 1 "validate: install rejects / in script name" -- "$DIR/shai-supervise" install "foo/bar"
 assert_exit 1 "validate: install rejects .. in script name" -- "$DIR/shai-supervise" install "foo..bar"
 
-ERR=$("$DIR/shai-supervise" install "foo/bar" 2>&1)
+ERR=$("$DIR/shai-supervise" uninstall "foo/bar" 2>&1)
 assert_contains "$ERR" "must not contain / or .." "validate: path traversal error message (/ variant)"
 
-ERR=$("$DIR/shai-supervise" install "foo..bar" 2>&1)
+ERR=$("$DIR/shai-supervise" uninstall "foo..bar" 2>&1)
 assert_contains "$ERR" "must not contain / or .." "validate: path traversal error message (.. variant)"
+
+assert_exit 1 "validate: uninstall rejects / in script name" -- "$DIR/shai-supervise" uninstall "foo/bar"
+assert_exit 1 "validate: start rejects .. in script name" -- "$DIR/shai-supervise" start "foo..bar"
 
 # --- validation: install missing ANTHROPIC_API_KEY ---
 (
