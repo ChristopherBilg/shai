@@ -1,36 +1,48 @@
 #!/bin/bash
 # shai-context — pure jq reducer: build the Anthropic {system,messages} request from the event log
-# Usage: cat sessions/<id>.jsonl | shai-context [--window N]
-# Reads: the JSONL event log on stdin
+# Usage: cat sessions/<id>.jsonl | shai-context [--max-bytes N]
+# Reads: the JSONL event log on stdin; SHAI_MAX_CONTEXT_BYTES from the environment (default 1300000)
 # Writes: one JSON {system, messages} request object
-# Exit: 0 normally; 1 if --window is given without a value
+# Exit: 0 normally; 1 if --max-bytes is given without a value
 set -euo pipefail
 
-WINDOW="10"
+MAX_BYTES="${SHAI_MAX_CONTEXT_BYTES:-1300000}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --window)
+    --max-bytes)
       [ "$#" -lt 2 ] && {
-        echo "error: --window requires a value" >&2
+        echo "error: --max-bytes requires a value" >&2
         exit 1
       }
-      WINDOW="$2"
+      MAX_BYTES="$2"
       shift 2
       ;;
     *) break ;;
   esac
 done
 
-jq -R -s -c --argjson window "$WINDOW" '
+jq -R -s -c --argjson max_bytes "$MAX_BYTES" '
   split("\n") | map(select(length > 0)) | map(try fromjson catch null) | map(select(. != null))
   | map(select((type=="object") and ((.payload? | type) == "object")))
   | . as $events
   | ($events | map(select(.type=="message" and .source=="system") | .payload.text) | join("\n\n")) as $system
   | ($events | map(select(.source != "system"))) as $conv
   | [ range(0; ($conv|length)) as $i | select($conv[$i].type=="message" and $conv[$i].source=="user") | $i ] as $uidx
-  # window <= 0 keeps no turns; interrupted tool calls can leave a dangling tool_use
-  # (no following tool_result) — the shai loop always dispatches, so recover by clearing history.
-  | (if $window <= 0 then ($conv | length) elif ($uidx | length) > $window then $uidx[-$window] else ($uidx[0] // 0) end) as $start
+  | (if ($uidx | length) == 0 then 0
+     else
+       ($uidx[-1]) as $last_start
+       | ($conv[$last_start:] | map(tojson | utf8bytelength) | add // 0) as $last_bytes
+       | ($system | utf8bytelength) as $sys_bytes
+       | ($max_bytes - $sys_bytes - $last_bytes) as $budget
+       | (reduce range(($uidx|length)-2; -1; -1) as $i (
+           {start: $last_start, used: 0};
+           (if $i < (($uidx|length)-1) then $uidx[$i+1] else ($conv|length) end) as $next
+           | ($conv[$uidx[$i]:$next] | map(tojson | utf8bytelength) | add // 0) as $turn_bytes
+           | if (.used + $turn_bytes) <= $budget
+             then .start = $uidx[$i] | .used += $turn_bytes
+             else . end
+         ) | .start)
+     end) as $start
   | ($conv[$start:]) as $win
   | (reduce $win[] as $e (
         {messages: [], pending: []};
