@@ -30,6 +30,14 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 # Replay a failed run (idempotent, non-destructive):
 ./shai-retry --run <run_id>               # replay under a new run_id, commit on success
 
+# Process supervision (systemd --user):
+./shai-supervise install shai-heartbeat             # install + enable the heartbeat timer
+./shai-supervise install shai-heartbeat --interval 1h  # custom interval
+./shai-supervise uninstall|start|stop shai-heartbeat   # lifecycle management
+./shai-supervise status                             # list all shai-* units
+./shai-supervise logs shai-heartbeat                # tail journal
+./shai-heartbeat                                    # one-shot pipeline health check
+
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
 ./bin/shellcheck shai shai-* tests/*.sh
