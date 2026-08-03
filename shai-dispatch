@@ -36,9 +36,11 @@ check_policy() {
         ))
       )
     | .action
-  ' "$policy_file" 2>/dev/null | head -n 1)
+  ' "$policy_file" 2>/dev/null | head -n 1) || action=""
 
-  printf '%s' "${action:-$(jq -r '.default // "prompt"' "$policy_file" 2>/dev/null || printf 'prompt')}"
+  local fallback
+  fallback=$(jq -r '.default // "prompt"' "$policy_file" 2>/dev/null) || fallback=""
+  printf '%s' "${action:-${fallback:-prompt}}"
 }
 
 run_tool() {
