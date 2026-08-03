@@ -38,13 +38,23 @@ NAME=$("$DIR/shai-supervise" __unit_name shai-foo 2>/dev/null)
 assert_eq "$NAME" "shai-foo" "naming: shai-foo → shai-foo"
 
 # --- validation: no subcommand ---
-assert_exit 1 "validate: no subcommand" -- "$DIR/shai-supervise"
+assert_exit 2 "validate: no subcommand" -- "$DIR/shai-supervise"
 
 # --- validation: install missing script name ---
 assert_exit 1 "validate: install missing script" -- "$DIR/shai-supervise" install
 
 # --- validation: install non-existent script ---
 assert_exit 1 "validate: install non-existent script" -- "$DIR/shai-supervise" install nonexistent-script-xyz
+
+# --- validation: install rejects path traversal in script name ---
+assert_exit 1 "validate: install rejects / in script name" -- "$DIR/shai-supervise" install "foo/bar"
+assert_exit 1 "validate: install rejects .. in script name" -- "$DIR/shai-supervise" install "foo..bar"
+
+ERR=$("$DIR/shai-supervise" install "foo/bar" 2>&1)
+assert_contains "$ERR" "must not contain / or .." "validate: path traversal error message (/ variant)"
+
+ERR=$("$DIR/shai-supervise" install "foo..bar" 2>&1)
+assert_contains "$ERR" "must not contain / or .." "validate: path traversal error message (.. variant)"
 
 # --- validation: install missing ANTHROPIC_API_KEY ---
 (
@@ -69,6 +79,7 @@ assert_contains "$(cat "$SERVICE")" "ExecStart=" "install: service has ExecStart
 assert_contains "$(cat "$SERVICE")" "shai-heartbeat" "install: ExecStart references script"
 assert_contains "$(cat "$SERVICE")" "ANTHROPIC_API_KEY=" "install: service has API key"
 assert_contains "$(cat "$SERVICE")" "SHAI_HOME=" "install: service has SHAI_HOME"
+assert_eq "$(stat -c '%a' "$SERVICE")" "600" "install: service file is chmod 600 (contains secret)"
 
 assert_contains "$(cat "$TIMER")" "OnBootSec=5min" "install: timer OnBootSec"
 assert_contains "$(cat "$TIMER")" "OnUnitActiveSec=15min" "install: timer default interval"
@@ -98,6 +109,8 @@ assert_eq "$RC" "0" "uninstall: exits 0"
 assert_eq "$([ -f "$SERVICE" ] && echo yes || echo no)" "no" "uninstall: .service removed"
 assert_eq "$([ -f "$TIMER" ] && echo yes || echo no)" "no" "uninstall: .timer removed"
 assert_contains "$(cat "$SYSTEMCTL_LOG")" "daemon-reload" "uninstall: daemon-reload called"
+assert_contains "$(cat "$SYSTEMCTL_LOG")" "stop shai-heartbeat.timer" "uninstall: stop called on timer"
+assert_contains "$(cat "$SYSTEMCTL_LOG")" "disable shai-heartbeat.timer" "uninstall: disable called on timer"
 
 # --- idempotent uninstall ---
 : >"$SYSTEMCTL_LOG"
@@ -124,6 +137,12 @@ assert_contains "$(cat "$SYSTEMCTL_LOG")" "status" "status: delegates to systemc
 : >"$SYSTEMCTL_LOG"
 "$DIR/shai-supervise" status >/dev/null 2>&1
 assert_contains "$(cat "$SYSTEMCTL_LOG")" "list-units" "status (no arg): lists shai-* units"
+
+# --- logs delegates to journalctl ---
+LOG_OUTPUT=$("$DIR/shai-supervise" logs shai-heartbeat 2>&1)
+assert_contains "$LOG_OUTPUT" "journalctl stub:" "logs: invokes journalctl"
+assert_contains "$LOG_OUTPUT" "-u shai-heartbeat.service" "logs: journalctl invoked with correct unit"
+assert_contains "$LOG_OUTPUT" "-f" "logs: journalctl invoked with -f (follow)"
 
 # --- validation: start/stop/logs missing script name ---
 assert_exit 1 "validate: start missing script" -- "$DIR/shai-supervise" start

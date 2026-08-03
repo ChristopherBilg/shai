@@ -18,6 +18,12 @@ unit_name() {
 
 cmd_install() {
   local script="$1" interval="${2:-15min}"
+
+  if [[ "$script" =~ [/] ]] || [[ "$script" == *..* ]]; then
+    printf 'error: script name must not contain / or .. (got "%s")\n' "$script" >&2
+    exit 1
+  fi
+
   local script_path="$DIR/$script"
 
   if [ ! -x "$script_path" ]; then
@@ -46,6 +52,7 @@ ExecStart=$script_path
 Environment=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
 Environment=SHAI_HOME=$shai_home
 EOF
+  chmod 600 "$UNIT_DIR/$name.service"
 
   cat >"$UNIT_DIR/$name.timer" <<EOF
 [Unit]
@@ -168,6 +175,6 @@ case "${1:-}" in
     ;;
   *)
     printf 'Usage: shai-supervise install|uninstall|start|stop|status|logs [script] [options]\n' >&2
-    exit 1
+    exit 2
     ;;
 esac

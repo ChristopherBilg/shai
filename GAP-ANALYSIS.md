@@ -88,7 +88,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 Derived 2026-07-28 by checking each open item against the current scripts; **revised 2026-07-29**
 after the execution envelope and env-var propagation shipped; **revised 2026-07-31** after
-partitioned storage and `flock` atomic appends shipped. Of the **nine** remaining open
+partitioned storage and `flock` atomic appends shipped. Of the **eight** remaining open
 items, **none** have unmet hard technical predecessors. Two items are constrained by safety
 rather than by build order. The rest can be sequenced purely on value.
 
