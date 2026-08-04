@@ -10,7 +10,7 @@ make_stub_bin
 write_gh_stub
 
 # --- ported from tests/tests.sh:156-201 (no-tool exit 0, gh tool_result + exit 1,
-#     unknown tool is_error, 8000-byte truncation, multiple tool_use, backslash path,
+#     unknown tool is_error, 32000-byte truncation, multiple tool_use, backslash path,
 #     gh `--` option-injection guard) ---
 NOTOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn"}}'
 echo "$NOTOOL" | "$DIR/shai-dispatch" >/dev/null
@@ -33,7 +33,7 @@ UNK='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_
 UOUT=$(echo "$UNK" | "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$UOUT" '"is_error":true' "dispatch: unknown tool → is_error"
 
-# truncation path: output > 8000 bytes must still emit a tool_result (SIGPIPE-safe)
+# truncation path: output > 32000 bytes must still emit a tool_result (SIGPIPE-safe)
 BIGFILE=$(mktemp)
 _CLEANUP_DIRS+=("$BIGFILE")
 head -c 200000 /dev/zero | tr '\0' 'x' >"$BIGFILE"
@@ -43,7 +43,7 @@ BRC=$?
 assert_eq "$BRC" "1" "dispatch: large output still exits 1 (no SIGPIPE crash)"
 assert_contains "$BOUT" '"type":"tool_result"' "dispatch: large output emits tool_result"
 assert_contains "$BOUT" '<external_data source=\"print_file\">' "dispatch: large output wrapped in external_data"
-assert_eq "$(printf '%s' "$BOUT" | jq -r '.payload.content | ltrimstr("<external_data source=\"print_file\">\n") | rtrimstr("\n</external_data>") | length')" "8000" "dispatch: tool output truncated to 8000 bytes (inside the fence)"
+assert_eq "$(printf '%s' "$BOUT" | jq -r '.payload.content | ltrimstr("<external_data source=\"print_file\">\n") | rtrimstr("\n</external_data>") | length')" "32000" "dispatch: tool output truncated to 32000 bytes (inside the fence)"
 
 NTOUT=$(echo "$NOTOOL" | "$DIR/shai-dispatch")
 assert_eq "$NTOUT" "" "dispatch: no-tool produces no output"

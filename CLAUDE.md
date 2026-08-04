@@ -30,6 +30,14 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 # Replay a failed run (idempotent, non-destructive):
 ./shai-retry --run <run_id>               # replay under a new run_id, commit on success
 
+# Process supervision (systemd --user):
+./shai-supervise install shai-heartbeat             # install + enable the heartbeat timer
+./shai-supervise install shai-heartbeat --interval 1h  # custom interval
+./shai-supervise uninstall|start|stop shai-heartbeat   # lifecycle management
+./shai-supervise status                             # list all shai-* units
+./shai-supervise logs shai-heartbeat                # tail journal
+./shai-heartbeat                                    # one-shot pipeline health check
+
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
 ./bin/shellcheck shai shai-* tests/*.sh
@@ -37,7 +45,9 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ```
 
 Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
-`SHAI_MODEL` (default `claude-opus-4-8`).
+`SHAI_MODEL` (default `claude-opus-4-8`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
+windowing, default `1300000`), `SHAI_UNIT_DIR` (systemd unit directory, default
+`~/.config/systemd/user`).
 
 **Ambient trace context** — set by `shai`/`shai-retry`, inherited by every child filter, read only
 by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its request dump):
@@ -93,11 +103,13 @@ The scripts:
   --dispatches` by default (`./shai --quiet` / `-q` disables it). Then loops `shai-dispatch`
   until no tool ran (see the re-eval loop below).
 - **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source + content sanitized) as a `user` message; interactive REPL input stays unwrapped.
-- **`shai-context [--window N]`** (`shai-context:1`) — a pure `jq` reducer. Reads the whole
-  JSONL log, extracts the system prompt, keeps the last `N` **user turns** (default 10;
-  `N<=0` clears history), and rebuilds the exact Anthropic `{system, messages}` request
-  shape — folding consecutive `tool_result`s back into a single `user` message. `error`
-  events are dropped here, so failures never contaminate future context.
+- **`shai-context [--max-bytes N]`** (`shai-context:1`) — a pure `jq` reducer. Reads the whole
+  JSONL log, extracts the system prompt, and keeps as many recent **turn groups** as fit within
+  the byte budget (default `SHAI_MAX_CONTEXT_BYTES` / `1300000`; `--max-bytes` overrides).
+  The system prompt and latest turn group are always preserved (soft ceiling). Rebuilds the
+  exact Anthropic `{system, messages}` request shape — folding consecutive `tool_result`s
+  back into a single `user` message. `error` events are dropped here, so failures never
+  contaminate future context.
 - **`shai-eval [--tools|--model|--max-tokens|--dry-run|--health-check]`** (`shai-eval:1`) —
   the only network hop (`curl` → Messages API). Emits an `assistant` or `error` event.
   **Invariant: it must never crash the loop.** Every API/curl/parse failure becomes an
@@ -108,7 +120,7 @@ The scripts:
 - **`shai-dispatch`** (`shai-dispatch:1`) — reads the latest assistant event, runs each
   `tool_use` block via `run_tool`, and emits `tool_result` events. **Exit 1 if any tool
   ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool output is truncated to
-  `MAX_BYTES=8000` and fenced in `<external_data source="<tool>">…</external_data>` (source
+  `MAX_BYTES=32000` and fenced in `<external_data source="<tool>">…</external_data>` (source
   sanitized; injected closing tags neutralized).
 - **`shai-print [--debug|--dispatches]`** (`shai-print:1`) — renders an event to human text.
   `--debug` surfaces verbose `tool_use`/`tool_result` lines. `--dispatches` surfaces only the
@@ -131,6 +143,21 @@ The scripts:
 - **`shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
   retention: removes session log files and/or run directories, optionally filtered by date.
   Interactive prompts for confirmation; non-interactive skips it.
+- **`shai-heartbeat`** (`shai-heartbeat:1`) — stub workflow: runs a canned prompt through
+  `shai-read | shai-context | shai-eval` (no `shai-stamp`, no session/run id) and checks the
+  reply is an `assistant` message, printing a timestamped PASS/FAIL line to stderr. Touches
+  nothing under `$SHAI_HOME` — a stateless liveness probe for the pipeline, meant to be run
+  periodically via `shai-supervise`. Exit 0 on pipeline success, 1 on failure.
+- **`shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]`**
+  (`shai-supervise:1`) — generates and manages a `systemd --user` `.service`+`.timer` pair that
+  runs any shai workflow script on a timer. `install` rejects script names containing `/` or
+  `..` (the script must resolve inside `shai-supervise`'s own directory), requires the script
+  to be executable and `ANTHROPIC_API_KEY` to be set, writes the units to `$SHAI_UNIT_DIR`
+  (default `~/.config/systemd/user`) embedding `ANTHROPIC_API_KEY`/`SHAI_HOME` as
+  `Environment=` lines, then `chmod 600`s the `.service` file (it holds the plaintext key)
+  before `daemon-reload`ing and enabling the timer. The other subcommands delegate to
+  `systemctl --user` / `journalctl --user`. Exit 0 on success, 1 on validation/systemctl
+  failure, 2 on usage error (unrecognized subcommand).
 
 **The re-eval loop** (in `shai:110`): the model may request tools → `shai-dispatch` runs them
 and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the model sees the

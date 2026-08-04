@@ -15,8 +15,14 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 - **Append-only JSONL state** — `~/.shai/sessions/<session_id>.jsonl` (+ `latest.json`). Design choice #1 ("State Storage Format").
 - **The 5 filters** — `shai-read → shai-context → shai-eval → shai-dispatch → shai-print`, each a pure stdin→stdout filter, plus the `shai` REPL/orchestrator and the re-eval/dispatch loop (`shai:96`).
-- **Naive context truncation** — last N user turns (default 10) in `shai-context`. This is exactly design choice #2's *recommended starting point* ("start with naive truncation… isolate this logic entirely inside `pa-context`").
-- **Tool-output truncation** — `MAX_BYTES=8000` in `shai-dispatch`. Design choice #4 ("force all local command outputs through a strict truncator").
+- **Byte-budget context windowing** — `shai-context` measures turn groups with `utf8bytelength`
+  and keeps as many recent turns as fit within `SHAI_MAX_CONTEXT_BYTES` (default 1,300,000;
+  `--max-bytes` overrides). System prompt and latest turn group are always preserved. Replaces
+  the former turn-count truncation (`--window 10`). Design choice #2's recommended starting
+  point, now with a pure byte-budget mechanism. The default (1.3M bytes) was conservatively
+  sized assuming ~3 bytes/token for typical content, representing a one-third window vs. a
+  1M-token limit.
+- **Tool-output truncation** — `MAX_BYTES=32000` in `shai-dispatch`. Design choice #4 ("force all local command outputs through a strict truncator"). Raised from 8000 to accommodate larger context budgets.
 - **Synchronous / blocking execution** — design choice #5's explicit v1.0 recommendation.
 - **Read-only tools** — `gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file` (`tools.json` + `run_tool` in `shai-dispatch`).
 - **Loop-safe error handling** — every API/curl/parse failure becomes an `error` event with exit 0; `error` events are dropped in `shai-context` so failures never contaminate future context. (One slice of the design's "Resumability & Error Handling".)
@@ -46,6 +52,10 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
   success. `shai-retry --run <run_id>` replays a failed run under a new run_id with
   `retry_of` metadata. Falls back to direct session-log writes when the run dir is
   unavailable. *(done 2026-08-01)*
+- **Process supervision** (design concurrency §4.3) — `shai-supervise` generates and manages
+  `systemd --user` `.service` + `.timer` unit files for any shai workflow script.
+  `shai-heartbeat` is the stub consumer: exercises the full pipeline with a canned prompt,
+  reports pass/fail to the journal, and leaves no state behind. *(done 2026-08-02)*
 
 ---
 
@@ -69,7 +79,11 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 > [Ordering constraints](#ordering-constraints) for what actually has to precede what.
 
 ### Edge cases (§ "The Edge Cases")
-- **Token-aware context** — a real tokenizer (Python/Rust `tiktoken`-style) replacing turn-count truncation, to preserve system prompt + latest request while dropping least-relevant history. ⚑ *Conflicts with the zero-dependency rule — needs a decision, not just an implementation.*
+- **Token-aware context** — the current byte-budget system (measuring with `utf8bytelength`)
+  is a practical alternative to a real tokenizer. It preserves the zero-dependency rule while
+  providing predictable memory bounds. A true tokenizer (e.g., `tiktoken`-style) would offer
+  ~25% better accuracy in predicting token counts, but is not needed for correctness — the
+  byte-based approach is deliberately conservative and works well in practice.
 - **Streaming** — buffering mid-stream tool calls; streamed responses. (Current pipeline is fully buffered/non-streaming.) *Unconstrained, but the most invasive reshape of the pipeline: `shai-eval` stops emitting a single buffered event.*
 
 ### Architectural choices (§ 2nd exchange)
@@ -82,16 +96,13 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 ### Operational realities (§ 4th exchange)
 
-### Concurrency (§ 5th exchange — 1 of 6 items still open)
-- **Process supervision** — run background/polling workflows under `systemd --user` / `launchd` / `supervisord` to avoid orphan/zombie processes. *Unconstrained within this list, but supervises nothing until a background workflow exists (e.g. the Outlook/Teams push→pull bridge below).*
-
 ---
 
 ## Ordering constraints
 
 Derived 2026-07-28 by checking each open item against the current scripts; **revised 2026-07-29**
 after the execution envelope and env-var propagation shipped; **revised 2026-07-31** after
-partitioned storage and `flock` atomic appends shipped. Of the **nine** remaining open
+partitioned storage and `flock` atomic appends shipped. Of the **eight** remaining open
 items, **none** have unmet hard technical predecessors. Two items are constrained by safety
 rather than by build order. The rest can be sequenced purely on value.
 
@@ -124,9 +135,11 @@ were left untouched entirely.
 
 ### Constraint conflict (not an ordering problem)
 
-**Token-aware context** requires a real tokenizer, which breaks the project's stated
-zero-dependency rule (`bash`, `curl`, `jq`, plus `gh` for the GitHub tools). Settle that decision
-before the item is scheduled.
+**Token-aware context** — partially resolved. The current byte-budget system (measuring with
+`utf8bytelength`, with a default of 1.3M bytes conservatively sized for ~3 bytes/token)
+provides budget-based windowing without a tokenizer dependency. This preserves the zero-
+dependency rule. A real tokenizer (e.g., `tiktoken`) would be ~25% more accurate but is not
+necessary for correctness — the byte-based approach is conservative by design.
 
 ---
 
