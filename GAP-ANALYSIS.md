@@ -19,8 +19,9 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
   and keeps as many recent turns as fit within `SHAI_MAX_CONTEXT_BYTES` (default 1,300,000;
   `--max-bytes` overrides). System prompt and latest turn group are always preserved. Replaces
   the former turn-count truncation (`--window 10`). Design choice #2's recommended starting
-  point, upgraded with a byte heuristic (divide-by-3 conservative) that avoids the tokenizer
-  dependency.
+  point, now with a pure byte-budget mechanism. The default (1.3M bytes) was conservatively
+  sized assuming ~3 bytes/token for typical content, representing a one-third window vs. a
+  1M-token limit.
 - **Tool-output truncation** — `MAX_BYTES=32000` in `shai-dispatch`. Design choice #4 ("force all local command outputs through a strict truncator"). Raised from 8000 to accommodate larger context budgets.
 - **Synchronous / blocking execution** — design choice #5's explicit v1.0 recommendation.
 - **Read-only tools** — `gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file` (`tools.json` + `run_tool` in `shai-dispatch`).
@@ -69,10 +70,11 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 > [Ordering constraints](#ordering-constraints) for what actually has to precede what.
 
 ### Edge cases (§ "The Edge Cases")
-- **Token-aware context** — the byte-budget heuristic (divide-by-3) sidesteps the tokenizer
-  dependency while providing budget-based windowing. A real tokenizer would improve accuracy
-  but remains blocked on the zero-dependency decision. The current heuristic is conservative
-  (overestimates token usage by ~25% for typical content).
+- **Token-aware context** — the current byte-budget system (measuring with `utf8bytelength`)
+  is a practical alternative to a real tokenizer. It preserves the zero-dependency rule while
+  providing predictable memory bounds. A true tokenizer (e.g., `tiktoken`-style) would offer
+  ~25% better accuracy in predicting token counts, but is not needed for correctness — the
+  byte-based approach is deliberately conservative and works well in practice.
 - **Streaming** — buffering mid-stream tool calls; streamed responses. (Current pipeline is fully buffered/non-streaming.) *Unconstrained, but the most invasive reshape of the pipeline: `shai-eval` stops emitting a single buffered event.*
 
 ### Architectural choices (§ 2nd exchange)
@@ -132,10 +134,11 @@ were left untouched entirely.
 
 ### Constraint conflict (not an ordering problem)
 
-**Token-aware context** — partially resolved. The byte-budget heuristic (`utf8bytelength / 3`)
-provides budget-based windowing without a tokenizer dependency. A real tokenizer would give
-~25% more accurate counts but is not needed for correctness — the heuristic is deliberately
-conservative. The zero-dependency rule is preserved.
+**Token-aware context** — partially resolved. The current byte-budget system (measuring with
+`utf8bytelength`, with a default of 1.3M bytes conservatively sized for ~3 bytes/token)
+provides budget-based windowing without a tokenizer dependency. This preserves the zero-
+dependency rule. A real tokenizer (e.g., `tiktoken`) would be ~25% more accurate but is not
+necessary for correctness — the byte-based approach is conservative by design.
 
 ---
 
