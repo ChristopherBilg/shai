@@ -1,7 +1,7 @@
 #!/bin/bash
 # shai-dispatch — run tool_use blocks from the latest assistant event; emit tool_result events
 # Usage: cat latest.json | shai-dispatch
-# Reads: the latest assistant event JSON on stdin
+# Reads: the latest assistant event JSON on stdin; $SHAI_HOME/policy.json for permission rules
 # Writes: one tool_result event per tool_use (output truncated to 8000 bytes)
 # Exit: 1 if any tool ran (signals shai to re-evaluate), 0 otherwise
 set -euo pipefail

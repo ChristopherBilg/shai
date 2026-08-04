@@ -51,6 +51,11 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 ## ⚠️ Partial — started, but not to the doc's spec
 
+- **Execution permission matrix** — the permission gate is done (`shai-dispatch` checks
+  `$SHAI_HOME/policy.json`; first-match-wins rules with allow/prompt/deny actions;
+  non-interactive fail-closed; unrecognized actions fail-closed). **Write tools themselves are
+  not yet added** — the gate is in place and will govern them when they arrive.
+  *(gate done 2026-08-03)*
 - **Model agnosticism** (design extensibility pillar #2) — *the lone remaining partial; a true multi-provider adapter is split into its own spec.*
   - Have: `SHAI_MODEL` env var swaps the model (`shai-eval`).
   - Missing: it only swaps *Anthropic* models — `shai-eval` is hardwired to the Anthropic URL/headers/response shape. No adapter layer for Ollama / other providers.
@@ -76,7 +81,6 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 - **"Tee" middleware hooks** — the split-the-stream pattern exposed as a real extension point (local analytics DB, embeddings, RAG) grafted onto the pipeline without touching the core loop. (`shai` uses `tee` internally, but not as a user-facing hook.) *Unconstrained; benefits from the envelope's `version` field but does not require it.*
 
 ### Operational realities (§ 4th exchange)
-- **Execution permission matrix + write tools** — the "`rm -rf` problem": read ops auto-approved; write/execute ops pause the pipeline, render the proposed command, and require `Y`/Enter via `/dev/tty`. Today every tool is read-only, so the gate does not exist yet. ⚠️ **Gates MCP, and breaks `shai-retry` on arrival** — see [Ordering constraints](#ordering-constraints).
 
 ### Concurrency (§ 5th exchange — 1 of 6 items still open)
 - **Process supervision** — run background/polling workflows under `systemd --user` / `launchd` / `supervisord` to avoid orphan/zombie processes. *Unconstrained within this list, but supervises nothing until a background workflow exists (e.g. the Outlook/Teams push→pull bridge below).*
@@ -110,17 +114,13 @@ were left untouched entirely.
 
 ### Safety inversions
 
-- **MCP must not precede the permission gate.** The only thing making the absent gate safe today is
-  the all-tools-are-read-only invariant (`tools.json`: `gh_pr_view`, `gh_issue_view`,
-  `list_directory`, `print_file`). MCP attaches arbitrary third-party stdio servers whose tools are
-  not read-only, which destroys that invariant. Shipping MCP first opens a window where shai
-  executes third-party write/exec tools with no approval prompt. The written order puts MCP three
-  slots ahead of the gate.
-- **Write tools break the shipped `shai-retry`.** `shai-retry:49` re-dispatches a dangling
-  `tool_use` with no idempotency check — harmless while every tool is read-only, but with write
-  tools it re-executes a write that may already have partially run. The permission-gate item
-  therefore needs *either* idempotent non-destructive retries first, *or* a dispatch-side replay
-  guard of its own.
+- **MCP still requires the permission gate** — the gate now exists (`shai-dispatch` checks
+  `$SHAI_HOME/policy.json`), satisfying this precondition. MCP tools will be governed by the
+  same policy file when they arrive.
+- **Write tools and `shai-retry`** — the permission gate is now in place, but `shai-retry:49`
+  still re-dispatches a dangling `tool_use` with no idempotency check. Harmless while every
+  tool is read-only, but with write tools it would re-execute a write that may already have
+  partially run. Write tools need either idempotent dispatch or a replay guard.
 
 ### Constraint conflict (not an ordering problem)
 

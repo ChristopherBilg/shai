@@ -140,6 +140,12 @@ results → repeat until a turn ends with no tool call.
 `gh_issue_view`, `list_directory`, `print_file` — all read-only. `run_tool` in
 `shai-dispatch` and `tools.json` must be kept in sync.
 
+**Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
+Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:
+`allow` (execute silently), `prompt` (interactive Y/N on `/dev/tty`; non-interactive → fail
+closed as error event), `deny` (error event, never execute). When no policy file exists, the
+four built-in read-only tools are auto-allowed and everything else defaults to `prompt`.
+
 ## Conventions to preserve
 
 - Every runtime script starts with `#!/bin/bash` + `set -euo pipefail`. `tests/conventions.sh`
