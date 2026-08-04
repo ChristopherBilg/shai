@@ -44,5 +44,17 @@
       },
       "required": ["path"]
     }
+  },
+  {
+    "name": "write_file",
+    "description": "Create or overwrite a file with the given content. Creates parent directories if needed.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or relative path to the file." },
+        "content": { "type": "string", "description": "The full content to write to the file." }
+      },
+      "required": ["path", "content"]
+    }
   }
 ]

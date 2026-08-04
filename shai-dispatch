@@ -101,6 +101,20 @@ run_tool() {
       path=$(printf '%s' "$input" | jq -r '.path')
       timeout 30s cat -- "$path" 2>&1
       ;;
+    write_file)
+      path=$(printf '%s' "$input" | jq -r '.path')
+      local content
+      content=$(printf '%s' "$input" | jq -r '.content')
+      mkdir -p -- "$(dirname "$path")" 2>&1 || {
+        printf 'cannot create parent directory for %s' "$path"
+        return 1
+      }
+      printf '%s' "$content" >"$path" || {
+        printf 'cannot write to %s' "$path"
+        return 1
+      }
+      printf 'Wrote %d bytes to %s' "$(wc -c <"$path")" "$path"
+      ;;
     *)
       printf 'Unknown tool: %s' "$name"
       return 1

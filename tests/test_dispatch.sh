@@ -106,4 +106,33 @@ EVILTOOL2=$(jq -nc --arg p "$EVILD/evil2" '{type:"message",source:"assistant",pa
 EVIL2=$(echo "$EVILTOOL2" | "$DIR/shai-dispatch" | jq -r '.payload.content')
 assert_contains "$EVIL2" 'x [external_data] y' "dispatch: whitespace-variant closing tag neutralized"
 
+# --- write tool tests (require a permissive policy; not in the read-only allow list) ---
+WRITE_HOME=$(mktemp -d)
+_CLEANUP_DIRS+=("$WRITE_HOME")
+printf '{"version":"1.0","default":"allow","rules":[]}' >"$WRITE_HOME/policy.json"
+
+# write_file: happy path
+WFDIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$WFDIR")
+WFTOOL=$(jq -nc --arg p "$WFDIR/test.txt" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"wf1",name:"write_file",input:{path:$p,content:"hello world"}}],stop_reason:"tool_use"}}')
+WFOUT=$(echo "$WFTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
+WFRC=$?
+assert_eq "$WFRC" "1" "dispatch: write_file exits 1 (tool ran)"
+assert_eq "$(printf '%s' "$WFOUT" | jq -r '.payload.is_error')" "false" "dispatch: write_file success → is_error false"
+assert_eq "$(cat "$WFDIR/test.txt")" "hello world" "dispatch: write_file writes correct content"
+assert_contains "$WFOUT" 'Wrote' "dispatch: write_file reports bytes written"
+
+# write_file: creates nested parent directories
+WFNEST="$WFDIR/a/b/c/nested.txt"
+WFNTOOL=$(jq -nc --arg p "$WFNEST" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"wf2",name:"write_file",input:{path:$p,content:"deep"}}],stop_reason:"tool_use"}}')
+WFNOUT=$(echo "$WFNTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
+assert_eq "$(printf '%s' "$WFNOUT" | jq -r '.payload.is_error')" "false" "dispatch: write_file nested dirs → is_error false"
+assert_eq "$(cat "$WFNEST")" "deep" "dispatch: write_file creates nested dirs and writes content"
+
+# write_file: overwrites existing file
+printf 'old content' >"$WFDIR/overwrite.txt"
+WFOTOOL=$(jq -nc --arg p "$WFDIR/overwrite.txt" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"wf3",name:"write_file",input:{path:$p,content:"new content"}}],stop_reason:"tool_use"}}')
+echo "$WFOTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch" >/dev/null
+assert_eq "$(cat "$WFDIR/overwrite.txt")" "new content" "dispatch: write_file overwrites existing file"
+
 finish
