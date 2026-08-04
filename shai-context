@@ -3,7 +3,7 @@
 # Usage: cat sessions/<id>.jsonl | shai-context [--max-bytes N]
 # Reads: the JSONL event log on stdin; SHAI_MAX_CONTEXT_BYTES from the environment (default 1300000)
 # Writes: one JSON {system, messages} request object
-# Exit: 0 normally; 1 if --max-bytes is given without a value
+# Exit: 0 normally; 1 if --max-bytes is given without a value or if --max-bytes / SHAI_MAX_CONTEXT_BYTES is not a positive integer
 set -euo pipefail
 
 MAX_BYTES="${SHAI_MAX_CONTEXT_BYTES:-1300000}"
@@ -20,6 +20,14 @@ while [ "$#" -gt 0 ]; do
     *) break ;;
   esac
 done
+
+# Validate MAX_BYTES
+case "$MAX_BYTES" in
+  '' | 0* | *[!0-9]*)
+    echo "error: --max-bytes / SHAI_MAX_CONTEXT_BYTES must be a positive integer (got \"$MAX_BYTES\")" >&2
+    exit 1
+    ;;
+esac
 
 jq -R -s -c --argjson max_bytes "$MAX_BYTES" '
   split("\n") | map(select(length > 0)) | map(try fromjson catch null) | map(select(. != null))

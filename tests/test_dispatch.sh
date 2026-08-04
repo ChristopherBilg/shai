@@ -10,7 +10,7 @@ make_stub_bin
 write_gh_stub
 
 # --- ported from tests/tests.sh:156-201 (no-tool exit 0, gh tool_result + exit 1,
-#     unknown tool is_error, 8000-byte truncation, multiple tool_use, backslash path,
+#     unknown tool is_error, 32000-byte truncation, multiple tool_use, backslash path,
 #     gh `--` option-injection guard) ---
 NOTOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn"}}'
 echo "$NOTOOL" | "$DIR/shai-dispatch" >/dev/null
