@@ -56,5 +56,18 @@
       },
       "required": ["path", "content"]
     }
+  },
+  {
+    "name": "patch_file",
+    "description": "Replace a unique string in an existing file. The old_string must appear exactly once.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Absolute or relative path to the file." },
+        "old_string": { "type": "string", "description": "The exact text to find. Must appear exactly once in the file." },
+        "new_string": { "type": "string", "description": "The text to replace old_string with." }
+      },
+      "required": ["path", "old_string", "new_string"]
+    }
   }
 ]
