@@ -1,0 +1,179 @@
+#!/bin/bash
+# shai-supervise — manage shai workflows under systemd --user
+# Usage: shai-supervise install|uninstall|start|stop|logs <script> [--interval <timespan>]
+#        shai-supervise status [script]
+# Reads: ANTHROPIC_API_KEY, SHAI_HOME from environment (install only); target script from $DIR
+# Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall)
+# Exit: 0 on success; 1 on validation error or systemctl failure; 2 on usage error
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+UNIT_DIR="${SHAI_UNIT_DIR:-$HOME/.config/systemd/user}"
+
+# unit_name <script>: validate, strip leading shai- if present, prepend shai-
+unit_name() {
+  local script="$1"
+  if [[ "$script" =~ [/] ]] || [[ "$script" == *..* ]]; then
+    printf 'error: script name must not contain / or .. (got "%s")\n' "$script" >&2
+    exit 1
+  fi
+  script="${script#shai-}"
+  printf 'shai-%s' "$script"
+}
+
+cmd_install() {
+  local script="$1" interval="${2:-15min}"
+  local script_path="$DIR/$script"
+
+  if [ ! -x "$script_path" ]; then
+    printf 'error: %s not found or not executable in %s\n' "$script" "$DIR" >&2
+    exit 1
+  fi
+
+  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    printf 'error: ANTHROPIC_API_KEY must be set\n' >&2
+    exit 1
+  fi
+
+  local name shai_home
+  name="$(unit_name "$script")"
+  shai_home="${SHAI_HOME:-$HOME/.shai}"
+
+  mkdir -p "$UNIT_DIR"
+
+  cat >"$UNIT_DIR/$name.service" <<EOF
+[Unit]
+Description=shai $name workflow
+
+[Service]
+Type=oneshot
+ExecStart=$script_path
+Environment=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+Environment=SHAI_HOME=$shai_home
+EOF
+  chmod 600 "$UNIT_DIR/$name.service"
+
+  cat >"$UNIT_DIR/$name.timer" <<EOF
+[Unit]
+Description=shai $name timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=$interval
+
+[Install]
+WantedBy=timers.target
+EOF
+
+  systemctl --user daemon-reload
+  systemctl --user enable "$name.timer"
+  printf 'installed %s.timer (interval: %s)\n' "$name" "$interval"
+}
+
+cmd_uninstall() {
+  local name
+  name="$(unit_name "$1")"
+
+  systemctl --user stop "$name.timer" 2>/dev/null || true
+  systemctl --user disable "$name.timer" 2>/dev/null || true
+  rm -f "$UNIT_DIR/$name.service" "$UNIT_DIR/$name.timer"
+  systemctl --user daemon-reload
+  printf 'uninstalled %s\n' "$name"
+}
+
+cmd_start() {
+  local name
+  name="$(unit_name "$1")"
+  systemctl --user start "$name.timer"
+}
+
+cmd_stop() {
+  local name
+  name="$(unit_name "$1")"
+  systemctl --user stop "$name.timer"
+}
+
+cmd_status() {
+  if [ -z "${1:-}" ]; then
+    systemctl --user list-units 'shai-*'
+  else
+    local name
+    name="$(unit_name "$1")"
+    systemctl --user status "$name.timer" "$name.service"
+  fi
+}
+
+cmd_logs() {
+  local name
+  name="$(unit_name "$1")"
+  journalctl --user -u "$name.service" -f
+}
+
+case "${1:-}" in
+  __unit_name)
+    [ -z "${2:-}" ] && exit 1
+    unit_name "$2"
+    exit 0
+    ;;
+  install)
+    [ -z "${2:-}" ] && {
+      printf 'error: install requires a script name\n' >&2
+      exit 1
+    }
+    script="$2"
+    shift 2
+    interval="15min"
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --interval)
+          [ -z "${2:-}" ] && {
+            printf 'error: --interval requires a value\n' >&2
+            exit 1
+          }
+          interval="$2"
+          shift 2
+          ;;
+        *)
+          printf 'error: unknown option: %s\n' "$1" >&2
+          exit 1
+          ;;
+      esac
+    done
+    cmd_install "$script" "$interval"
+    ;;
+  uninstall)
+    [ -z "${2:-}" ] && {
+      printf 'error: uninstall requires a script name\n' >&2
+      exit 1
+    }
+    cmd_uninstall "$2"
+    ;;
+  start)
+    [ -z "${2:-}" ] && {
+      printf 'error: start requires a script name\n' >&2
+      exit 1
+    }
+    cmd_start "$2"
+    ;;
+  stop)
+    [ -z "${2:-}" ] && {
+      printf 'error: stop requires a script name\n' >&2
+      exit 1
+    }
+    cmd_stop "$2"
+    ;;
+  status)
+    cmd_status "${2:-}"
+    ;;
+  logs)
+    [ -z "${2:-}" ] && {
+      printf 'error: logs requires a script name\n' >&2
+      exit 1
+    }
+    cmd_logs "$2"
+    ;;
+  *)
+    printf 'Usage: shai-supervise install|uninstall|start|stop|status|logs [script] [options]\n' >&2
+    exit 2
+    ;;
+esac
