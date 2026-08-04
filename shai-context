@@ -35,12 +35,14 @@ jq -R -s -c --argjson max_bytes "$MAX_BYTES" '
        | ($system | utf8bytelength) as $sys_bytes
        | ($max_bytes - $sys_bytes - $last_bytes) as $budget
        | (reduce range(($uidx|length)-2; -1; -1) as $i (
-           {start: $last_start, used: 0};
-           (if $i < (($uidx|length)-1) then $uidx[$i+1] else ($conv|length) end) as $next
-           | ($conv[$uidx[$i]:$next] | map(tojson | utf8bytelength) | add // 0) as $turn_bytes
-           | if (.used + $turn_bytes) <= $budget
-             then .start = $uidx[$i] | .used += $turn_bytes
-             else . end
+           {start: $last_start, used: 0, done: false};
+           if .done then . else
+             (if $i < (($uidx|length)-1) then $uidx[$i+1] else ($conv|length) end) as $next
+             | ($conv[$uidx[$i]:$next] | map(tojson | utf8bytelength) | add // 0) as $turn_bytes
+             | if (.used + $turn_bytes) <= $budget
+               then .start = $uidx[$i] | .used += $turn_bytes
+               else .done = true end
+           end
          ) | .start)
      end) as $start
   | ($conv[$start:]) as $win

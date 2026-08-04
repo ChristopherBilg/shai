@@ -64,6 +64,19 @@ CTXOVER=$(printf '%s\n' "$HISTB" | "$DIR/shai-context" --max-bytes 1)
 assert_eq "$(printf '%s' "$CTXOVER" | jq '.messages | length')" "2" "context: --max-bytes 1 still keeps latest turn group"
 assert_eq "$(printf '%s' "$CTXOVER" | jq -r '.messages[0].content')" "u3" "context: soft ceiling preserves latest turn"
 
+# non-monotonic turn sizes: a large middle turn (~2180B) fails the budget, but the reduce
+# must not keep walking past it just because an even-older, smaller turn (~189B) would fit
+# on its own — that would drag the skipped large turn back in via the contiguous slice.
+HISTNM='{"type":"message","source":"user","payload":{"text":"short1"}}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"short reply 1"}],"stop_reason":"end_turn"}}
+{"type":"message","source":"user","payload":{"text":"'"$(head -c 2000 /dev/zero | tr '\0' 'x')"'"}}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"long reply"}],"stop_reason":"end_turn"}}
+{"type":"message","source":"user","payload":{"text":"short3"}}
+{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"short reply 3"}],"stop_reason":"end_turn"}}'
+CTXNM=$(printf '%s\n' "$HISTNM" | "$DIR/shai-context" --max-bytes 600)
+assert_eq "$(printf '%s' "$CTXNM" | jq '.messages | length')" "2" "context: non-monotonic sizes drop everything before the oversized turn"
+assert_eq "$(printf '%s' "$CTXNM" | jq -r '.messages[0].content')" "short3" "context: non-monotonic sizes do not pull back oversized turns"
+
 # byte budget: system prompt bytes subtracted from budget
 HISTSYS='{"type":"message","source":"system","payload":{"text":"A system prompt that takes up bytes"}}
 {"type":"message","source":"user","payload":{"text":"u1"}}
