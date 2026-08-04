@@ -62,7 +62,7 @@ touch -t 202501010000 "$PHOME/runs/run_001"
 SHAI_HOME="$PHOME" "$DIR/shai-prune" --before 2026-01-01 </dev/null >/dev/null 2>&1
 assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "2" \
   "prune: --before removes only old session and its latest.json"
-assert_eq "$(ls "$PHOME/sessions/" | LC_ALL=C sort)" "$(printf 'sess_b.jsonl\nsess_b.latest.json')" \
+assert_eq "$(find "$PHOME/sessions/" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)" "$(printf 'sess_b.jsonl\nsess_b.latest.json')" \
   "prune: --before keeps recent session files"
 assert_eq "$(find "$PHOME/runs/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "1" \
   "prune: --before removes only old run dir"
