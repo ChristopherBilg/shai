@@ -30,7 +30,7 @@ check_policy() {
         (has("args") | not) or
         (.args | to_entries | all(
           .key as $k | .value as $v |
-          ($input[$k] // "") | test(
+          ($input[$k] // "" | tostring) | test(
             "^" + ($v | gsub("(?<c>[.+?^${}()|\\[\\]])"; "\\\(.c)";"x") | gsub("\\*"; ".*")) + "$"
           )
         ))
