@@ -1,7 +1,7 @@
 #!/bin/bash
 # shai-prune — manually remove session logs and run directories
 # Usage: shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]
-# Reads: $SHAI_HOME/sessions/*.jsonl and $SHAI_HOME/runs/*/
+# Reads: $SHAI_HOME/sessions/*.jsonl, $SHAI_HOME/sessions/*.latest.json, and $SHAI_HOME/runs/*/
 # Writes: removes selected files/directories (or lists them with --dry-run)
 # Exit: 0 on success or nothing to prune; 1 on invalid arguments
 set -euo pipefail
@@ -60,7 +60,7 @@ TARGETS=()
 if "$do_sessions" && [ -d "$SESSIONS_DIR" ]; then
   while IFS= read -r -d '' f; do
     TARGETS+=("$f")
-  done < <(find "$SESSIONS_DIR" -maxdepth 1 -type f -name '*.jsonl' "${FIND_BEFORE[@]}" -print0 2>/dev/null)
+  done < <(find "$SESSIONS_DIR" -maxdepth 1 -type f \( -name '*.jsonl' -o -name '*.latest.json' \) "${FIND_BEFORE[@]}" -print0 2>/dev/null)
 fi
 
 if "$do_runs" && [ -d "$RUNS_DIR" ]; then
