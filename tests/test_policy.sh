@@ -124,4 +124,36 @@ PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"other_tool","action":"al
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{}')
 assert_eq "$RES" "prompt" "no rule matches, no default field → prompt"
 
+# --- integration: the permission gate wired into run_tool, exercised through the full
+#     shai-dispatch pipeline (not the extracted functions) ---
+
+# deny produces is_error tool_result
+tmpdir=$(setup_policy '{"version":"1.0","default":"deny","rules":[{"tool":"list_directory","action":"deny"}]}')
+make_stub_bin
+stub_dir="$STUB"
+write_gh_stub
+event='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"test_deny","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
+assert_contains "$result" '"is_error":true' "deny → is_error true"
+assert_contains "$result" 'Policy denied' "deny → error message"
+
+# non-interactive prompt → fail closed
+tmpdir=$(setup_policy '{"version":"1.0","default":"prompt","rules":[]}')
+make_stub_bin
+stub_dir="$STUB"
+write_gh_stub
+event='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"test_prompt","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
+assert_contains "$result" '"is_error":true' "non-interactive prompt → is_error true"
+assert_contains "$result" 'Permission denied' "non-interactive prompt → denied message"
+
+# allow executes tool normally
+tmpdir=$(setup_policy '{"version":"1.0","default":"deny","rules":[{"tool":"list_directory","action":"allow"}]}')
+make_stub_bin
+stub_dir="$STUB"
+write_gh_stub
+event='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"test_allow","name":"list_directory","input":{"path":"'"$tmpdir"'"}}],"stop_reason":"tool_use"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
+assert_contains "$result" '"is_error":false' "allow → executes, is_error false"
+
 finish
