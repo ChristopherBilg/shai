@@ -25,7 +25,12 @@ assert_contains "$DOUT" '"tool_use_id":"t1"' "dispatch: tool_use_id echoed"
 assert_contains "$DOUT" 'stub gh output' "dispatch: ran stubbed gh"
 
 UNK='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t9","name":"nope","input":{}}],"stop_reason":"tool_use"}}'
-UOUT=$(echo "$UNK" | "$DIR/shai-dispatch") || true
+# 2>/dev/null: "nope" isn't a built-in read-only tool, so with no policy file check_policy
+# returns "prompt" and run_tool calls prompt_user, which checks [ -t 2 ] to decide whether to
+# block on /dev/tty. Redirecting stderr here forces that check false so this test fails closed
+# deterministically instead of risking a block on a real interactive terminal (matching how the
+# new integration tests in test_policy.sh guard the same prompt_user path).
+UOUT=$(echo "$UNK" | "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$UOUT" '"is_error":true' "dispatch: unknown tool → is_error"
 
 # truncation path: output > 32000 bytes must still emit a tool_result (SIGPIPE-safe)
