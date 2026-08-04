@@ -76,6 +76,10 @@ run_tool() {
         return 1
       fi
       ;;
+    *)
+      printf 'Policy denied: %s (unrecognized action)' "$name"
+      return 1
+      ;;
   esac
   local number repo path
   case "$name" in
