@@ -102,6 +102,7 @@ if [ -n "$REPLAY_RUN" ]; then
     exit 1
   fi
 
+  export SHAI_RETRY_ACTIVE=1
   advance_span
   printf '%s\n' "$USER_TEXT" | "$DIR/shai-read" | "$DIR/shai-stamp" |
     jq -c --arg retry_of "$REPLAY_RUN" '.meta.retry_of = $retry_of' >>"$RUN_LOG"
@@ -192,6 +193,7 @@ else
   RUN_LOG=/dev/null
 fi
 
+export SHAI_RETRY_ACTIVE=1
 case "$CLASS" in
   DISPATCH)
     tail -n 1 "$SESSION_LOG" >"$LATEST"

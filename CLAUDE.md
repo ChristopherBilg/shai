@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 handful of single-purpose `bash`/`curl`/`jq` scripts that pipe JSON "events" to each other,
 persist everything to an append-only JSONL log, and call the Anthropic Claude Messages API.
 No language runtime, no dependencies beyond `bash`, `curl`, `jq`, and (for the GitHub tools)
-`gh`. It is an MVP with read-only tools only.
+`gh`. It is an MVP.
 
 ## Commands
 
@@ -118,10 +118,11 @@ The scripts:
   `tools.json`. Before each real call it best-effort dumps the exact request to
   `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` (observability; never fails the loop).
 - **`shai-dispatch`** (`shai-dispatch:1`) — reads the latest assistant event, runs each
-  `tool_use` block via `run_tool`, and emits `tool_result` events. **Exit 1 if any tool
-  ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool output is truncated to
-  `MAX_BYTES=32000` and fenced in `<external_data source="<tool>">…</external_data>` (source
-  sanitized; injected closing tags neutralized).
+  `tool_use` block via `run_tool`, and emits `tool_result` events. When `SHAI_RETRY_ACTIVE`
+  is set, non-read-only tools are skipped with an error (replay guard for write safety).
+  **Exit 1 if any tool ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool output is
+  truncated to `MAX_BYTES=32000` and fenced in `<external_data source="<tool>">…</external_data>`
+  (source sanitized; injected closing tags neutralized).
 - **`shai-print [--debug|--dispatches]`** (`shai-print:1`) — renders an event to human text.
   `--debug` surfaces verbose `tool_use`/`tool_result` lines. `--dispatches` surfaces only the
   tool calls, each as a tidy `⏺ name(args)` line (no results); `shai` passes it by default.
@@ -164,8 +165,8 @@ and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the 
 results → repeat until a turn ends with no tool call.
 
 **Tools** are declared in `tools.json` (Anthropic tool-definition shape): `gh_pr_view`,
-`gh_issue_view`, `list_directory`, `print_file` — all read-only. `run_tool` in
-`shai-dispatch` and `tools.json` must be kept in sync.
+`gh_issue_view`, `list_directory`, `print_file` (read-only), `write_file`, `patch_file`
+(write). `run_tool` in `shai-dispatch` and `tools.json` must be kept in sync.
 
 **Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
 Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:
@@ -223,4 +224,4 @@ Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
 `AI-Assistant-Unix-Philosophy-Design.md` is the origin design doc (uses `pa-*` naming; the
 implementation renamed these to `shai-*`). Note: `README.md` points to a
 `docs/superpowers/specs/...` design path that is gitignored and not committed to this repo.
-Deferred beyond the MVP: streaming, write tools with a permission gate, concurrency, and MCP.
+Deferred beyond the MVP: streaming, concurrency, and MCP.

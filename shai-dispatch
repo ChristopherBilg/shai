@@ -1,8 +1,10 @@
 #!/bin/bash
 # shai-dispatch — run tool_use blocks from the latest assistant event; emit tool_result events
 # Usage: cat latest.json | shai-dispatch
-# Reads: the latest assistant event JSON on stdin; $SHAI_HOME/policy.json for permission rules
-# Writes: one tool_result event per tool_use (output truncated to 32000 bytes)
+# Reads: the latest assistant event JSON on stdin; $SHAI_HOME/policy.json for permission rules;
+#        SHAI_RETRY_ACTIVE from environment (skips non-read-only tools during retry)
+# Writes: one tool_result event per tool_use (output truncated to 32000 bytes);
+#         write_file and patch_file modify the local filesystem
 # Exit: 1 if any tool ran (signals shai to re-evaluate), 0 otherwise
 set -euo pipefail
 
@@ -101,6 +103,77 @@ run_tool() {
       path=$(printf '%s' "$input" | jq -r '.path')
       timeout 30s cat -- "$path" 2>&1
       ;;
+    write_file)
+      path=$(printf '%s' "$input" | jq -r '.path')
+      local content
+      content=$(printf '%s' "$input" | jq -r '.content')
+      mkdir -p -- "$(dirname "$path")" 2>&1 || {
+        printf 'cannot create parent directory for %s' "$path"
+        return 1
+      }
+      printf '%s' "$content" >"$path" || {
+        printf 'cannot write to %s' "$path"
+        return 1
+      }
+      printf 'Wrote %d bytes to %s' "$(wc -c <"$path")" "$path"
+      ;;
+    patch_file)
+      path=$(printf '%s' "$input" | jq -r '.path')
+      local old_string new_string
+      old_string=$(printf '%s' "$input" | jq -r '.old_string')
+      if [ -z "$old_string" ]; then
+        printf 'old_string must not be empty'
+        return 1
+      fi
+      new_string=$(printf '%s' "$input" | jq -r '.new_string')
+      if [ ! -f "$path" ]; then
+        printf 'file not found: %s' "$path"
+        return 1
+      fi
+      if [ ! -s "$path" ]; then
+        printf 'old_string not found in %s (file is empty)' "$path"
+        return 1
+      fi
+      local count
+      count=$(OLD_STR="$old_string" awk '
+        BEGIN { old = ENVIRON["OLD_STR"]; RS = "\0"; ORS = "" }
+        {
+          s = $0; n = 0
+          while ((p = index(s, old)) > 0) { n++; s = substr(s, p + length(old)) }
+          print n
+        }
+      ' "$path")
+      if [ "$count" -eq 0 ]; then
+        printf 'old_string not found in %s' "$path"
+        return 1
+      fi
+      if [ "$count" -gt 1 ]; then
+        printf 'old_string matches %d times in %s (must be unique)' "$count" "$path"
+        return 1
+      fi
+      local tmpfile
+      tmpfile=$(mktemp) || {
+        printf 'cannot create temp file'
+        return 1
+      }
+      OLD_STR="$old_string" NEW_STR="$new_string" awk '
+        BEGIN { old = ENVIRON["OLD_STR"]; new = ENVIRON["NEW_STR"]; RS = "\0"; ORS = "" }
+        {
+          p = index($0, old)
+          printf "%s%s%s", substr($0, 1, p - 1), new, substr($0, p + length(old))
+        }
+      ' "$path" >"$tmpfile" || {
+        rm -f "$tmpfile"
+        printf 'patch failed for %s' "$path"
+        return 1
+      }
+      mv -- "$tmpfile" "$path" 2>&1 || {
+        rm -f "$tmpfile"
+        printf 'cannot write to %s' "$path"
+        return 1
+      }
+      printf 'Patched %s' "$path"
+      ;;
     *)
       printf 'Unknown tool: %s' "$name"
       return 1
@@ -115,7 +188,20 @@ while IFS= read -r block; do
   tool_name=$(printf '%s' "$block" | jq -r '.name')
   tool_id=$(printf '%s' "$block" | jq -r '.id')
   tool_input=$(printf '%s' "$block" | jq -c '.input')
-  if raw=$(run_tool "$tool_name" "$tool_input"); then is_error=false; else is_error=true; fi
+  skip_run=false
+  if [ -n "${SHAI_RETRY_ACTIVE:-}" ]; then
+    case "$tool_name" in
+      print_file | list_directory | gh_pr_view | gh_issue_view) ;;
+      *)
+        raw="write tool skipped during retry — re-run manually"
+        is_error=true
+        skip_run=true
+        ;;
+    esac
+  fi
+  if ! "$skip_run"; then
+    if raw=$(run_tool "$tool_name" "$tool_input"); then is_error=false; else is_error=true; fi
+  fi
   output=$(head -c "$MAX_BYTES" <<<"$raw")
   jq -nc --arg id "$tool_id" --arg content "$output" --arg src "$tool_name" --argjson is_error "$is_error" '
     ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
