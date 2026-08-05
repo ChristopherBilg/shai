@@ -95,13 +95,16 @@ Unstamped events from before the envelope still parse, so old session logs keep 
 
 The scripts:
 
-- **`shai`** — the REPL / orchestrator. Seeds the system prompt into empty session, reads a
+- **`shai`** — the REPL / orchestrator. Loads the system prompt via `shai-prompt system`, seeds it into empty session, reads a
   line, appends it as a user event to the run log, then runs `shai-context | shai-eval --tools`,
   writing events to `runs/$SHAI_RUN_ID/events.jsonl` during execution. On successful turn
   completion, `commit_run` appends finalized events (excluding errors) to the session log. Falls
   back to direct session-log writes when the run dir is unavailable. Prints via `shai-print
   --dispatches` by default (`./shai --quiet` / `-q` disables it). Then loops `shai-dispatch`
   until no tool ran (see the re-eval loop below).
+- **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
+  prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
+  Used by `shai` at startup to load `prompts/system.txt`.
 - **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source + content sanitized) as a `user` message; interactive REPL input stays unwrapped.
 - **`shai-context [--max-bytes N]`** (`shai-context:1`) — a pure `jq` reducer. Reads the whole
   JSONL log, extracts the system prompt, and keeps as many recent **turn groups** as fit within
