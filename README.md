@@ -26,8 +26,15 @@ Every stage is a filter, so you can run the pipeline by hand:
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 ```
 
-## Tools (read-only)
-`gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file`. Defined in `tools.json` (Anthropic shape). Outputs are truncated to 32000 bytes before entering context.
+## Tools
+- `gh_pr_view` — view a GitHub pull request (read-only)
+- `gh_issue_view` — view a GitHub issue (read-only)
+- `list_directory` — list the files and folders in a local directory (read-only)
+- `print_file` — print the contents of a local file (read-only)
+- `write_file` — create or overwrite a file with given content, creating parent directories as needed (write, requires approval)
+- `patch_file` — replace a unique string in an existing file; the string must appear exactly once (write, requires approval)
+
+Defined in `tools.json` (Anthropic shape). Outputs are truncated to 32000 bytes before entering context.
 
 ## Tests
 ```shell
@@ -42,4 +49,4 @@ Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (
 CI runs all of the above on every push and pull request.
 
 ## Scope
-This is an MVP. Design and deferred work (streaming, write tools + permission gate, concurrency, MCP, …) are documented in `AI-Assistant-Unix-Philosophy-Design.md`.
+This is an MVP. Design and deferred work (streaming, concurrency, MCP, …) are documented in `AI-Assistant-Unix-Philosophy-Design.md`.

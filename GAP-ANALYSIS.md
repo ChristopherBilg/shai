@@ -61,11 +61,11 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 ## ⚠️ Partial — started, but not to the doc's spec
 
-- **Execution permission matrix** — the permission gate is done (`shai-dispatch` checks
+- **Execution permission matrix** — ✅ complete. The permission gate (`shai-dispatch` checks
   `$SHAI_HOME/policy.json`; first-match-wins rules with allow/prompt/deny actions;
-  non-interactive fail-closed; unrecognized actions fail-closed). **Write tools themselves are
-  not yet added** — the gate is in place and will govern them when they arrive.
-  *(gate done 2026-08-03)*
+  non-interactive fail-closed; unrecognized actions fail-closed) now governs both read-only
+  and write tools (`write_file`, `patch_file`). Write tools default to `prompt`.
+  *(gate done 2026-08-03; write tools done 2026-08-04)*
 - **Model agnosticism** (design extensibility pillar #2) — *the lone remaining partial; a true multi-provider adapter is split into its own spec.*
   - Have: `SHAI_MODEL` env var swaps the model (`shai-eval`).
   - Missing: it only swaps *Anthropic* models — `shai-eval` is hardwired to the Anthropic URL/headers/response shape. No adapter layer for Ollama / other providers.
@@ -128,10 +128,9 @@ were left untouched entirely.
 - **MCP still requires the permission gate** — the gate now exists (`shai-dispatch` checks
   `$SHAI_HOME/policy.json`), satisfying this precondition. MCP tools will be governed by the
   same policy file when they arrive.
-- **Write tools and `shai-retry`** — the permission gate is now in place, but `shai-retry:49`
-  still re-dispatches a dangling `tool_use` with no idempotency check. Harmless while every
-  tool is read-only, but with write tools it would re-execute a write that may already have
-  partially run. Write tools need either idempotent dispatch or a replay guard.
+- **Write tools and `shai-retry`** — ✅ resolved. `shai-retry` exports `SHAI_RETRY_ACTIVE=1`;
+  `shai-dispatch` skips non-read-only tools during retry with an error event. Read-only tools
+  still execute normally. *(done 2026-08-04)*
 
 ### Constraint conflict (not an ordering problem)
 
@@ -158,4 +157,4 @@ necessary for correctness — the byte-based approach is conservative by design.
 
 ## Note on scope
 
-`CLAUDE.md`'s "Deferred beyond the MVP" line names four headliners — **streaming, write tools + permission gate, concurrency, MCP**. The design doc's real surface is larger. As of 2026-07-28, three former ⚠️ partials are ✅ done (XML `<external_data>` tagging, always-on request-dump observability, `shai-retry` resumability); **model agnosticism** is the lone remaining partial, its true multi-provider adapter deferred to its own spec.
+`CLAUDE.md`'s "Deferred beyond the MVP" line names three headliners — **streaming, concurrency, and MCP**. The design doc's real surface is larger. As of 2026-07-28, three former ⚠️ partials are ✅ done (XML `<external_data>` tagging, always-on request-dump observability, `shai-retry` resumability); **model agnosticism** is the lone remaining partial, its true multi-provider adapter deferred to its own spec.
