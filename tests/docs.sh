@@ -17,7 +17,6 @@ ok() { echo -e "  ${GREEN}✓${NC} $1"; }
 # Files exempt from the documentation requirement, with rationale.
 EXEMPT=(
   "tests/lint-tools.sha256" # generated checksum lockfile; comment-hostile format
-  "prompts/system.txt" # authored prompt content; documented inline in shai script and CLAUDE.md
 )
 
 is_exempt() {
