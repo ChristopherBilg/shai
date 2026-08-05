@@ -1,0 +1,35 @@
+#!/bin/bash
+# shai-prompt — load a named prompt from the prompts/ directory
+# Usage: shai-prompt NAME        (prints prompts/NAME.txt to stdout)
+# Reads: nothing on stdin; the file $DIR/prompts/NAME.txt
+# Writes: the verbatim contents of the prompt file to stdout
+# Exit: 0 on success; 2 on bad usage (missing/invalid NAME); 3 if the prompt file is
+#       missing, unreadable, or empty
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+PROMPTS_DIR="$DIR/prompts"
+
+NAME="${1:-}"
+if [ -z "$NAME" ]; then
+  echo "error: shai-prompt requires a prompt NAME" >&2
+  exit 2
+fi
+# NAME is a single prompt identifier, never a path: reject anything that could escape
+# prompts/ or reach into a subdirectory. Keeps the loader honest for every caller.
+if [[ "$NAME" =~ [/] ]] || [[ "$NAME" == *..* ]]; then
+  printf 'error: prompt NAME must not contain / or .. (got "%s")\n' "$NAME" >&2
+  exit 2
+fi
+
+FILE="$PROMPTS_DIR/$NAME.txt"
+if [ ! -r "$FILE" ]; then
+  printf 'error: prompt not found or unreadable: %s\n' "$FILE" >&2
+  exit 3
+fi
+if [ ! -s "$FILE" ]; then
+  printf 'error: prompt is empty: %s\n' "$FILE" >&2
+  exit 3
+fi
+
+cat "$FILE"
