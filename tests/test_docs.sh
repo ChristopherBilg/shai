@@ -100,8 +100,8 @@ EOF
 printf '# conf.yaml — example .yaml variant for tests\nname: y\n' >"$FIX/conf.yaml"
 
 mkdir -p "$FIX/prompts"
-printf 'You are a helpful assistant.\n' > "$FIX/prompts/good.txt"
-printf '' > "$FIX/prompts/empty.txt"
+printf 'You are a helpful assistant.\n' >"$FIX/prompts/good.txt"
+printf '' >"$FIX/prompts/empty.txt"
 
 # run_docs <files...> : sets OUT and RC, running the checker inside $FIX
 run_docs() {

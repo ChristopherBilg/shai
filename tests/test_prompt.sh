@@ -10,8 +10,8 @@ echo "prompt"
 FIX="$(mktemp -d)"
 _CLEANUP_DIRS+=("$FIX")
 mkdir -p "$FIX/prompts"
-printf 'You are a helpful assistant.\n' > "$FIX/prompts/system.txt"
-printf '' > "$FIX/prompts/empty.txt"
+printf 'You are a helpful assistant.\n' >"$FIX/prompts/system.txt"
+printf '' >"$FIX/prompts/empty.txt"
 
 cp "$DIR/shai-prompt" "$FIX/shai-prompt"
 chmod +x "$FIX/shai-prompt"
