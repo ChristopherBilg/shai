@@ -99,6 +99,10 @@ EOF
 
 printf '# conf.yaml — example .yaml variant for tests\nname: y\n' >"$FIX/conf.yaml"
 
+mkdir -p "$FIX/prompts"
+printf 'You are a helpful assistant.\n' > "$FIX/prompts/good.txt"
+printf '' > "$FIX/prompts/empty.txt"
+
 # run_docs <files...> : sets OUT and RC, running the checker inside $FIX
 run_docs() {
   OUT="$(cd "$FIX" && "$DIR/tests/docs.sh" "$@" 2>&1)"
@@ -182,5 +186,13 @@ run_docs bad-run good-run
 assert_eq "$RC" "1" "aggregate: bad-first still fails"
 assert_contains "$OUT" "documented: good-run" "aggregate: examines files after a failing shell script"
 assert_contains "$OUT" "DOCS FAILED" "aggregate: prints the DOCS FAILED banner"
+
+run_docs prompts/good.txt
+assert_eq "$RC" "0" "prompt: non-empty passes"
+assert_contains "$OUT" "prompt ok:" "prompt: prints prompt ok"
+
+run_docs prompts/empty.txt
+assert_eq "$RC" "1" "prompt: empty fails"
+assert_contains "$OUT" "empty prompt" "prompt: names the empty problem"
 
 finish

@@ -154,6 +154,10 @@ check_file() {
       check_shell "$f" infra
       return
       ;;
+    prompts/*.txt)
+      if [ -s "$f" ]; then ok "prompt ok: $f"; else note "empty prompt file: $f"; fi
+      return
+      ;;
   esac
   if [[ "$f" != */* ]] && [ "$(head -n1 "$f")" = "#!/bin/bash" ]; then
     check_shell "$f" runtime
