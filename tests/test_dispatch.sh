@@ -198,4 +198,31 @@ chmod 755 "$ATOM_DIR"
 assert_contains "$ATOM_OUT" '"is_error":true' "dispatch: patch_file read-only dir → is_error true"
 assert_eq "$(cat "$ATOM_DIR/target.txt")" "original content" "dispatch: patch_file atomic — original preserved on failure"
 
+# --- retry guard: SHAI_RETRY_ACTIVE skips write tools, allows read-only ---
+
+# retry guard: write_file skipped
+RGTOOL=$(jq -nc '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"rg1",name:"write_file",input:{path:"/tmp/should-not-exist","content":"nope"}}],stop_reason:"tool_use"}}')
+RGOUT=$(echo "$RGTOOL" | SHAI_RETRY_ACTIVE=1 SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_contains "$RGOUT" '"is_error":true' "dispatch: retry guard → write_file is_error true"
+assert_contains "$RGOUT" 'skipped during retry' "dispatch: retry guard → skip message"
+[ -f "/tmp/should-not-exist" ] && {
+  echo -e "  ${RED}✗${NC} retry guard: write_file was executed"
+  FAILED=1
+} || echo -e "  ${GREEN}✓${NC} dispatch: retry guard → write_file not executed"
+
+# retry guard: patch_file skipped
+RGPF=$(jq -nc '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"rg2",name:"patch_file",input:{path:"/tmp/x","old_string":"a","new_string":"b"}}],stop_reason:"tool_use"}}')
+RGPFOUT=$(echo "$RGPF" | SHAI_RETRY_ACTIVE=1 SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_contains "$RGPFOUT" '"is_error":true' "dispatch: retry guard → patch_file is_error true"
+assert_contains "$RGPFOUT" 'skipped during retry' "dispatch: retry guard → patch_file skip message"
+
+# retry guard: read-only tools still execute
+RGTMPD=$(mktemp -d)
+_CLEANUP_DIRS+=("$RGTMPD")
+: >"$RGTMPD/visible"
+RGLS=$(jq -nc --arg p "$RGTMPD" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"rg3",name:"list_directory",input:{path:$p}}],stop_reason:"tool_use"}}')
+RGLSOUT=$(echo "$RGLS" | SHAI_RETRY_ACTIVE=1 SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_eq "$(printf '%s' "$RGLSOUT" | jq -r '.payload.is_error')" "false" "dispatch: retry guard → list_directory still executes"
+assert_contains "$RGLSOUT" 'visible' "dispatch: retry guard → list_directory returns content"
+
 finish
