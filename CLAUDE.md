@@ -30,13 +30,18 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 # Replay a failed run (idempotent, non-destructive):
 ./shai-retry --run <run_id>               # replay under a new run_id, commit on success
 
+# Workflows:
+./shai-workflow list                   # discover available workflows
+./shai-workflow run heartbeat          # run a workflow
+./shai-workflow describe heartbeat     # show a workflow's doc header
+
 # Process supervision (systemd --user):
-./shai-supervise install shai-heartbeat             # install + enable the heartbeat timer
-./shai-supervise install shai-heartbeat --interval 1h  # custom interval
-./shai-supervise uninstall|start|stop shai-heartbeat   # lifecycle management
-./shai-supervise status                             # list all shai-* units
-./shai-supervise logs shai-heartbeat                # tail journal
-./shai-heartbeat                                    # one-shot pipeline health check
+./shai-supervise install workflows/heartbeat.sh                # install + enable the heartbeat timer
+./shai-supervise install workflows/heartbeat.sh --interval 1h  # custom interval
+./shai-supervise uninstall|start|stop workflows/heartbeat.sh   # lifecycle management
+./shai-supervise status                                        # list all shai-* units
+./shai-supervise logs workflows/heartbeat.sh                   # tail journal
+./workflows/heartbeat.sh                                       # one-shot pipeline health check
 
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
@@ -95,13 +100,14 @@ Unstamped events from before the envelope still parse, so old session logs keep 
 
 The scripts:
 
-- **`shai`** — the REPL / orchestrator. Loads the system prompt via `shai-prompt system`, seeds it into empty session, reads a
-  line, appends it as a user event to the run log, then runs `shai-context | shai-eval --tools`,
-  writing events to `runs/$SHAI_RUN_ID/events.jsonl` during execution. On successful turn
-  completion, `commit_run` appends finalized events (excluding errors) to the session log. Falls
-  back to direct session-log writes when the run dir is unavailable. Prints via `shai-print
-  --dispatches` by default (`./shai --quiet` / `-q` disables it). Then loops `shai-dispatch`
-  until no tool ran (see the re-eval loop below).
+- **`shai`** — the REPL. Health-checks the API key, loads the system prompt via `shai-prompt
+  system` and seeds it into a new session (an inherited `SHAI_SESSION_ID` always wins — an
+  nvim/tmux/cron wrapper owns the session), then reads lines from stdin. Each non-empty line
+  mints a fresh `SHAI_RUN_ID` and is handed to `shai-loop --tools`, which owns the run/span
+  bookkeeping, the event log, and the eval/dispatch loop (see below); `shai` itself just
+  redirects `shai-loop`'s human-readable stderr to its own stdout (`./shai --quiet` / `-q`
+  forwards through to suppress it) and discards `shai-loop`'s stdout (the final event JSON,
+  unused by the interactive REPL).
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
   Used by `shai` at startup to load `prompts/system.txt`.
@@ -126,14 +132,27 @@ The scripts:
   **Exit 1 if any tool ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool output is
   truncated to `MAX_BYTES=32000` and fenced in `<external_data source="<tool>">…</external_data>`
   (source sanitized; injected closing tags neutralized).
+- **`shai-loop [--tools|--model|--max-tokens|--quiet]`** (`shai-loop:1`) — the eval/dispatch
+  loop as a reusable filter. Reads a user prompt on stdin, runs `shai-read | shai-context |
+  shai-eval`, drives the dispatch loop until no tool calls remain, and emits the final
+  assistant event on stdout. Human-readable output goes to stderr (unless `--quiet`).
+  `shai` delegates its inner loop to `shai-loop`; workflow scripts call it via `wf_llm`.
+  **Invariant: it must never crash the pipeline** — errors become events, exit 0.
+- **`shai-workflow list|run|describe`** (`shai-workflow:1`) — workflow discovery and
+  invocation. `list` scans `workflows/` and prints names with purpose lines. `run <name>
+  [args]` validates the name (no `/` or `..`) and executes the script. `describe <name>`
+  prints the doc header. Exit: passes through the workflow's code; 1 on validation; 2 on usage.
 - **`shai-print [--debug|--dispatches]`** (`shai-print:1`) — renders an event to human text.
   `--debug` surfaces verbose `tool_use`/`tool_result` lines. `--dispatches` surfaces only the
-  tool calls, each as a tidy `⏺ name(args)` line (no results); `shai` passes it by default.
+  tool calls, each as a tidy `⏺ name(args)` line (no results); `shai-loop` passes it by
+  default — `shai` forwards its own `-q`/`--quiet` to suppress it, and a workflow can do the
+  same via `wf_llm --quiet`.
 - **`shai-stamp`** (`shai-stamp:1`) — adds the execution envelope (`version` + `meta`) to each
   event on stdin, reading its context from the environment. The only script that reads the *full*
   trace context (`shai-eval` reads `SHAI_RUN_ID`/`SHAI_SPAN_ID` too, just for its dump path).
   **Invariant: it must never fail the pipeline or drop an event** — a non-empty line that is not a
-  JSON object is emitted verbatim, and it exits 0 always. `shai` inserts it at every write site.
+  JSON object is emitted verbatim, and it exits 0 always. Every write site pipes through it —
+  `shai-loop` and `shai-retry` for turn events, `shai` and `wf_init` for system-prompt seeding.
   A **blank** line is the one deliberate exception: it is skipped, because it carries no event and
   a blank reaching the tail of a session log would make `shai-retry`'s classifier report
   "nothing to resume" for a resumable run. No filter emits one, so this only guards hand-run input.
@@ -147,35 +166,52 @@ The scripts:
 - **`shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
   retention: removes session log files and/or run directories, optionally filtered by date.
   Interactive prompts for confirmation; non-interactive skips it.
-- **`shai-heartbeat`** (`shai-heartbeat:1`) — stub workflow: runs a canned prompt through
-  `shai-read | shai-context | shai-eval` (no `shai-stamp`, no session/run id) and checks the
-  reply is an `assistant` message, printing a timestamped PASS/FAIL line to stderr. Touches
-  nothing under `$SHAI_HOME` — a stateless liveness probe for the pipeline, meant to be run
-  periodically via `shai-supervise`. Exit 0 on pipeline success, 1 on failure.
 - **`shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]`**
   (`shai-supervise:1`) — generates and manages a `systemd --user` `.service`+`.timer` pair that
-  runs any shai workflow script on a timer. `install` rejects script names containing `/` or
-  `..` (the script must resolve inside `shai-supervise`'s own directory), requires the script
-  to be executable and `ANTHROPIC_API_KEY` to be set, writes the units to `$SHAI_UNIT_DIR`
-  (default `~/.config/systemd/user`) embedding `ANTHROPIC_API_KEY`/`SHAI_HOME` as
-  `Environment=` lines, then `chmod 600`s the `.service` file (it holds the plaintext key)
+  runs any shai workflow script on a timer. `<script>` may be a bare name or a
+  `workflows/<name>.sh` path; `install` resolves it against `$DIR` then `$DIR/workflows`, and
+  the shared `unit_name` helper derives the systemd unit (strips a `workflows/` prefix and
+  `.sh` suffix, rejects any other `/` or `..`, then normalizes to `shai-<name>`), requires the
+  script to be executable and `ANTHROPIC_API_KEY` to be set, writes the units to
+  `$SHAI_UNIT_DIR` (default `~/.config/systemd/user`) embedding `ANTHROPIC_API_KEY`/`SHAI_HOME`
+  as `Environment=` lines, then `chmod 600`s the `.service` file (it holds the plaintext key)
   before `daemon-reload`ing and enabling the timer. The other subcommands delegate to
   `systemctl --user` / `journalctl --user`. Exit 0 on success, 1 on validation/systemctl
   failure, 2 on usage error (unrecognized subcommand).
 
-**The re-eval loop** (in `shai:110`): the model may request tools → `shai-dispatch` runs them
-and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the model sees the
-results → repeat until a turn ends with no tool call.
+**The re-eval loop** (in `shai-loop`): the model may request tools → `shai-dispatch` runs them
+and appends `tool_result`s → `shai-context | shai-eval` re-runs so the model sees the results →
+repeat until a turn ends with no tool call. `shai` drives one turn of this via `shai-loop`;
+workflows drive it once per `wf_llm` call.
 
 **Tools** are declared in `tools.json` (Anthropic tool-definition shape): `gh_pr_view`,
 `gh_issue_view`, `list_directory`, `print_file` (read-only), `write_file`, `patch_file`
-(write). `run_tool` in `shai-dispatch` and `tools.json` must be kept in sync.
+(write). `run_tool` in `shai-dispatch` and `tools.json` must be kept in sync. Workflows share
+this same `tools.json` — `wf_llm --tools` threads the flag through `shai-loop` to `shai-eval
+--tools`, and any resulting `tool_use` is dispatched through the identical `shai-dispatch`
+path, so the permission gate below applies to workflow tool calls exactly as it does to the
+interactive REPL.
 
 **Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
 Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:
 `allow` (execute silently), `prompt` (interactive Y/N on `/dev/tty`; non-interactive → fail
 closed as error event), `deny` (error event, never execute). When no policy file exists, the
 four built-in read-only tools are auto-allowed and everything else defaults to `prompt`.
+
+**Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
+(mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
+wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
+`wf_fail "message"` (stderr + exit 1). Sets `DIR` to the shai install directory.
+
+**Workflows** live in `workflows/`. Each is a standalone bash script following the same
+conventions as runtime scripts (shebang, strict mode, doc header). Workflows mix mechanical
+bash steps with LLM steps via `wf_llm`. Each execution mints an ephemeral session (prunable
+via `shai-prune`). Schedulable via `shai-supervise install workflows/<name>.sh`.
+
+**`workflows/heartbeat.sh`** is the first workflow: it calls `wf_init` then `wf_llm --quiet`
+with a canned prompt, checks the reply is an `assistant` message, and prints a timestamped
+PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run periodically via
+`shai-supervise install workflows/heartbeat.sh`. Exit 0 on pipeline success, 1 on failure.
 
 ## Conventions to preserve
 
@@ -201,10 +237,10 @@ four built-in read-only tools are auto-allowed and everything else defaults to `
 - **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
   undocumented **or of an unrecognized type**. Per type:
-  - **Runtime scripts** (`shai`, `shai-*`): a header block after the shebang with a purpose line
-    plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
+  - **Runtime scripts** (`shai`, `shai-*`, `workflows/*.sh`): a header block after the shebang
+    with a purpose line plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
   - **Test files** (`tests/test_*.sh`): purpose line + `# Covers:`.
-  - **Infra scripts** (other `tests/*.sh`): purpose line + `# Usage:`.
+  - **Infra scripts** (other `tests/*.sh`, `lib/*.sh`): purpose line + `# Usage:`.
   - **YAML / dotfiles / Markdown**: a leading `#` purpose comment / an H1 title.
   - **`tools.json`**: every tool and input property has a non-empty `description` (jq-checked).
   - Only `tests/lint-tools.sha256` is exempt (generated, comment-hostile).
