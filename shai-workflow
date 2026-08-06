@@ -21,6 +21,10 @@ cmd_list() {
 
 cmd_describe() {
   local name="$1"
+  if [[ "$name" =~ [/] ]] || [[ "$name" == *..* ]]; then
+    printf 'error: workflow name must not contain / or .. (got "%s")\n' "$name" >&2
+    exit 1
+  fi
   local script="$WF_DIR/$name.sh"
   if [ ! -f "$script" ]; then
     printf 'error: workflow not found: %s\n' "$name" >&2

@@ -19,6 +19,11 @@ assert_eq "$RC" "0" "describe: exit 0"
 assert_contains "$OUT" "Usage:" "describe: includes Usage line"
 assert_contains "$OUT" "Exit:" "describe: includes Exit line"
 
+# --- describe: path-traversal guard ---
+OUT=$("$DIR/shai-workflow" describe "../etc/passwd" 2>&1) || RC=$?
+assert_eq "${RC:-0}" "1" "describe: path traversal rejected"
+assert_contains "$OUT" "must not contain" "describe: path traversal error message"
+
 # --- run: executes a workflow, passes through exit code ---
 # heartbeat needs an API key + network, so use a fixture instead. shai-workflow resolves
 # WF_DIR relative to its own $DIR (via ${BASH_SOURCE[0]}), so — mirroring the same trick
