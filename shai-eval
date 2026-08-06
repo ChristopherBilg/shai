@@ -1,6 +1,6 @@
 #!/bin/bash
 # shai-eval — the only network hop: call the Anthropic Messages API
-# Usage: cat request.json | shai-eval [--tools|--model M|--max-tokens N|--dry-run|--health-check]
+# Usage: cat request.json | shai-eval [--tools-file <path>|--model M|--max-tokens N|--dry-run|--health-check]
 # Reads: a {system, messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
 #        environment to locate the per-span request dump
 # Writes: one assistant/error event; on a real call, also dumps the request to
@@ -8,21 +8,23 @@
 # Exit: 0 always; --health-check exits 1 if ANTHROPIC_API_KEY missing; 2 on bad CLI args
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 MODEL="${SHAI_MODEL:-claude-opus-4-8}"
 MAX_TOKENS="16000"
-USE_TOOLS=false
 DRY_RUN=false
 HEALTH_CHECK=false
 API_URL="https://api.anthropic.com/v1/messages"
-TOOLS_FILE="$DIR/tools.json"
+TOOLS_FILE=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --tools)
-      USE_TOOLS=true
-      shift
+    --tools-file)
+      [ "$#" -lt 2 ] && {
+        echo "error: --tools-file requires a path" >&2
+        exit 2
+      }
+      TOOLS_FILE="$2"
+      shift 2
       ;;
     --model)
       [ "$#" -lt 2 ] && {
@@ -75,8 +77,8 @@ if [ -z "$(printf '%s' "$INPUT" | tr -d '[:space:]')" ]; then
 fi
 
 TOOLS_JSON="[]"
-if [ "$USE_TOOLS" = true ]; then
-  TOOLS_JSON=$(cat "$TOOLS_FILE")
+if [ -n "$TOOLS_FILE" ]; then
+  TOOLS_JSON=$(cat "$TOOLS_FILE" 2>/dev/null) || TOOLS_JSON="[]"
 fi
 
 PAYLOAD=$(printf '%s' "$INPUT" | jq -c \

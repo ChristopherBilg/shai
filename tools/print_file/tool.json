@@ -1,0 +1,14 @@
+{
+  "name": "print_file",
+  "description": "Print the contents of a local file.",
+  "capabilities": {
+    "read_only": true
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "Absolute or relative path to the file." }
+    },
+    "required": ["path"]
+  }
+}
