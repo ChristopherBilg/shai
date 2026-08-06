@@ -62,24 +62,24 @@ assert_exit 1 "validate: start rejects .. in script name" -- "$DIR/shai-supervis
 # --- validation: install missing ANTHROPIC_API_KEY ---
 (
   unset ANTHROPIC_API_KEY
-  assert_exit 1 "validate: install missing API key" -- "$DIR/shai-supervise" install shai-heartbeat
+  assert_exit 1 "validate: install missing API key" -- "$DIR/shai-supervise" install shai-print
 )
 
 # --- install: generates correct unit files ---
 : >"$SYSTEMCTL_LOG"
-"$DIR/shai-supervise" install shai-heartbeat >/dev/null 2>&1
+"$DIR/shai-supervise" install shai-print >/dev/null 2>&1
 RC=$?
 assert_eq "$RC" "0" "install: exits 0"
 
-SERVICE="$TMP/shai-heartbeat.service"
-TIMER="$TMP/shai-heartbeat.timer"
+SERVICE="$TMP/shai-print.service"
+TIMER="$TMP/shai-print.timer"
 
 assert_eq "$([ -f "$SERVICE" ] && echo yes || echo no)" "yes" "install: .service file created"
 assert_eq "$([ -f "$TIMER" ] && echo yes || echo no)" "yes" "install: .timer file created"
 
 assert_contains "$(cat "$SERVICE")" "Type=oneshot" "install: service Type=oneshot"
 assert_contains "$(cat "$SERVICE")" "ExecStart=" "install: service has ExecStart"
-assert_contains "$(cat "$SERVICE")" "shai-heartbeat" "install: ExecStart references script"
+assert_contains "$(cat "$SERVICE")" "shai-print" "install: ExecStart references script"
 assert_contains "$(cat "$SERVICE")" "ANTHROPIC_API_KEY=" "install: service has API key"
 assert_contains "$(cat "$SERVICE")" "SHAI_HOME=" "install: service has SHAI_HOME"
 assert_eq "$(stat -c '%a' "$SERVICE")" "600" "install: service file is chmod 600 (contains secret)"
@@ -94,30 +94,30 @@ assert_contains "$(cat "$SYSTEMCTL_LOG")" "enable" "install: enable called"
 
 # --- install with --interval override ---
 : >"$SYSTEMCTL_LOG"
-"$DIR/shai-supervise" install shai-heartbeat --interval 1h >/dev/null 2>&1
+"$DIR/shai-supervise" install shai-print --interval 1h >/dev/null 2>&1
 
 assert_contains "$(cat "$TIMER")" "OnUnitActiveSec=1h" "install: --interval overrides default"
 
 # --- idempotent reinstall ---
 : >"$SYSTEMCTL_LOG"
-"$DIR/shai-supervise" install shai-heartbeat >/dev/null 2>&1
+"$DIR/shai-supervise" install shai-print >/dev/null 2>&1
 RC=$?
 assert_eq "$RC" "0" "reinstall: exits 0 (idempotent)"
 
 # --- uninstall ---
 : >"$SYSTEMCTL_LOG"
-"$DIR/shai-supervise" uninstall shai-heartbeat >/dev/null 2>&1
+"$DIR/shai-supervise" uninstall shai-print >/dev/null 2>&1
 RC=$?
 assert_eq "$RC" "0" "uninstall: exits 0"
 assert_eq "$([ -f "$SERVICE" ] && echo yes || echo no)" "no" "uninstall: .service removed"
 assert_eq "$([ -f "$TIMER" ] && echo yes || echo no)" "no" "uninstall: .timer removed"
 assert_contains "$(cat "$SYSTEMCTL_LOG")" "daemon-reload" "uninstall: daemon-reload called"
-assert_contains "$(cat "$SYSTEMCTL_LOG")" "stop shai-heartbeat.timer" "uninstall: stop called on timer"
-assert_contains "$(cat "$SYSTEMCTL_LOG")" "disable shai-heartbeat.timer" "uninstall: disable called on timer"
+assert_contains "$(cat "$SYSTEMCTL_LOG")" "stop shai-print.timer" "uninstall: stop called on timer"
+assert_contains "$(cat "$SYSTEMCTL_LOG")" "disable shai-print.timer" "uninstall: disable called on timer"
 
 # --- idempotent uninstall ---
 : >"$SYSTEMCTL_LOG"
-"$DIR/shai-supervise" uninstall shai-heartbeat >/dev/null 2>&1
+"$DIR/shai-supervise" uninstall shai-print >/dev/null 2>&1
 RC=$?
 assert_eq "$RC" "0" "uninstall: idempotent (no error when files absent)"
 
