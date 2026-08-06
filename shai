@@ -18,6 +18,10 @@ RUNS_DIR="$STATE_DIR/runs"
 # `set -e` that aborts before we ever seed a blank system turn into the session.
 SYSTEM_PROMPT="$("$DIR/shai-prompt" system)"
 
+TOOLS_FILE=$(mktemp)
+trap 'rm -f "$TOOLS_FILE"' EXIT
+"$DIR/shai-tools" >"$TOOLS_FILE"
+
 # --dispatches shows each tool call as a "⏺ name(args)" line; --quiet turns it off
 PRINT_OPTS=(--dispatches)
 case "${1:-}" in
@@ -107,12 +111,12 @@ while read -r -p "> " line || [ -n "$line" ]; do
   if [ "$RUN_LOG" != "/dev/null" ]; then
     printf '%s\n' "$line" | "$DIR/shai-read" | "$DIR/shai-stamp" >>"$RUN_LOG"
 
-    cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+    cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools-file "$TOOLS_FILE" | "$DIR/shai-stamp" |
       tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
 
     until cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" >>"$RUN_LOG"; do
       advance_span
-      cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+      cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools-file "$TOOLS_FILE" | "$DIR/shai-stamp" |
         tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
     done
 
@@ -120,12 +124,12 @@ while read -r -p "> " line || [ -n "$line" ]; do
   else
     printf '%s\n' "$line" | "$DIR/shai-read" | "$DIR/shai-stamp" >>"$SESSION_LOG"
 
-    cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+    cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools-file "$TOOLS_FILE" | "$DIR/shai-stamp" |
       tee -a "$SESSION_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
 
     until cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" >>"$SESSION_LOG"; do
       advance_span
-      cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+      cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools-file "$TOOLS_FILE" | "$DIR/shai-stamp" |
         tee -a "$SESSION_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
     done
   fi
