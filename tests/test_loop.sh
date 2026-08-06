@@ -135,4 +135,48 @@ assert_contains "$OUT7" 'degraded ok' "loop: still produces output when runs/ is
 H7=$(cat "$TMP7/sessions/test.jsonl")
 assert_contains "$H7" '"source":"assistant"' "loop: session log has events even when runs/ is unwritable"
 
+# --- never-before-used session: sessions dir/file don't exist yet ---
+TMP8="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMP8")
+# deliberately no `mkdir -p "$TMP8/sessions"` and no pre-seeded .jsonl/.latest.json —
+# this is the never-before-used-session path
+
+printf '{"type":"message","content":[{"type":"text","text":"fresh session ok"}],"stop_reason":"end_turn"}' |
+  write_curl_stub 200
+
+OUT8=$(printf 'hi' | SHAI_HOME="$TMP8" SHAI_SESSION_ID=neversession "$DIR/shai-loop" 2>/dev/null)
+RC8=$?
+assert_eq "$RC8" "0" "loop: exit 0 for a never-before-used session (no pre-created sessions dir)"
+assert_contains "$OUT8" 'fresh session ok' "loop: produces output for a never-before-used session"
+assert_eq "$(test -f "$TMP8/sessions/neversession.jsonl" && echo yes)" "yes" \
+  "loop: creates the session log file for a never-before-used session"
+H8=$(cat "$TMP8/sessions/neversession.jsonl")
+assert_contains "$H8" '"source":"user"' "loop: never-before-used session log gets the user event"
+assert_contains "$H8" '"source":"assistant"' "loop: never-before-used session log gets the assistant event"
+
+# --- SHAI_SESSION_ID path-traversal validation ---
+TMP9="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMP9")
+
+SLASHOUT=$(printf 'hi' | SHAI_HOME="$TMP9" SHAI_SESSION_ID='foo/bar' "$DIR/shai-loop" 2>&1)
+RC9=$?
+assert_eq "$RC9" "1" "loop: exit 1 when SHAI_SESSION_ID contains /"
+assert_contains "$SLASHOUT" "must not contain / or .." "loop: / traversal error message"
+
+DOTDOTOUT=$(printf 'hi' | SHAI_HOME="$TMP9" SHAI_SESSION_ID='foo..bar' "$DIR/shai-loop" 2>&1)
+RC10=$?
+assert_eq "$RC10" "1" "loop: exit 1 when SHAI_SESSION_ID contains .."
+assert_contains "$DOTDOTOUT" "must not contain / or .." "loop: .. traversal error message"
+
+# --- --model / --max-tokens without a value: guarded, not a raw bash crash ---
+MODELERR=$("$DIR/shai-loop" --model </dev/null 2>&1)
+RC11=$?
+assert_eq "$RC11" "2" "loop: --model without value exits 2"
+assert_contains "$MODELERR" "--model requires a value" "loop: --model without value → clear message"
+
+MTNOVAL=$("$DIR/shai-loop" --max-tokens </dev/null 2>&1)
+RC12=$?
+assert_eq "$RC12" "2" "loop: --max-tokens without value exits 2"
+assert_contains "$MTNOVAL" "--max-tokens requires a value" "loop: --max-tokens without value → clear message"
+
 finish

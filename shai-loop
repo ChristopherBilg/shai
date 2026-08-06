@@ -32,10 +32,18 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --model)
+      [ "$#" -lt 2 ] && {
+        printf 'error: --model requires a value\n' >&2
+        exit 2
+      }
       EVAL_OPTS+=(--model "$2")
       shift 2
       ;;
     --max-tokens)
+      [ "$#" -lt 2 ] && {
+        printf 'error: --max-tokens requires a value\n' >&2
+        exit 2
+      }
       EVAL_OPTS+=(--max-tokens "$2")
       shift 2
       ;;
@@ -55,11 +63,22 @@ if [ -z "${SHAI_SESSION_ID:-}" ]; then
   exit 1
 fi
 
+if [[ "$SHAI_SESSION_ID" =~ [/] ]] || [[ "$SHAI_SESSION_ID" == *..* ]]; then
+  printf 'error: SHAI_SESSION_ID must not contain / or .. (got "%s")\n' "$SHAI_SESSION_ID" >&2
+  exit 1
+fi
+
 export SHAI_SCHEMA_VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
 
 SESSIONS_DIR="$STATE_DIR/sessions"
 SESSION_LOG="$SESSIONS_DIR/$SHAI_SESSION_ID.jsonl"
 LATEST="$SESSIONS_DIR/$SHAI_SESSION_ID.latest.json"
+mkdir -p "$SESSIONS_DIR"
+# a never-before-used session has no jsonl file yet; `cat "$SESSION_LOG" ...` below would
+# fail (and abort under pipefail+set -e) if the file doesn't exist, so guarantee it does —
+# same touch-if-missing idiom used for RUN_LOG, with no content (system-prompt seeding, if
+# any, is the caller's responsibility, not shai-loop's)
+: >>"$SESSION_LOG"
 
 if [ -z "${SHAI_RUN_ID:-}" ]; then
   SHAI_RUN_ID="$(mint_id run)"
