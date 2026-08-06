@@ -48,7 +48,7 @@ assert_eq "$(printf '%s' "$BOUT" | jq -r '.payload.content | ltrimstr("<external
 NTOUT=$(echo "$NOTOOL" | "$DIR/shai-dispatch")
 assert_eq "$NTOUT" "" "dispatch: no-tool produces no output"
 
-MULTI='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"m1","name":"list_directory","input":{"path":"."}},{"type":"tool_use","id":"m2","name":"print_file","input":{"path":"tools.json"}}],"stop_reason":"tool_use"}}'
+MULTI='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"m1","name":"list_directory","input":{"path":"."}},{"type":"tool_use","id":"m2","name":"print_file","input":{"path":"CLAUDE.md"}}],"stop_reason":"tool_use"}}'
 MOUT=$(echo "$MULTI" | "$DIR/shai-dispatch")
 MRC=$?
 assert_eq "$MRC" "1" "dispatch: multiple tool_use → exit 1"

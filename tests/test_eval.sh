@@ -19,7 +19,7 @@ _CLEANUP_DIRS+=("$TOOLS_TMP")
 DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools-file "$TOOLS_TMP")
 assert_contains "$DRY" '"model":"claude-opus-4-8"' "eval: default model"
 assert_contains "$DRY" '"max_tokens":16000' "eval: default max_tokens"
-assert_contains "$DRY" '"gh_pr_view"' "eval: tools.json included with --tools-file"
+assert_contains "$DRY" '"gh_pr_view"' "eval: tools included with --tools-file"
 
 NOTOOLS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
 assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tools without --tools-file"

@@ -95,16 +95,24 @@ Unstamped events from before the envelope still parse, so old session logs keep 
 
 The scripts:
 
-- **`shai`** — the REPL / orchestrator. Loads the system prompt via `shai-prompt system`, seeds it into empty session, reads a
-  line, appends it as a user event to the run log, then runs `shai-context | shai-eval --tools`,
-  writing events to `runs/$SHAI_RUN_ID/events.jsonl` during execution. On successful turn
-  completion, `commit_run` appends finalized events (excluding errors) to the session log. Falls
-  back to direct session-log writes when the run dir is unavailable. Prints via `shai-print
-  --dispatches` by default (`./shai --quiet` / `-q` disables it). Then loops `shai-dispatch`
-  until no tool ran (see the re-eval loop below).
+- **`shai`** — the REPL / orchestrator. Loads the system prompt via `shai-prompt system`, seeds
+  it into empty session, and loads tool plugins via `shai-tools` into a temp file at startup
+  (cleaned up on exit). Reads a line, appends it as a user event to the run log, then runs
+  `shai-context | shai-eval --tools-file <tmp>`, writing events to `runs/$SHAI_RUN_ID/events.jsonl`
+  during execution. On successful turn completion, `commit_run` appends finalized events
+  (excluding errors) to the session log. Falls back to direct session-log writes when the run dir
+  is unavailable. Prints via `shai-print --dispatches` by default (`./shai --quiet` / `-q`
+  disables it). Then loops `shai-dispatch` until no tool ran (see the re-eval loop below).
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
   Used by `shai` at startup to load `prompts/system.txt`.
+- **`shai-tools [tools-dir]`** (`shai-tools:1`) — scans `tools/*/tool.json` (default:
+  `$DIR/tools`) and validates each plugin: `tool.json` is valid JSON with `name`, `description`,
+  and `input_schema`; `name` matches its directory name; `run.sh` exists and is executable; and
+  `capabilities`, if present, is an object. Strips `capabilities` from each entry and prints the
+  aggregated Anthropic tool array to stdout. An empty or missing tools directory prints `[]`.
+  Used by `shai` and `shai-retry` at startup to build the file passed to every `shai-eval
+  --tools-file`. Exit 1 on the first invalid plugin found.
 - **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source + content sanitized) as a `user` message; interactive REPL input stays unwrapped.
 - **`shai-context [--max-bytes N]`** (`shai-context:1`) — a pure `jq` reducer. Reads the whole
   JSONL log, extracts the system prompt, and keeps as many recent **turn groups** as fit within
@@ -113,19 +121,26 @@ The scripts:
   exact Anthropic `{system, messages}` request shape — folding consecutive `tool_result`s
   back into a single `user` message. `error` events are dropped here, so failures never
   contaminate future context.
-- **`shai-eval [--tools|--model|--max-tokens|--dry-run|--health-check]`** (`shai-eval:1`) —
-  the only network hop (`curl` → Messages API). Emits an `assistant` or `error` event.
-  **Invariant: it must never crash the loop.** Every API/curl/parse failure becomes an
+- **`shai-eval [--tools-file <path>|--model|--max-tokens|--dry-run|--health-check]`**
+  (`shai-eval:1`) — the only network hop (`curl` → Messages API). Emits an `assistant` or `error`
+  event. **Invariant: it must never crash the loop.** Every API/curl/parse failure becomes an
   `error` event with exit 0 (the sole exception: `--health-check` exits 1 when the key is
-  missing). `--dry-run` prints the payload without calling out; `--tools` attaches
-  `tools.json`. Before each real call it best-effort dumps the exact request to
+  missing). `--dry-run` prints the payload without calling out; `--tools-file <path>` attaches
+  the aggregated tool array at that path (built by `shai-tools`). Before each real call it
+  best-effort dumps the exact request to
   `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` (observability; never fails the loop).
 - **`shai-dispatch`** (`shai-dispatch:1`) — reads the latest assistant event, runs each
-  `tool_use` block via `run_tool`, and emits `tool_result` events. When `SHAI_RETRY_ACTIVE`
-  is set, non-read-only tools are skipped with an error (replay guard for write safety).
-  **Exit 1 if any tool ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool output is
-  truncated to `MAX_BYTES=32000` and fenced in `<external_data source="<tool>">…</external_data>`
-  (source sanitized; injected closing tags neutralized).
+  `tool_use` block via `run_tool`, and emits `tool_result` events. Tools are resolved by
+  directory lookup: `run_tool` execs `$TOOLS_DIR/<name>/run.sh` with the tool's JSON input as
+  `$1` (`$TOOLS_DIR` defaults to `$DIR/tools`, overridable via `$SHAI_TOOLS_DIR`); a name with no
+  matching directory is an `is_error` tool_result, not a crash. `capabilities.read_only` from
+  the tool's `tool.json` feeds two decisions: it's the policy fallback (`allow` vs `prompt`) when
+  no `$SHAI_HOME/policy.json` rule matches the tool, and it's what the retry guard checks — when
+  `SHAI_RETRY_ACTIVE` is set, non-read-only tools are skipped with an error instead of re-running
+  a write. **Exit 1 if any tool ran** (signals `shai` to re-evaluate), exit 0 otherwise. Tool
+  output is truncated to `MAX_BYTES=32000` and fenced in
+  `<external_data source="<tool>">…</external_data>` (source sanitized; injected closing tags
+  neutralized).
 - **`shai-print [--debug|--dispatches]`** (`shai-print:1`) — renders an event to human text.
   `--debug` surfaces verbose `tool_use`/`tool_result` lines. `--dispatches` surfaces only the
   tool calls, each as a tidy `⏺ name(args)` line (no results); `shai` passes it by default.
@@ -167,21 +182,27 @@ The scripts:
 and appends `tool_result`s → `shai` re-runs `shai-context | shai-eval` so the model sees the
 results → repeat until a turn ends with no tool call.
 
-**Tools** are declared in `tools.json` (Anthropic tool-definition shape): `gh_pr_view`,
-`gh_issue_view`, `list_directory`, `print_file` (read-only), `write_file`, `patch_file`
-(write). `run_tool` in `shai-dispatch` and `tools.json` must be kept in sync.
+**Tools** are plugins, one directory per tool under `tools/<name>/`: a `tool.json` (Anthropic
+tool-definition shape — `name`, `description`, `input_schema` — plus an optional `capabilities`
+object, currently just `read_only`) and an executable `run.sh` that takes the tool's JSON input
+as `$1` and prints its result to stdout. Built-in tools: `gh_pr_view`, `gh_issue_view`,
+`list_directory`, `print_file` (read-only), `write_file`, `patch_file` (write). `shai-tools`
+aggregates every `tools/*/tool.json` into the Anthropic tool array at startup, and
+`shai-dispatch` resolves a `tool_use` call straight to `tools/<name>/run.sh`. There is no central
+manifest or dispatch table to keep in sync — adding a tool means adding a directory.
 
 **Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
 Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:
 `allow` (execute silently), `prompt` (interactive Y/N on `/dev/tty`; non-interactive → fail
 closed as error event), `deny` (error event, never execute). When no policy file exists, the
-four built-in read-only tools are auto-allowed and everything else defaults to `prompt`.
+fallback is per-tool: a tool whose `tool.json` declares `capabilities.read_only: true` (the four
+built-in read-only tools) is auto-allowed, and everything else defaults to `prompt`.
 
 ## Conventions to preserve
 
-- Every runtime script starts with `#!/bin/bash` + `set -euo pipefail`. `tests/conventions.sh`
-  enforces this along with the executable bit, valid `tools.json`, no trailing whitespace, and
-  a final newline. Run it before committing.
+- Every runtime script (`shai`, `shai-*`, and each `tools/*/run.sh`) starts with `#!/bin/bash` +
+  `set -euo pipefail`. `tests/conventions.sh` enforces this along with the executable bit, valid
+  `tools/*/tool.json`, no trailing whitespace, and a final newline. Run it before committing.
 - **`set -euo pipefail` is load-bearing, not just hygiene.** `shai-dispatch` signals "a tool ran"
   by exiting 1, and the re-eval loop reads that through `| shai-stamp`. Only `pipefail` carries a
   non-rightmost exit status out of a pipeline — without it the loop silently ends after one pass.
@@ -201,12 +222,13 @@ four built-in read-only tools are auto-allowed and everything else defaults to `
 - **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
   undocumented **or of an unrecognized type**. Per type:
-  - **Runtime scripts** (`shai`, `shai-*`): a header block after the shebang with a purpose line
-    plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
+  - **Runtime scripts** (`shai`, `shai-*`, `tools/*/run.sh`): a header block after the shebang
+    with a purpose line plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
   - **Test files** (`tests/test_*.sh`): purpose line + `# Covers:`.
   - **Infra scripts** (other `tests/*.sh`): purpose line + `# Usage:`.
   - **YAML / dotfiles / Markdown**: a leading `#` purpose comment / an H1 title.
-  - **`tools.json`**: every tool and input property has a non-empty `description` (jq-checked).
+  - **`tools/<name>/tool.json`**: the tool and every input property has a non-empty
+    `description` (jq-checked).
   - Only `tests/lint-tools.sha256` is exempt (generated, comment-hostile).
 
   To add a new file type: add a classification branch and its check to `tests/docs.sh` (with a
