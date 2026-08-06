@@ -85,6 +85,12 @@ PFTOOL=$(jq -nc --arg p "$TMPD/beta" '{type:"message",source:"assistant",payload
 PFOUT=$(echo "$PFTOOL" | "$DIR/shai-dispatch")
 assert_contains "$PFOUT" 'FILEBODY' "dispatch: print_file returns file contents"
 
+# new: path traversal in tool name → is_error, tool never executed
+TRAVTOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"tr1","name":"../etc/passwd","input":{}}],"stop_reason":"tool_use"}}'
+TROUT=$(echo "$TRAVTOOL" | "$DIR/shai-dispatch") || true
+assert_contains "$TROUT" '"is_error":true' "dispatch: path traversal tool name → is_error true"
+assert_contains "$TROUT" 'Invalid tool name' "dispatch: path traversal tool name → clear message"
+
 # new: empty stdin → exit 0
 assert_exit 0 "dispatch: empty stdin → exit 0" -- bash -c 'printf "" | "'"$DIR"'/shai-dispatch"'
 

@@ -115,6 +115,14 @@ while IFS= read -r block; do
   tool_name=$(printf '%s' "$block" | jq -r '.name')
   tool_id=$(printf '%s' "$block" | jq -r '.id')
   tool_input=$(printf '%s' "$block" | jq -c '.input')
+  if [[ ! "$tool_name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+    raw="Invalid tool name: $tool_name"
+    is_error=true
+    jq -nc --arg id "$tool_id" --arg content "$raw" --argjson is_error true '
+      {type:"tool_result", source:"tool",
+       payload:{tool_use_id:$id, content:$content, is_error:$is_error}}'
+    continue
+  fi
   skip_run=false
   if [ -n "${SHAI_RETRY_ACTIVE:-}" ]; then
     ro=$(tool_is_read_only "$tool_name")

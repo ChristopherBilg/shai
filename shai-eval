@@ -78,7 +78,7 @@ fi
 
 TOOLS_JSON="[]"
 if [ -n "$TOOLS_FILE" ]; then
-  TOOLS_JSON=$(cat "$TOOLS_FILE")
+  TOOLS_JSON=$(cat "$TOOLS_FILE" 2>/dev/null) || TOOLS_JSON="[]"
 fi
 
 PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
