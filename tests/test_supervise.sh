@@ -37,6 +37,18 @@ assert_eq "$NAME" "shai-myscript" "naming: myscript → shai-myscript"
 NAME=$("$DIR/shai-supervise" __unit_name shai-foo 2>/dev/null)
 assert_eq "$NAME" "shai-foo" "naming: shai-foo → shai-foo"
 
+# --- unit naming: workflows/ subdirectory scripts ---
+# workflow path: workflows/heartbeat.sh → shai-heartbeat
+NAME=$("$DIR/shai-supervise" __unit_name "workflows/heartbeat.sh" 2>/dev/null)
+assert_eq "$NAME" "shai-heartbeat" "unit_name: workflows/heartbeat.sh → shai-heartbeat"
+
+# path traversal must still be caught once the workflows/ prefix and .sh
+# suffix are stripped (stripping happens before the guard, not instead of it)
+assert_exit 1 "unit_name: workflows/../ path traversal still rejected" -- "$DIR/shai-supervise" __unit_name "workflows/../foo.sh"
+
+ERR=$("$DIR/shai-supervise" __unit_name "workflows/../foo.sh" 2>&1)
+assert_contains "$ERR" "must not contain / or .." "unit_name: workflows/../ path traversal error message"
+
 # --- validation: no subcommand ---
 assert_exit 2 "validate: no subcommand" -- "$DIR/shai-supervise"
 
@@ -120,6 +132,30 @@ assert_contains "$(cat "$SYSTEMCTL_LOG")" "disable shai-print.timer" "uninstall:
 "$DIR/shai-supervise" uninstall shai-print >/dev/null 2>&1
 RC=$?
 assert_eq "$RC" "0" "uninstall: idempotent (no error when files absent)"
+
+# --- install: resolves scripts in the workflows/ subdirectory ---
+WF_SERVICE="$TMP/shai-heartbeat.service"
+WF_TIMER="$TMP/shai-heartbeat.timer"
+
+: >"$SYSTEMCTL_LOG"
+"$DIR/shai-supervise" install "workflows/heartbeat.sh" >/dev/null 2>&1
+RC=$?
+assert_eq "$RC" "0" "install: workflows/heartbeat.sh exits 0"
+assert_eq "$([ -f "$WF_SERVICE" ] && echo yes || echo no)" "yes" "install: workflows/heartbeat.sh creates shai-heartbeat.service"
+assert_eq "$([ -f "$WF_TIMER" ] && echo yes || echo no)" "yes" "install: workflows/heartbeat.sh creates shai-heartbeat.timer"
+assert_contains "$(cat "$WF_SERVICE")" "ExecStart=$DIR/workflows/heartbeat.sh" "install: workflows/heartbeat.sh resolves ExecStart to the workflows/ path"
+
+# bare filename (no workflows/ prefix) exercises the new cmd_install fallback lookup
+: >"$SYSTEMCTL_LOG"
+"$DIR/shai-supervise" install "heartbeat.sh" >/dev/null 2>&1
+RC=$?
+assert_eq "$RC" "0" "install: bare heartbeat.sh falls back to workflows/ and exits 0"
+assert_contains "$(cat "$WF_SERVICE")" "ExecStart=$DIR/workflows/heartbeat.sh" "install: bare heartbeat.sh resolves ExecStart to the workflows/ path"
+
+: >"$SYSTEMCTL_LOG"
+"$DIR/shai-supervise" uninstall shai-heartbeat >/dev/null 2>&1
+assert_eq "$([ -f "$WF_SERVICE" ] && echo yes || echo no)" "no" "uninstall: shai-heartbeat (workflows/ script) .service removed"
+assert_eq "$([ -f "$WF_TIMER" ] && echo yes || echo no)" "no" "uninstall: shai-heartbeat (workflows/ script) .timer removed"
 
 # --- start/stop delegate to systemctl ---
 : >"$SYSTEMCTL_LOG"
