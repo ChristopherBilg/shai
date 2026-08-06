@@ -198,6 +198,15 @@ chmod 755 "$ATOM_DIR"
 assert_contains "$ATOM_OUT" '"is_error":true' "dispatch: patch_file read-only dir → is_error true"
 assert_eq "$(cat "$ATOM_DIR/target.txt")" "original content" "dispatch: patch_file atomic — original preserved on failure"
 
+# unknown tool under a permissive policy: unlike the "nope" test above (which is intercepted by
+# the default-prompt policy gate before run_tool ever looks for a run.sh), this uses WRITE_HOME's
+# default:"allow" policy so check_policy returns "allow" and run_tool actually reaches the
+# $TOOLS_DIR/$name/run.sh lookup, where "does_not_exist_tool" has no matching directory.
+UNKTOOL=$(jq -nc '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"uk1",name:"does_not_exist_tool",input:{}}],stop_reason:"tool_use"}}')
+UNKOUT=$(echo "$UNKTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_contains "$UNKOUT" '"is_error":true' "dispatch: unknown tool (allowed by policy) → is_error true"
+assert_contains "$UNKOUT" 'Unknown tool' "dispatch: unknown tool (allowed by policy) → clear message"
+
 # --- retry guard: SHAI_RETRY_ACTIVE skips write tools, allows read-only ---
 
 # retry guard: write_file skipped

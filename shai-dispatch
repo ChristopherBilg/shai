@@ -2,7 +2,9 @@
 # shai-dispatch — run tool_use blocks from the latest assistant event; emit tool_result events
 # Usage: cat latest.json | shai-dispatch
 # Reads: the latest assistant event JSON on stdin; $SHAI_HOME/policy.json for permission rules;
-#        SHAI_RETRY_ACTIVE from environment (skips non-read-only tools during retry)
+#        $TOOLS_DIR/<tool>/tool.json (capabilities.read_only) and $TOOLS_DIR/<tool>/run.sh
+#        (executed to run each tool); SHAI_RETRY_ACTIVE and SHAI_TOOLS_DIR (overrides the
+#        default $DIR/tools) from environment (retry skips non-read-only tools)
 # Writes: one tool_result event per tool_use (output truncated to 32000 bytes);
 #         write_file and patch_file modify the local filesystem
 # Exit: 1 if any tool ran (signals shai to re-evaluate), 0 otherwise
@@ -10,7 +12,7 @@ set -euo pipefail
 
 MAX_BYTES=32000
 
-DIR="${DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)}"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 TOOLS_DIR="${SHAI_TOOLS_DIR:-$DIR/tools}"
 
@@ -21,7 +23,7 @@ tool_is_read_only() {
     printf 'false'
     return 0
   }
-  jq -r '.capabilities.read_only // false' "$tool_json"
+  jq -r '.capabilities.read_only // false' "$tool_json" 2>/dev/null || printf 'false'
 }
 
 check_policy() {
@@ -30,7 +32,7 @@ check_policy() {
 
   if [ ! -f "$policy_file" ]; then
     local ro
-    ro=$(tool_is_read_only "$tool_name")
+    ro=$(tool_is_read_only "$tool_name" 2>/dev/null)
     if [ "$ro" = "true" ]; then
       printf 'allow'
     else
