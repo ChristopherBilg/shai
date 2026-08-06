@@ -14,6 +14,7 @@ STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 RUNS_DIR="$STATE_DIR/runs"
 
 TOOLS_FILE=$(mktemp)
+chmod u+w "$TOOLS_FILE"
 trap 'rm -f "$TOOLS_FILE"' EXIT
 "$DIR/shai-tools" >"$TOOLS_FILE"
 

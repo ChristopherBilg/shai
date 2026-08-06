@@ -19,6 +19,7 @@ RUNS_DIR="$STATE_DIR/runs"
 SYSTEM_PROMPT="$("$DIR/shai-prompt" system)"
 
 TOOLS_FILE=$(mktemp)
+chmod u+w "$TOOLS_FILE"
 trap 'rm -f "$TOOLS_FILE"' EXIT
 "$DIR/shai-tools" >"$TOOLS_FILE"
 
