@@ -13,13 +13,13 @@ _CLEANUP_DIRS+=("$SHAI_HOME_TMP")
 export SHAI_HOME="$SHAI_HOME_TMP"
 
 # --- ported from tests/tests.sh:87-154: dry-run payload shape (no curl involved) ---
-DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools)
+DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools-file "$DIR/tools.json")
 assert_contains "$DRY" '"model":"claude-opus-4-8"' "eval: default model"
 assert_contains "$DRY" '"max_tokens":16000' "eval: default max_tokens"
-assert_contains "$DRY" '"gh_pr_view"' "eval: tools.json included with --tools"
+assert_contains "$DRY" '"gh_pr_view"' "eval: tools.json included with --tools-file"
 
 NOTOOLS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
-assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tools without --tools"
+assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tools without --tools-file"
 
 NOSYS=$(echo '{"system":"","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
 assert_eq "$(printf '%s' "$NOSYS" | jq 'has("system")')" "false" "eval: empty system omitted from payload"
