@@ -8,7 +8,6 @@
 # Exit: 0 always; --health-check exits 1 if ANTHROPIC_API_KEY missing; 2 on bad CLI args
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 MODEL="${SHAI_MODEL:-claude-opus-4-8}"
 MAX_TOKENS="16000"
