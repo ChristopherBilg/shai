@@ -17,6 +17,9 @@ wf_init() {
   export SHAI_SESSION_ID
   export SHAI_SCHEMA_VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
   export SHAI_HOME="${SHAI_HOME:-$HOME/.shai}"
+  export SHAI_RUN_ID=""
+  export SHAI_SPAN_ID=""
+  export SHAI_PARENT_SPAN_ID=""
 
   local sessions_dir="$SHAI_HOME/sessions"
   mkdir -p "$sessions_dir"

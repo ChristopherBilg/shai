@@ -152,9 +152,9 @@ The scripts:
   `shai-read | shai-context | shai-eval`, drives the dispatch loop until no tool calls remain,
   and emits the final assistant event on stdout. `--tools` generates the tool array via
   `shai-tools` internally; `--tools-file <path>` uses a pre-built file. Human-readable output
-  goes to stderr (unless `--quiet`). `shai` delegates its inner loop to `shai-loop`; workflow
-  scripts call it via `wf_llm`. **Invariant: it must never crash the pipeline** — errors become
-  events, exit 0.
+  goes to stderr; `--quiet` suppresses dispatch markers but still shows reply text. `shai`
+  delegates its inner loop to `shai-loop`; workflow scripts call it via `wf_llm`.
+  **Invariant: it must never crash the pipeline** — errors become events, exit 0.
 - **`shai-workflow list|run|describe`** (`shai-workflow:1`) — workflow discovery and
   invocation. `list` scans `workflows/` and prints names with purpose lines. `run <name>
   [args]` validates the name (no `/` or `..`) and executes the script. `describe <name>`
