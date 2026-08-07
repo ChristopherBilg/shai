@@ -106,11 +106,7 @@ commit_run() {
 }
 
 print_event() {
-  if [ ${#PRINT_OPTS[@]} -gt 0 ]; then
-    "$DIR/shai-print" "${PRINT_OPTS[@]}" >&2
-  else
-    cat >/dev/null
-  fi
+  "$DIR/shai-print" ${PRINT_OPTS[@]+"${PRINT_OPTS[@]}"} >&2
 }
 
 advance_span

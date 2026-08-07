@@ -5,7 +5,6 @@ set -uo pipefail
 
 WF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 DIR="$(cd "$WF_DIR/.." &>/dev/null && pwd)"
-STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 
 WF_NAME="${WF_NAME:-$(basename "${BASH_SOURCE[1]:-workflow}" .sh)}"
 

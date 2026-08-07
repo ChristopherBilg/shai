@@ -81,18 +81,20 @@ LAST_SPAN=$(printf '%s\n' "$H4" | jq -rs '[.[] | select(.type=="message" and .so
 assert_eq "$LAST_SPAN" "span_2" "loop: re-eval advances to span_2"
 unset SHAI_ROUND_COUNT
 
-# --- quiet mode: no stderr output ---
+# --- quiet mode: dispatch markers suppressed, but reply text still shown ---
 TMP5="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP5")
 mkdir -p "$TMP5/sessions"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMP5/sessions/test.jsonl"
 : >"$TMP5/sessions/test.latest.json"
 
-printf '{"type":"message","content":[{"type":"text","text":"quiet reply"}],"stop_reason":"end_turn"}' |
-  write_curl_stub 200
-
-QERR=$(printf 'hi' | SHAI_HOME="$TMP5" SHAI_SESSION_ID=test "$DIR/shai-loop" --quiet 2>&1 >/dev/null)
-assert_eq "$QERR" "" "loop: --quiet suppresses all stderr output"
+CSTUB3="$(mktemp -d)"
+_CLEANUP_DIRS+=("$CSTUB3")
+write_roundtrip_curl_stub "$CSTUB3"
+QERR=$(printf 'list the dir' | PATH="$CSTUB3:$PATH" SHAI_HOME="$TMP5" SHAI_SESSION_ID=test "$DIR/shai-loop" --tools --quiet 2>&1 >/dev/null)
+unset SHAI_ROUND_COUNT
+assert_eq "$(grep -c '⏺' <<<"$QERR" || true)" "0" "loop: --quiet suppresses dispatch markers"
+assert_contains "$QERR" "done" "loop: --quiet still shows reply text on stderr"
 
 # --- missing SHAI_SESSION_ID exits 1 ---
 printf 'hi' | env -u SHAI_SESSION_ID "$DIR/shai-loop" >/dev/null 2>&1

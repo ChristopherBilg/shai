@@ -5,6 +5,7 @@
 # Writes: timestamped pass/fail line to stderr; ephemeral session log (prunable)
 # Exit: 0 on pipeline success; 1 on pipeline failure
 set -euo pipefail
+# shellcheck source=lib/workflow.sh
 source "$(dirname "$0")/../lib/workflow.sh"
 
 wf_init
