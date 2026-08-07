@@ -79,6 +79,14 @@ json_ok() { # valid array; every tool and every input property has a non-empty d
   ' "$1" >/dev/null 2>&1
 }
 
+tool_json_ok() { # single tool object; tool + every input property has a non-empty description
+  jq -e '
+    type == "object"
+    and ((.description // "") | length) > 0
+    and all((.input_schema.properties // {})[]; (.description // "") | length > 0)
+  ' "$1" >/dev/null 2>&1
+}
+
 # check_shell <file> <runtime|test|infra>
 check_shell() {
   local f="$1" kind="$2" base bad=0
@@ -136,6 +144,14 @@ check_file() {
   case "$f" in
     *.md)
       if md_ok "$f"; then ok "md H1: $f"; else note "markdown missing '# ' H1 title: $f"; fi
+      return
+      ;;
+    tools/*/run.sh)
+      check_shell "$f" runtime
+      return
+      ;;
+    tools/*/tool.json)
+      if tool_json_ok "$f"; then ok "tool schema: $f"; else note "tool schema missing description(s): $f"; fi
       return
       ;;
     *.json)

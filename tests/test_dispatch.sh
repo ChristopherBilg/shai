@@ -48,7 +48,7 @@ assert_eq "$(printf '%s' "$BOUT" | jq -r '.payload.content | ltrimstr("<external
 NTOUT=$(echo "$NOTOOL" | "$DIR/shai-dispatch")
 assert_eq "$NTOUT" "" "dispatch: no-tool produces no output"
 
-MULTI='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"m1","name":"list_directory","input":{"path":"."}},{"type":"tool_use","id":"m2","name":"print_file","input":{"path":"tools.json"}}],"stop_reason":"tool_use"}}'
+MULTI='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"m1","name":"list_directory","input":{"path":"."}},{"type":"tool_use","id":"m2","name":"print_file","input":{"path":"CLAUDE.md"}}],"stop_reason":"tool_use"}}'
 MOUT=$(echo "$MULTI" | "$DIR/shai-dispatch")
 MRC=$?
 assert_eq "$MRC" "1" "dispatch: multiple tool_use → exit 1"
@@ -84,6 +84,12 @@ printf 'FILEBODY' >"$TMPD/beta"
 PFTOOL=$(jq -nc --arg p "$TMPD/beta" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"pf1",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
 PFOUT=$(echo "$PFTOOL" | "$DIR/shai-dispatch")
 assert_contains "$PFOUT" 'FILEBODY' "dispatch: print_file returns file contents"
+
+# new: path traversal in tool name → is_error, tool never executed
+TRAVTOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"tr1","name":"../etc/passwd","input":{}}],"stop_reason":"tool_use"}}'
+TROUT=$(echo "$TRAVTOOL" | "$DIR/shai-dispatch") || true
+assert_contains "$TROUT" '"is_error":true' "dispatch: path traversal tool name → is_error true"
+assert_contains "$TROUT" 'Invalid tool name' "dispatch: path traversal tool name → clear message"
 
 # new: empty stdin → exit 0
 assert_exit 0 "dispatch: empty stdin → exit 0" -- bash -c 'printf "" | "'"$DIR"'/shai-dispatch"'
@@ -197,6 +203,15 @@ ATOM_OUT=$(echo "$ATOM_TOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || 
 chmod 755 "$ATOM_DIR"
 assert_contains "$ATOM_OUT" '"is_error":true' "dispatch: patch_file read-only dir → is_error true"
 assert_eq "$(cat "$ATOM_DIR/target.txt")" "original content" "dispatch: patch_file atomic — original preserved on failure"
+
+# unknown tool under a permissive policy: unlike the "nope" test above (which is intercepted by
+# the default-prompt policy gate before run_tool ever looks for a run.sh), this uses WRITE_HOME's
+# default:"allow" policy so check_policy returns "allow" and run_tool actually reaches the
+# $TOOLS_DIR/$name/run.sh lookup, where "does_not_exist_tool" has no matching directory.
+UNKTOOL=$(jq -nc '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"uk1",name:"does_not_exist_tool",input:{}}],stop_reason:"tool_use"}}')
+UNKOUT=$(echo "$UNKTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_contains "$UNKOUT" '"is_error":true' "dispatch: unknown tool (allowed by policy) → is_error true"
+assert_contains "$UNKOUT" 'Unknown tool' "dispatch: unknown tool (allowed by policy) → clear message"
 
 # --- retry guard: SHAI_RETRY_ACTIVE skips write tools, allows read-only ---
 

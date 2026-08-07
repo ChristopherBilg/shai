@@ -24,6 +24,11 @@ extract_functions() {
 
 run_check_policy() {
   local tool_name="$1" tool_input="$2"
+  # shai-dispatch derives DIR from ${BASH_SOURCE[0]}, which under eval resolves to this file's
+  # own directory (tests/), not shai-dispatch's — so TOOLS_DIR must be pinned explicitly here to
+  # the repo's real tools/ directory; it wins over the eval'd script's own $DIR/tools default.
+  # shellcheck disable=SC2034  # consumed by the eval'd shai-dispatch code below, not directly
+  local SHAI_TOOLS_DIR="$DIR/tools"
   eval "$(extract_functions)"
   check_policy "$tool_name" "$tool_input"
 }

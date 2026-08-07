@@ -1,0 +1,75 @@
+#!/bin/bash
+# shai-tools — scan, validate, and aggregate tool plugin directories
+# Usage: shai-tools [tools-dir]   (default: $DIR/tools)
+# Reads: tools/*/tool.json and checks tools/*/run.sh for each plugin directory
+# Writes: aggregated Anthropic tool array (JSON) to stdout
+# Exit: 0 on success, 1 on validation failure
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+TOOLS_DIR="${1:-$DIR/tools}"
+
+if [ ! -d "$TOOLS_DIR" ]; then
+  printf '[]'
+  exit 0
+fi
+
+shopt -s nullglob
+DIRS=("$TOOLS_DIR"/*)
+shopt -u nullglob
+
+if [ ${#DIRS[@]} -eq 0 ]; then
+  printf '[]'
+  exit 0
+fi
+
+TOOLS='[]'
+for tool_dir in "${DIRS[@]}"; do
+  [ -d "$tool_dir" ] || continue
+  dir_name=$(basename "$tool_dir")
+  tool_json="$tool_dir/tool.json"
+  run_sh="$tool_dir/run.sh"
+
+  if [ ! -f "$tool_json" ]; then
+    printf 'error: %s/tool.json not found\n' "$dir_name" >&2
+    exit 1
+  fi
+
+  if ! jq empty "$tool_json" 2>/dev/null; then
+    printf 'error: %s/tool.json is not valid JSON\n' "$dir_name" >&2
+    exit 1
+  fi
+
+  for field in name description input_schema; do
+    if [ "$(jq --arg f "$field" 'has($f)' "$tool_json")" != "true" ]; then
+      printf 'error: %s/tool.json missing required field: %s\n' "$dir_name" "$field" >&2
+      exit 1
+    fi
+  done
+
+  json_name=$(jq -r '.name' "$tool_json")
+  if [ "$json_name" != "$dir_name" ]; then
+    printf 'error: %s/tool.json name "%s" does not match directory name\n' "$dir_name" "$json_name" >&2
+    exit 1
+  fi
+
+  if [ ! -f "$run_sh" ]; then
+    printf 'error: %s/run.sh not found\n' "$dir_name" >&2
+    exit 1
+  fi
+
+  if [ ! -x "$run_sh" ]; then
+    printf 'error: %s/run.sh is not executable\n' "$dir_name" >&2
+    exit 1
+  fi
+
+  cap_type=$(jq -r '.capabilities | type' "$tool_json" 2>/dev/null) || cap_type="null"
+  if [ "$cap_type" != "null" ] && [ "$cap_type" != "object" ]; then
+    printf 'error: %s/tool.json capabilities must be an object (got %s)\n' "$dir_name" "$cap_type" >&2
+    exit 1
+  fi
+
+  TOOLS=$(printf '%s' "$TOOLS" | jq --argjson tool "$(jq 'del(.capabilities)' "$tool_json")" '. + [$tool]')
+done
+
+printf '%s' "$TOOLS"

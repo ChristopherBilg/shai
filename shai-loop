@@ -1,6 +1,6 @@
 #!/bin/bash
 # shai-loop — eval/dispatch loop filter: prompt in, final assistant event out
-# Usage: printf 'prompt' | shai-loop [--tools] [--model MODEL] [--max-tokens N] [-q|--quiet]
+# Usage: printf 'prompt' | shai-loop [--tools|--tools-file PATH] [--model MODEL] [--max-tokens N] [-q|--quiet]
 # Reads: SHAI_SESSION_ID (required), SHAI_HOME, SHAI_RUN_ID, SHAI_SCHEMA_VERSION,
 #        SHAI_RETRY_ACTIVE from environment; session log from $SHAI_HOME/sessions/
 # Writes: events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl and
@@ -25,11 +25,22 @@ advance_span() {
 
 EVAL_OPTS=()
 PRINT_OPTS=(--dispatches)
+OWN_TOOLS_FILE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --tools)
-      EVAL_OPTS+=(--tools)
+      OWN_TOOLS_FILE=$(mktemp)
+      "$DIR/shai-tools" >"$OWN_TOOLS_FILE"
+      EVAL_OPTS+=(--tools-file "$OWN_TOOLS_FILE")
       shift
+      ;;
+    --tools-file)
+      [ "$#" -lt 2 ] && {
+        printf 'error: --tools-file requires a path\n' >&2
+        exit 2
+      }
+      EVAL_OPTS+=(--tools-file "$2")
+      shift 2
       ;;
     --model)
       [ "$#" -lt 2 ] && {
@@ -57,6 +68,10 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -n "$OWN_TOOLS_FILE" ]; then
+  trap 'rm -f "$OWN_TOOLS_FILE"' EXIT
+fi
 
 if [ -z "${SHAI_SESSION_ID:-}" ]; then
   printf 'error: SHAI_SESSION_ID must be set\n' >&2

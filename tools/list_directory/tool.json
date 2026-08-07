@@ -1,0 +1,14 @@
+{
+  "name": "list_directory",
+  "description": "List the files and folders inside a local directory.",
+  "capabilities": {
+    "read_only": true
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "Absolute or relative path. Use . for the current directory." }
+    },
+    "required": ["path"]
+  }
+}

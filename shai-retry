@@ -13,6 +13,11 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 RUNS_DIR="$STATE_DIR/runs"
 
+TOOLS_FILE=$(mktemp)
+chmod u+w "$TOOLS_FILE"
+trap 'rm -f "$TOOLS_FILE"' EXIT
+"$DIR/shai-tools" >"$TOOLS_FILE"
+
 mint_id() {
   printf '%s_%s_%s' "$1" "$(date -u +%Y%m%dT%H%M%S)" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')"
 }
@@ -107,12 +112,12 @@ if [ -n "$REPLAY_RUN" ]; then
   printf '%s\n' "$USER_TEXT" | "$DIR/shai-read" | "$DIR/shai-stamp" |
     jq -c --arg retry_of "$REPLAY_RUN" '.meta.retry_of = $retry_of' >>"$RUN_LOG"
 
-  cat "$SESSION_LOG" "$RUN_LOG" 2>/dev/null | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+  cat "$SESSION_LOG" "$RUN_LOG" 2>/dev/null | "$DIR/shai-context" | "$DIR/shai-eval" --tools-file "$TOOLS_FILE" | "$DIR/shai-stamp" |
     tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
 
   until cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" >>"$RUN_LOG"; do
     advance_span
-    cat "$SESSION_LOG" "$RUN_LOG" 2>/dev/null | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+    cat "$SESSION_LOG" "$RUN_LOG" 2>/dev/null | "$DIR/shai-context" | "$DIR/shai-eval" --tools-file "$TOOLS_FILE" | "$DIR/shai-stamp" |
       tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
   done
 
@@ -153,7 +158,7 @@ fi
 
 run_eval() {
   advance_span
-  cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools | "$DIR/shai-stamp" |
+  cat "$SESSION_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" --tools-file "$TOOLS_FILE" | "$DIR/shai-stamp" |
     tee -a "$SESSION_LOG" | tee -a "$RUN_LOG" | tee "$LATEST" | "$DIR/shai-print" "${PRINT_OPTS[@]}"
 }
 

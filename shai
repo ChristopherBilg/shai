@@ -18,6 +18,11 @@ STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 # `set -e` that aborts before we ever seed a blank system turn into the session.
 SYSTEM_PROMPT="$("$DIR/shai-prompt" system)"
 
+TOOLS_FILE=$(mktemp)
+chmod u+w "$TOOLS_FILE"
+trap 'rm -f "$TOOLS_FILE"' EXIT
+"$DIR/shai-tools" >"$TOOLS_FILE"
+
 # --quiet is forwarded to shai-loop verbatim; shai-loop maps it to its own PRINT_OPTS
 LOOP_QUIET_FLAG=""
 case "${1:-}" in
@@ -74,5 +79,5 @@ while read -r -p "> " line || [ -n "$line" ]; do
   export SHAI_RUN_ID
 
   # shellcheck disable=SC2069  # the swap (stderr to old stdout, then stdout to /dev/null) is deliberate, not a mis-ordered redirect
-  printf '%s\n' "$line" | "$DIR/shai-loop" --tools ${LOOP_QUIET_FLAG:+"$LOOP_QUIET_FLAG"} 2>&1 >/dev/null
+  printf '%s\n' "$line" | "$DIR/shai-loop" --tools-file "$TOOLS_FILE" ${LOOP_QUIET_FLAG:+"$LOOP_QUIET_FLAG"} 2>&1 >/dev/null
 done

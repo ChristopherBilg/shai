@@ -16,7 +16,11 @@ note() {
 ok() { echo -e "  ${GREEN}✓${NC} $1"; }
 
 # Derived from git, not hardcoded: a hardcoded list silently skipped shai-retry for two PRs.
-mapfile -t RUNTIME < <(git ls-files 'shai' 'shai-*' 'workflows/*.sh')
+mapfile -t RUNTIME < <({
+  git ls-files 'shai' 'shai-*'
+  git ls-files 'tools/*/run.sh'
+  git ls-files 'workflows/*.sh'
+} | sort -u)
 
 mapfile -t SCRIPTS < <(
   {
@@ -47,8 +51,11 @@ for f in "${EXEC_TARGETS[@]}"; do
   if [ -x "$f" ]; then ok "executable: $f"; else note "not executable: $f"; fi
 done
 
-# 4. tools.json valid JSON
-if jq empty tools.json >/dev/null 2>&1; then ok "tools.json is valid JSON"; else note "tools.json is not valid JSON"; fi
+# 4. tools/*/tool.json valid JSON
+for tj in tools/*/tool.json; do
+  [ -f "$tj" ] || continue
+  if jq empty "$tj" >/dev/null 2>&1; then ok "$tj is valid JSON"; else note "$tj is not valid JSON"; fi
+done
 
 # 5. Trailing whitespace + final newline on tracked text files
 while IFS= read -r f; do
