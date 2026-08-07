@@ -19,6 +19,7 @@ ok() { echo -e "  ${GREEN}✓${NC} $1"; }
 mapfile -t RUNTIME < <({
   git ls-files 'shai' 'shai-*'
   git ls-files 'tools/*/run.sh'
+  git ls-files 'workflows/*.sh'
 } | sort -u)
 
 mapfile -t SCRIPTS < <(

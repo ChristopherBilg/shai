@@ -2,7 +2,7 @@
 # shai-supervise — manage shai workflows under systemd --user
 # Usage: shai-supervise install|uninstall|start|stop|logs <script> [--interval <timespan>]
 #        shai-supervise status [script]
-# Reads: ANTHROPIC_API_KEY, SHAI_HOME from environment (install only); target script from $DIR
+# Reads: ANTHROPIC_API_KEY, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows
 # Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall)
 # Exit: 0 on success; 1 on validation error or systemctl failure; 2 on usage error
 set -euo pipefail
@@ -10,9 +10,12 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 UNIT_DIR="${SHAI_UNIT_DIR:-$HOME/.config/systemd/user}"
 
-# unit_name <script>: validate, strip leading shai- if present, prepend shai-
+# unit_name <script>: strip workflows/ prefix and .sh suffix, validate, strip
+# leading shai- if present, prepend shai-
 unit_name() {
   local script="$1"
+  script="${script#workflows/}"
+  script="${script%.sh}"
   if [[ "$script" =~ [/] ]] || [[ "$script" == *..* ]]; then
     printf 'error: script name must not contain / or .. (got "%s")\n' "$script" >&2
     exit 1
@@ -24,6 +27,9 @@ unit_name() {
 cmd_install() {
   local script="$1" interval="${2:-15min}"
   local script_path="$DIR/$script"
+  if [ ! -x "$script_path" ] && [ -x "$DIR/workflows/$script" ]; then
+    script_path="$DIR/workflows/$script"
+  fi
 
   if [ ! -x "$script_path" ]; then
     printf 'error: %s not found or not executable in %s\n' "$script" "$DIR" >&2
