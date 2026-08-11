@@ -47,7 +47,8 @@ mkdir -p "$BIN_DIR"
 for script in "$DEST"/shai-*; do
   if [ -f "$script" ] && [ -x "$script" ]; then
     wrapper="$BIN_DIR/$(basename "$script")"
-    printf '#!/bin/bash\nexec "%s" "$@"\n' "$script" >"$wrapper"
+    escaped="${script//\'/\'\\\'\'}"
+    printf "#!/bin/bash\nexec '%s' \"\$@\"\n" "$escaped" >"$wrapper"
     chmod +x "$wrapper"
   fi
 done

@@ -53,8 +53,8 @@ Defined in `tools.json` (Anthropic shape). Outputs are truncated to 32000 bytes 
 ```
 Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (into `bin/`):
 ```shell
-./bin/shellcheck shai-* tests/*.sh
-./bin/shfmt -d shai-* tests/*.sh
+./bin/shellcheck install.sh shai-* tests/*.sh
+./bin/shfmt -d install.sh shai-* tests/*.sh
 ```
 CI runs all of the above on every push and pull request.
 

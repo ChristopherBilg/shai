@@ -63,7 +63,7 @@ assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai-repl" ] && echo y)" "y" \
 assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai-repl" ] && echo y || echo n)" "n" \
   "install: shai-repl wrapper is a real file, not a symlink"
 assert_contains "$(cat "$FAKE_HOME/.local/bin/shai-repl")" \
-  "exec \"$FAKE_HOME/.local/share/shai/v2026.01.01/shai-repl\"" \
+  "exec '$FAKE_HOME/.local/share/shai/v2026.01.01/shai-repl'" \
   "install: shai-repl wrapper execs the real script path"
 assert_eq "$("$FAKE_HOME/.local/bin/shai-repl")" "hello" \
   "install: shai-repl wrapper runs the real script"

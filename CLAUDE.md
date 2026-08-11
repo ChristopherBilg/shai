@@ -51,8 +51,8 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
-./bin/shellcheck shai-* lib/*.sh workflows/*.sh tests/*.sh
-./bin/shfmt -d shai-* lib/*.sh workflows/*.sh tests/*.sh  # -w to rewrite in place
+./bin/shellcheck install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
+./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh  # -w to rewrite in place
 ```
 
 Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
