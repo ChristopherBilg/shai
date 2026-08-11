@@ -20,10 +20,17 @@ fi
 owner="${nwo%%/*}"
 name="${nwo##*/}"
 
+failures=0
+
 printf '=== Review comments (inline on diff) ===\n\n'
 timeout 30s gh api --paginate "repos/$owner/$name/pulls/$number/comments" \
-  --jq '.[] | "[\(.user.login) at \(.updated_at)] \(.path):\(.line // .original_line)\n\(.body)\n"' 2>&1 || true
+  --jq '.[] | "[\(.user.login) at \(.updated_at)] \(.path):\(.line // .original_line)\n\(.body)\n"' 2>&1 || failures=$((failures + 1))
 
 printf '\n=== Conversation comments ===\n\n'
 timeout 30s gh api --paginate "repos/$owner/$name/issues/$number/comments" \
-  --jq '.[] | "[\(.user.login) at \(.updated_at)]\n\(.body)\n"' 2>&1 || true
+  --jq '.[] | "[\(.user.login) at \(.updated_at)]\n\(.body)\n"' 2>&1 || failures=$((failures + 1))
+
+if [ "$failures" -ge 2 ]; then
+  printf 'Failed to fetch both review and conversation comments'
+  exit 1
+fi

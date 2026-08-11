@@ -27,7 +27,8 @@ timeout 120s gh repo clone "$repo" "$clone_dir" -- --quiet 2>&1 || {
 
 if [ -n "$ref" ]; then
   git -C "$clone_dir" checkout "$ref" --quiet 2>&1 || {
-    printf 'Cloned to %s but checkout of %s failed' "$clone_dir" "$ref"
+    rm -rf "$clone_dir"
+    printf 'Cloned but checkout of %s failed; temp directory cleaned up' "$ref"
     exit 1
   }
 fi

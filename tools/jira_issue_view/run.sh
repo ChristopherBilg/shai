@@ -56,4 +56,4 @@ printf '%s' "$body" | jq -r '
   "Updated:     \(.fields.updated // "n/a")",
   "",
   "Description:",
-  (.fields.description // "No description.")'
+  ((.fields.description // "No description.") | if type == "string" then . else tostring end)'

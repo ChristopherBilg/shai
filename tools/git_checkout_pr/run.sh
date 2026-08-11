@@ -20,8 +20,8 @@ if [ -n "$repo" ]; then args=(pr checkout --repo "$repo" -- "$number"); fi
 
 timeout 60s git -C "$target_path" fetch --quiet 2>&1 || true
 cd "$target_path"
-timeout 30s gh "${args[@]}" 2>&1 || {
-  printf 'Failed to checkout PR %s' "$number"
+checkout_out=$(timeout 30s gh "${args[@]}" 2>&1) || {
+  printf 'Failed to checkout PR %s: %s' "$number" "$checkout_out"
   exit 1
 }
 
