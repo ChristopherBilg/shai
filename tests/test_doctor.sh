@@ -70,7 +70,8 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   assert_eq "$RC" "1" "doctor: missing ANTHROPIC_API_KEY → exit 1"
   assert_contains "$OUT" "[FAIL]" "doctor: missing API key shows FAIL"
   assert_contains "$OUT" "ANTHROPIC_API_KEY" "doctor: FAIL line names the var"
-)
+  exit "$FAILED"
+) || FAILED=1
 
 # --- Test 5: conditional env var missing (JIRA_BASE_URL) → exit 0 + WARN with hint ---
 (
@@ -80,7 +81,8 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   assert_eq "$RC" "0" "doctor: missing JIRA var → exit 0"
   assert_contains "$OUT" "[WARN]" "doctor: missing JIRA var shows WARN"
   assert_contains "$OUT" "(needed by: jira_issue_view)" "doctor: JIRA WARN includes hint"
-)
+  exit "$FAILED"
+) || FAILED=1
 
 # --- Test 6: summary line accuracy ---
 (
@@ -89,6 +91,7 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   OUT=$(run_doctor jq gh)
   SUMMARY=$(printf '%s' "$OUT" | tail -n1)
   assert_eq "$SUMMARY" "1 error, 3 warnings" "doctor: summary line exact match"
-)
+  exit "$FAILED"
+) || FAILED=1
 
 finish
