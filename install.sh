@@ -1,7 +1,7 @@
 #!/bin/bash
 # install.sh — download and install shai from a GitHub Release
 # Usage: curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
-#        SHAI_VERSION=v2026.08.10 curl ... | bash   (pin a specific version)
+#        export SHAI_VERSION=v2026.08.10 && curl ... | bash   (pin a version)
 # Reads: SHAI_VERSION (env, optional — defaults to latest GitHub Release)
 # Writes: ~/.local/share/shai/<version>/ (extraction), ~/.local/bin/shai* (exec wrappers)
 # Exit: 0 on success, 1 on download/extract failure
@@ -15,23 +15,33 @@ if [ -n "${SHAI_VERSION:-}" ]; then
   VERSION="$SHAI_VERSION"
 else
   VERSION=$(curl -sSL -o /dev/null -w '%{url_effective}' \
-    "https://github.com/${REPO}/releases/latest" | grep -oE '[^/]+$')
+    "https://github.com/${REPO}/releases/latest" | grep -oE '[^/]+$' || true)
   if [ -z "$VERSION" ]; then
     printf 'error: could not resolve latest release\n' >&2
     exit 1
   fi
 fi
 
-TARBALL_URL="https://github.com/${REPO}/releases/download/${VERSION}/shai-${VERSION}.tar.gz"
-DEST="${INSTALL_DIR}/${VERSION}"
-
-printf 'Installing shai %s...\n' "$VERSION"
-mkdir -p "$DEST"
-if ! curl -fsSL "$TARBALL_URL" | tar xz -C "$DEST" --strip-components=1; then
-  printf 'error: failed to download or extract shai %s\n' "$VERSION" >&2
-  rm -rf "$DEST"
+if [[ "$VERSION" == */* ]] || [[ "$VERSION" == *..* ]]; then
+  printf 'error: SHAI_VERSION must not contain / or .. (got "%s")\n' "$VERSION" >&2
   exit 1
 fi
+
+TARBALL_URL="https://github.com/${REPO}/releases/download/${VERSION}/shai-${VERSION}.tar.gz"
+DEST="${INSTALL_DIR}/${VERSION}"
+TMPDIR_EXTRACT=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_EXTRACT"' EXIT
+
+printf 'Installing shai %s...\n' "$VERSION"
+if ! curl -fsSL "$TARBALL_URL" | tar xz -C "$TMPDIR_EXTRACT" --strip-components=1; then
+  printf 'error: failed to download or extract shai %s\n' "$VERSION" >&2
+  exit 1
+fi
+
+mkdir -p "$(dirname "$DEST")"
+rm -rf "$DEST"
+mv "$TMPDIR_EXTRACT" "$DEST"
+trap - EXIT
 
 mkdir -p "$BIN_DIR"
 for script in "$DEST"/shai-*; do

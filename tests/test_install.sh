@@ -101,4 +101,17 @@ assert_eq "$([ -d "$FAKE_HOME3/.local/share/shai/v2026.02.15" ] && echo y)" "y" 
 assert_eq "$(cat "$FAKE_HOME3/.local/share/shai/v2026.02.15/VERSION")" "v2026.02.15" \
   "install: correct version in VERSION file"
 
+# --- Test: path traversal in SHAI_VERSION is rejected ---
+FAKE_HOME4="$WORK/home4"
+mkdir -p "$FAKE_HOME4"
+err=$(HOME="$FAKE_HOME4" SHAI_VERSION="../../../etc" \
+  PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1 || true)
+assert_contains "$err" "must not contain" \
+  "install: rejects SHAI_VERSION with .."
+
+err2=$(HOME="$FAKE_HOME4" SHAI_VERSION="v1/../../x" \
+  PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1 || true)
+assert_contains "$err2" "must not contain" \
+  "install: rejects SHAI_VERSION with /"
+
 finish

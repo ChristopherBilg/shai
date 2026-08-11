@@ -15,7 +15,7 @@ Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl
 curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
 ```
 
-Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback with `SHAI_VERSION=v2026.08.09 curl ... | bash`.
+Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback: `export SHAI_VERSION=v2026.08.09 && curl ... | bash`.
 
 Check your version: `shai-repl --version`
 
