@@ -1,0 +1,62 @@
+#!/bin/bash
+# shai-doctor — validate environment prerequisites for shai
+# Usage: shai-doctor
+# Reads: $PATH (CLI tool availability), environment variables
+# Writes: diagnostic report to stderr
+# Exit: 0 if all core checks pass; 1 if any core check fails
+set -euo pipefail
+
+ERRORS=0
+WARNINGS=0
+
+CORE_TOOLS=(jq curl date od mktemp)
+COND_TOOLS=(gh git systemctl journalctl timeout)
+
+check_tool() {
+  local name="$1" level="$2"
+  if command -v "$name" >/dev/null 2>&1; then
+    printf '  [OK]   %s\n' "$name" >&2
+  elif [ "$level" = "core" ]; then
+    printf '  [FAIL] %s\n' "$name" >&2
+    ERRORS=$((ERRORS + 1))
+  else
+    printf '  [WARN] %s\n' "$name" >&2
+    WARNINGS=$((WARNINGS + 1))
+  fi
+}
+
+check_env() {
+  local name="$1" level="$2" hint="${3:-}"
+  local val="${!name:-}"
+  local suffix=""
+  [ -n "$hint" ] && suffix="  $hint"
+  if [ -n "$val" ]; then
+    printf '  [OK]   %s%s\n' "$name" "$suffix" >&2
+  elif [ "$level" = "core" ]; then
+    printf '  [FAIL] %s%s\n' "$name" "$suffix" >&2
+    ERRORS=$((ERRORS + 1))
+  else
+    printf '  [WARN] %s%s\n' "$name" "$suffix" >&2
+    WARNINGS=$((WARNINGS + 1))
+  fi
+}
+
+printf '=== shai-doctor ===\n\n' >&2
+
+printf 'Core tools:\n' >&2
+for t in "${CORE_TOOLS[@]}"; do check_tool "$t" core; done
+
+printf '\nConditional tools:\n' >&2
+for t in "${COND_TOOLS[@]}"; do check_tool "$t" conditional; done
+
+printf '\nEnvironment:\n' >&2
+check_env ANTHROPIC_API_KEY core
+check_env JIRA_BASE_URL conditional "(needed by: jira_issue_view)"
+check_env JIRA_USER_EMAIL conditional "(needed by: jira_issue_view)"
+check_env JIRA_API_TOKEN conditional "(needed by: jira_issue_view)"
+
+printf '\n%d error%s, %d warning%s\n' \
+  "$ERRORS" "$([ "$ERRORS" -ne 1 ] && echo s)" \
+  "$WARNINGS" "$([ "$WARNINGS" -ne 1 ] && echo s)" >&2
+
+[ "$ERRORS" -eq 0 ]
