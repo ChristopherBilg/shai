@@ -21,7 +21,7 @@ new_home() {
 new_home
 make_stub_bin
 printf '%s' '{"type":"message","content":[{"type":"text","text":"committed reply"}],"stop_reason":"end_turn"}' | write_curl_stub 200
-printf 'hello\nexit\n' | SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai" >/dev/null 2>&1
+printf 'hello\nexit\n' | SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 H=$(cat "$SHIST" 2>/dev/null || echo "")
 assert_contains "$H" '"source":"system"' "buffer-commit: system prompt seeded in session log"
 assert_contains "$H" '"source":"user"' "buffer-commit: user message committed to session log"
@@ -40,7 +40,7 @@ make_stub_bin
 printf '%s' '' | write_curl_stub 500
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}' >"$SHIST"
 BEFORE=$(wc -l <"$SHIST")
-printf 'hello\nexit\n' | SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai" >/dev/null 2>&1
+printf 'hello\nexit\n' | SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 AFTER=$(wc -l <"$SHIST")
 assert_eq "$AFTER" "$BEFORE" "buffer-commit: API error leaves session log untouched"
 
@@ -72,7 +72,7 @@ printf 'blocked' >"$BLOCKH/runs"
 mkdir -p "$BLOCKH/sessions"
 make_stub_bin
 printf '%s' '{"type":"message","content":[{"type":"text","text":"fallback reply"}],"stop_reason":"end_turn"}' | write_curl_stub 200
-printf 'hello\nexit\n' | SHAI_HOME="$BLOCKH" SHAI_SESSION_ID=test "$DIR/shai" >/dev/null 2>&1
+printf 'hello\nexit\n' | SHAI_HOME="$BLOCKH" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 BH=$(cat "$BLOCKH/sessions/test.jsonl" 2>/dev/null || echo "")
 assert_contains "$BH" '"source":"user"' "fallback: user event written directly to session log"
 assert_contains "$BH" 'fallback reply' "fallback: assistant event written directly to session log"
