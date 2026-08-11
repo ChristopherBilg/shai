@@ -51,9 +51,9 @@ for t in "${COND_TOOLS[@]}"; do check_tool "$t" conditional; done
 
 printf '\nEnvironment:\n' >&2
 check_env ANTHROPIC_API_KEY core
-check_env JIRA_BASE_URL conditional "(needed by: jira_issue_view)"
-check_env JIRA_USER_EMAIL conditional "(needed by: jira_issue_view)"
-check_env JIRA_API_TOKEN conditional "(needed by: jira_issue_view)"
+check_env JIRA_BASE_URL conditional
+check_env JIRA_USER_EMAIL conditional
+check_env JIRA_API_TOKEN conditional
 
 printf '\n%d error%s, %d warning%s\n' \
   "$ERRORS" "$([ "$ERRORS" -ne 1 ] && echo s)" \
