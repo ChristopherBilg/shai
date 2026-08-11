@@ -75,7 +75,8 @@ assert_exit 1 "validate: start rejects .. in script name" -- "$DIR/shai-supervis
 (
   unset ANTHROPIC_API_KEY
   assert_exit 1 "validate: install missing API key" -- "$DIR/shai-supervise" install shai-print
-)
+  exit "$FAILED"
+) || FAILED=1
 
 # --- install: generates correct unit files ---
 : >"$SYSTEMCTL_LOG"

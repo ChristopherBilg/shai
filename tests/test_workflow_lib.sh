@@ -27,7 +27,8 @@ printf '{"type":"message","content":[{"type":"text","text":"ok"}],"stop_reason":
   SYSEVT=$(jq -r '.source' "$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl")
   assert_eq "$SYSEVT" "system" "wf_init: system prompt seeded in session log"
   assert_eq "$(test -n "$DIR" && echo set)" "set" "wf_init: DIR is set"
-)
+  exit "$FAILED"
+) || FAILED=1
 
 # --- wf_llm: delegates to shai-loop ---
 TMP2="$(mktemp -d)"

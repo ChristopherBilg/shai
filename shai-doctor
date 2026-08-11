@@ -26,17 +26,15 @@ check_tool() {
 }
 
 check_env() {
-  local name="$1" level="$2" hint="${3:-}"
+  local name="$1" level="$2"
   local val="${!name:-}"
-  local suffix=""
-  [ -n "$hint" ] && suffix="  $hint"
   if [ -n "$val" ]; then
-    printf '  [OK]   %s%s\n' "$name" "$suffix" >&2
+    printf '  [OK]   %s\n' "$name" >&2
   elif [ "$level" = "core" ]; then
-    printf '  [FAIL] %s%s\n' "$name" "$suffix" >&2
+    printf '  [FAIL] %s\n' "$name" >&2
     ERRORS=$((ERRORS + 1))
   else
-    printf '  [WARN] %s%s\n' "$name" "$suffix" >&2
+    printf '  [WARN] %s\n' "$name" >&2
     WARNINGS=$((WARNINGS + 1))
   fi
 }
@@ -51,9 +49,9 @@ for t in "${COND_TOOLS[@]}"; do check_tool "$t" conditional; done
 
 printf '\nEnvironment:\n' >&2
 check_env ANTHROPIC_API_KEY core
-check_env JIRA_BASE_URL conditional "(needed by: jira_issue_view)"
-check_env JIRA_USER_EMAIL conditional "(needed by: jira_issue_view)"
-check_env JIRA_API_TOKEN conditional "(needed by: jira_issue_view)"
+check_env JIRA_BASE_URL conditional
+check_env JIRA_USER_EMAIL conditional
+check_env JIRA_API_TOKEN conditional
 
 printf '\n%d error%s, %d warning%s\n' \
   "$ERRORS" "$([ "$ERRORS" -ne 1 ] && echo s)" \
