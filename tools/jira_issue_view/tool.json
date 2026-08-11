@@ -1,0 +1,14 @@
+{
+  "name": "jira_issue_view",
+  "description": "View a Jira issue (read-only). Returns key, summary, status, assignee, priority, labels, and description. Requires JIRA_BASE_URL, JIRA_USER_EMAIL, and JIRA_API_TOKEN environment variables.",
+  "capabilities": {
+    "read_only": true
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "key": { "type": "string", "description": "The Jira issue key (e.g. PROJ-123)." }
+    },
+    "required": ["key"]
+  }
+}
