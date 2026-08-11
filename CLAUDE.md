@@ -15,6 +15,7 @@ No language runtime, no dependencies beyond `bash`, `curl`, `jq`, and (for the G
 ```shell
 export ANTHROPIC_API_KEY=sk-ant-...   # required at runtime
 ./shai                                 # interactive REPL
+./shai-doctor                          # check environment prerequisites
 
 # Run the pipeline by hand (every stage is a filter):
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
