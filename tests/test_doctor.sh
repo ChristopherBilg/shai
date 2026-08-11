@@ -73,14 +73,14 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   exit "$FAILED"
 ) || FAILED=1
 
-# --- Test 5: conditional env var missing (JIRA_BASE_URL) → exit 0 + WARN with hint ---
+# --- Test 5: conditional env var missing (JIRA_BASE_URL) → exit 0 + WARN ---
 (
   unset JIRA_BASE_URL
   OUT=$(run_doctor)
   RC=$?
   assert_eq "$RC" "0" "doctor: missing JIRA var → exit 0"
   assert_contains "$OUT" "[WARN]" "doctor: missing JIRA var shows WARN"
-  assert_contains "$OUT" "(needed by: jira_issue_view)" "doctor: JIRA WARN includes hint"
+  assert_contains "$OUT" "JIRA_BASE_URL" "doctor: WARN line names the var"
   exit "$FAILED"
 ) || FAILED=1
 

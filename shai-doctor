@@ -28,14 +28,13 @@ check_tool() {
 check_env() {
   local name="$1" level="$2"
   local val="${!name:-}"
-  local suffix=""
   if [ -n "$val" ]; then
-    printf '  [OK]   %s%s\n' "$name" "$suffix" >&2
+    printf '  [OK]   %s\n' "$name" >&2
   elif [ "$level" = "core" ]; then
-    printf '  [FAIL] %s%s\n' "$name" "$suffix" >&2
+    printf '  [FAIL] %s\n' "$name" >&2
     ERRORS=$((ERRORS + 1))
   else
-    printf '  [WARN] %s%s\n' "$name" "$suffix" >&2
+    printf '  [WARN] %s\n' "$name" >&2
     WARNINGS=$((WARNINGS + 1))
   fi
 }
