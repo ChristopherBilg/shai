@@ -51,9 +51,9 @@ jobs:
       - name: Install pinned lint tools
         run: ./tests/install-lint-tools.sh
       - name: ShellCheck all scripts
-        run: ./bin/shellcheck shai-* lib/*.sh workflows/*.sh tests/*.sh
+        run: ./bin/shellcheck install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
       - name: shfmt diff check
-        run: ./bin/shfmt -d shai-* lib/*.sh workflows/*.sh tests/*.sh
+        run: ./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
 
   conventions:
     runs-on: ubuntu-latest

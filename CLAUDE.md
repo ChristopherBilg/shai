@@ -16,6 +16,11 @@ No language runtime, no dependencies beyond `bash`, `curl`, `jq`, and (for the G
 export ANTHROPIC_API_KEY=sk-ant-...   # required at runtime
 ./shai-repl                            # interactive REPL
 ./shai-doctor                          # check environment prerequisites
+./shai-repl --version                  # print installed version
+
+# Install from a release:
+curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
+export SHAI_VERSION=v2026.08.10 && curl -sSL .../install.sh | bash  # pin a version
 
 # Run the pipeline by hand (every stage is a filter):
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
@@ -46,8 +51,8 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
-./bin/shellcheck shai-* lib/*.sh workflows/*.sh tests/*.sh
-./bin/shfmt -d shai-* lib/*.sh workflows/*.sh tests/*.sh  # -w to rewrite in place
+./bin/shellcheck install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
+./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh  # -w to rewrite in place
 ```
 
 Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),

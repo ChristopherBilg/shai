@@ -9,6 +9,16 @@ Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl
 - `gh` CLI, authenticated: `gh auth login`
 - `export ANTHROPIC_API_KEY=sk-ant-...`
 
+## Install
+
+```shell
+curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
+```
+
+Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback: `export SHAI_VERSION=v2026.08.09 && curl ... | bash`.
+
+Check your version: `shai-repl --version`
+
 ## Quick start
 ```shell
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -43,8 +53,8 @@ Defined in `tools.json` (Anthropic shape). Outputs are truncated to 32000 bytes 
 ```
 Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (into `bin/`):
 ```shell
-./bin/shellcheck shai-* tests/*.sh
-./bin/shfmt -d shai-* tests/*.sh
+./bin/shellcheck install.sh shai-* tests/*.sh
+./bin/shfmt -d install.sh shai-* tests/*.sh
 ```
 CI runs all of the above on every push and pull request.
 
