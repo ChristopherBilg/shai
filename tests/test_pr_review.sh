@@ -24,6 +24,21 @@ OUT=$("$DIR/workflows/pr_review.sh" owner/repo 2>&1)
 RC=$?
 assert_eq "$RC" "2" "pr_review: exit 2 with only repo"
 
+# --- usage error: invalid repo format ---
+OUT=$("$DIR/workflows/pr_review.sh" "not-a-repo" 42 2>&1)
+RC=$?
+assert_eq "$RC" "2" "pr_review: exit 2 on invalid repo format"
+assert_contains "$OUT" "OWNER/REPO" "pr_review: error names the expected format"
+
+# --- usage error: repo with sed metacharacters ---
+OUT=$("$DIR/workflows/pr_review.sh" "foo|bar" 42 2>&1)
+RC=$?
+assert_eq "$RC" "2" "pr_review: exit 2 on repo with pipe character"
+
+OUT=$("$DIR/workflows/pr_review.sh" "foo/bar/baz" 42 2>&1)
+RC=$?
+assert_eq "$RC" "2" "pr_review: exit 2 on repo with extra slash"
+
 # --- usage error: non-numeric PR number ---
 OUT=$("$DIR/workflows/pr_review.sh" owner/repo abc 2>&1)
 RC=$?
