@@ -17,7 +17,7 @@ ok() { echo -e "  ${GREEN}✓${NC} $1"; }
 
 # Derived from git, not hardcoded: a hardcoded list silently skipped shai-retry for two PRs.
 mapfile -t RUNTIME < <({
-  git ls-files 'shai' 'shai-*'
+  git ls-files 'shai-*'
   git ls-files 'tools/*/run.sh'
   git ls-files 'workflows/*.sh'
 } | sort -u)

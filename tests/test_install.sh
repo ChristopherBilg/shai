@@ -16,8 +16,8 @@ build_fake_tarball() {
   local staging="$WORK/shai-${version}"
   rm -rf "$staging"
   mkdir -p "$staging"
-  printf '#!/bin/bash\necho hello\n' >"$staging/shai"
-  chmod +x "$staging/shai"
+  printf '#!/bin/bash\necho hello\n' >"$staging/shai-repl"
+  chmod +x "$staging/shai-repl"
   printf '#!/bin/bash\necho doctor\n' >"$staging/shai-doctor"
   chmod +x "$staging/shai-doctor"
   echo "$version" >"$staging/VERSION"
@@ -52,21 +52,21 @@ make_install_curl_stub "v2026.01.01"
 HOME="$FAKE_HOME" SHAI_VERSION="v2026.01.01" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
 
-assert_eq "$([ -f "$FAKE_HOME/.local/share/shai/v2026.01.01/shai" ] && echo y)" "y" \
-  "install: shai extracted"
+assert_eq "$([ -f "$FAKE_HOME/.local/share/shai/v2026.01.01/shai-repl" ] && echo y)" "y" \
+  "install: shai-repl extracted"
 assert_eq "$([ -f "$FAKE_HOME/.local/share/shai/v2026.01.01/shai-doctor" ] && echo y)" "y" \
   "install: shai-doctor extracted"
 assert_eq "$([ -f "$FAKE_HOME/.local/share/shai/v2026.01.01/VERSION" ] && echo y)" "y" \
   "install: VERSION extracted"
-assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai" ] && echo y)" "y" \
-  "install: shai wrapper is executable"
-assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai" ] && echo y || echo n)" "n" \
-  "install: shai wrapper is a real file, not a symlink"
-assert_contains "$(cat "$FAKE_HOME/.local/bin/shai")" \
-  "exec \"$FAKE_HOME/.local/share/shai/v2026.01.01/shai\"" \
-  "install: shai wrapper execs the real script path"
-assert_eq "$("$FAKE_HOME/.local/bin/shai")" "hello" \
-  "install: shai wrapper runs the real script"
+assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai-repl" ] && echo y)" "y" \
+  "install: shai-repl wrapper is executable"
+assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai-repl" ] && echo y || echo n)" "n" \
+  "install: shai-repl wrapper is a real file, not a symlink"
+assert_contains "$(cat "$FAKE_HOME/.local/bin/shai-repl")" \
+  "exec \"$FAKE_HOME/.local/share/shai/v2026.01.01/shai-repl\"" \
+  "install: shai-repl wrapper execs the real script path"
+assert_eq "$("$FAKE_HOME/.local/bin/shai-repl")" "hello" \
+  "install: shai-repl wrapper runs the real script"
 assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai-doctor" ] && echo y)" "y" \
   "install: shai-doctor wrapper is executable"
 assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai-doctor" ] && echo y || echo n)" "n" \

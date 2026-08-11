@@ -1,9 +1,9 @@
 #!/bin/bash
-# shai — REPL/orchestrator: seed the system prompt, then delegate the eval+dispatch loop to shai-loop
-# Usage: shai [-q|--quiet]   (interactive; reads prompts until exit/quit/EOF)
+# shai-repl — REPL/orchestrator: seed the system prompt, then delegate the eval+dispatch loop to shai-loop
+# Usage: shai-repl [-q|--quiet]   (interactive; reads prompts until exit/quit/EOF)
 # Reads: interactive prompt lines on stdin (or piped input); SHAI_SESSION_ID / SHAI_SCHEMA_VERSION
 #        from the environment if already set (an inherited session id is never overwritten)
-# Writes: assistant turns via shai-loop, whose human-readable stderr is redirected to shai's
+# Writes: assistant turns via shai-loop, whose human-readable stderr is redirected to shai-repl's
 #         stdout (tool dispatches shown by default; -q/--quiet hides them); shai-loop buffers
 #         events in $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits finalized
 #         events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes directly if
@@ -86,7 +86,7 @@ while read -r -p "> " line || [ -n "$line" ]; do
   esac
 
   # a run is one user turn; shai-loop mints/advances spans and manages the run log internally.
-  # 2>&1 >/dev/null sends shai-loop's stderr (its human-readable shai-print output) to shai's
+  # 2>&1 >/dev/null sends shai-loop's stderr (its human-readable shai-print output) to shai-repl's
   # stdout (the terminal), and discards shai-loop's actual stdout (the final event JSON, which
   # the interactive REPL has no use for).
   SHAI_RUN_ID="$(mint_id run)"

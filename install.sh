@@ -34,7 +34,7 @@ if ! curl -fsSL "$TARBALL_URL" | tar xz -C "$DEST" --strip-components=1; then
 fi
 
 mkdir -p "$BIN_DIR"
-for script in "$DEST"/shai "$DEST"/shai-*; do
+for script in "$DEST"/shai-*; do
   if [ -f "$script" ] && [ -x "$script" ]; then
     wrapper="$BIN_DIR/$(basename "$script")"
     printf '#!/bin/bash\nexec "%s" "$@"\n' "$script" >"$wrapper"
