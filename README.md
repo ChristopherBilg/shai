@@ -9,6 +9,16 @@ Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl
 - `gh` CLI, authenticated: `gh auth login`
 - `export ANTHROPIC_API_KEY=sk-ant-...`
 
+## Install
+
+```shell
+curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
+```
+
+Installs to `~/.local/share/shai/<version>/` with symlinks in `~/.local/bin/`. Upgrade by re-running. Rollback with `SHAI_VERSION=v2026.08.09 curl ... | bash`.
+
+Check your version: `shai --version`
+
 ## Quick start
 ```shell
 export ANTHROPIC_API_KEY=sk-ant-...
