@@ -2,10 +2,13 @@
 # shai-dispatch — run tool_use blocks from the latest assistant event; emit tool_result events
 # Usage: cat latest.json | shai-dispatch
 # Reads: the latest assistant event JSON on stdin; $SHAI_HOME/policy.json for permission rules;
-#        SHAI_POLICY_OVERLAY (optional path to overlay policy, rules checked before base);
-#        $TOOLS_DIR/<tool>/tool.json (capabilities.read_only) and $TOOLS_DIR/<tool>/run.sh
-#        (executed to run each tool); SHAI_RETRY_ACTIVE and SHAI_TOOLS_DIR (overrides the
-#        default $DIR/tools) from environment (retry skips non-read-only tools)
+#        SHAI_POLICY_OVERLAY (optional path to overlay policy — overlay rules are checked
+#        before base rules and intentionally supersede them, including deny; this lets
+#        workflows grant tools they need without requiring the user to modify their base
+#        policy); $TOOLS_DIR/<tool>/tool.json (capabilities.read_only) and
+#        $TOOLS_DIR/<tool>/run.sh (executed to run each tool); SHAI_RETRY_ACTIVE and
+#        SHAI_TOOLS_DIR (overrides the default $DIR/tools) from environment (retry skips
+#        non-read-only tools)
 # Writes: one tool_result event per tool_use (output truncated to 32000 bytes);
 #         write_file and patch_file modify the local filesystem
 # Exit: 1 if any tool ran (signals shai-repl to re-evaluate), 0 otherwise
@@ -62,6 +65,7 @@ check_policy() {
     | .action
   '
 
+  # Overlay rules are checked first and intentionally supersede base rules (including deny).
   local action=""
 
   if "$has_overlay" && [ -z "$action" ]; then
