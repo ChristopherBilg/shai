@@ -26,6 +26,12 @@ Do not flag:
 - Minor documentation gaps
 - Suggestions that are purely cosmetic
 
-## Output format
+## Comment format
 
-Each inline comment should be specific and actionable: state what the bug or issue is, why it matters, and what to do about it. Quote the relevant code. If you find no issues worth flagging, create a review with a single top-level comment saying the PR looks good.
+Use conventional comments (https://conventionalcomments.org). Each comment must be a single short line in this format:
+
+**label:** brief description of the issue.
+
+Labels: `issue:`, `suggestion:`, `nitpick:`, `question:`, `thought:`, `praise:`
+
+Keep comments to 1-2 sentences max. No code blocks, no multi-paragraph explanations. If you find no issues worth flagging, create a review with a single top-level comment saying the PR looks good.
