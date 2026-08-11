@@ -56,6 +56,11 @@ fi
 
 wf_init
 
+WF_POLICY="$(dirname "$0")/pr_review.policy.json"
+if [ -f "$WF_POLICY" ]; then
+  export SHAI_POLICY_OVERLAY="$WF_POLICY"
+fi
+
 PROMPT_TEMPLATE=$("$DIR/shai-prompt" pr_review) || wf_fail "cannot load prompts/pr_review.txt"
 
 PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g")

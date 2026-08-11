@@ -2,6 +2,7 @@
 # shai-dispatch — run tool_use blocks from the latest assistant event; emit tool_result events
 # Usage: cat latest.json | shai-dispatch
 # Reads: the latest assistant event JSON on stdin; $SHAI_HOME/policy.json for permission rules;
+#        SHAI_POLICY_OVERLAY (optional path to overlay policy, rules checked before base);
 #        $TOOLS_DIR/<tool>/tool.json (capabilities.read_only) and $TOOLS_DIR/<tool>/run.sh
 #        (executed to run each tool); SHAI_RETRY_ACTIVE and SHAI_TOOLS_DIR (overrides the
 #        default $DIR/tools) from environment (retry skips non-read-only tools)
@@ -29,8 +30,13 @@ tool_is_read_only() {
 check_policy() {
   local tool_name="$1" tool_input="$2"
   local policy_file="$STATE_DIR/policy.json"
+  local overlay_file="${SHAI_POLICY_OVERLAY:-}"
+  local has_base=false has_overlay=false
 
-  if [ ! -f "$policy_file" ]; then
+  [ -f "$policy_file" ] && has_base=true
+  [ -n "$overlay_file" ] && [ -f "$overlay_file" ] && has_overlay=true
+
+  if ! "$has_base" && ! "$has_overlay"; then
     local ro
     ro=$(tool_is_read_only "$tool_name" 2>/dev/null)
     if [ "$ro" = "true" ]; then
@@ -41,8 +47,7 @@ check_policy() {
     return 0
   fi
 
-  local action
-  action=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" '
+  local match_filter='
     .rules[]?
     | select(.tool == $name)
     | select(
@@ -55,10 +60,27 @@ check_policy() {
         ))
       )
     | .action
-  ' "$policy_file" 2>/dev/null | head -n 1) || action=""
+  '
 
-  local fallback
-  fallback=$(jq -r '.default // "prompt"' "$policy_file" 2>/dev/null) || fallback=""
+  local action=""
+
+  if "$has_overlay" && [ -z "$action" ]; then
+    action=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" \
+      "$match_filter" "$overlay_file" 2>/dev/null | head -n 1) || action=""
+  fi
+
+  if "$has_base" && [ -z "$action" ]; then
+    action=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" \
+      "$match_filter" "$policy_file" 2>/dev/null | head -n 1) || action=""
+  fi
+
+  local fallback=""
+  if "$has_overlay"; then
+    fallback=$(jq -r '.default // empty' "$overlay_file" 2>/dev/null) || fallback=""
+  fi
+  if [ -z "$fallback" ] && "$has_base"; then
+    fallback=$(jq -r '.default // empty' "$policy_file" 2>/dev/null) || fallback=""
+  fi
   printf '%s' "${action:-${fallback:-prompt}}"
 }
 

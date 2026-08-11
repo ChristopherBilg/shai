@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_policy.sh — unit tests for the permission gate policy matcher
-# Covers: check_policy in shai-dispatch — policy file parsing, rule matching, fallbacks
+# Covers: check_policy in shai-dispatch — policy file parsing, rule matching, fallbacks, overlay
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -128,6 +128,53 @@ assert_eq "$RES" "deny" "no rule matches → policy default field wins"
 PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"other_tool","action":"allow"}]}')
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{}')
 assert_eq "$RES" "prompt" "no rule matches, no default field → prompt"
+
+# --- overlay: rules checked before base, base still applies for unmatched tools ---
+
+# overlay allows a tool that base denies
+ODIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$ODIR")
+printf '{"rules":[{"tool":"print_file","action":"deny"}]}' >"$ODIR/policy.json"
+OVERLAY=$(mktemp)
+_CLEANUP_DIRS+=("$OVERLAY")
+printf '{"rules":[{"tool":"print_file","action":"allow"}]}' >"$OVERLAY"
+RES=$(SHAI_HOME="$ODIR" SHAI_POLICY_OVERLAY="$OVERLAY" run_check_policy "print_file" '{}')
+assert_eq "$RES" "allow" "overlay: overlay allow supersedes base deny"
+
+# overlay doesn't match → falls through to base
+ODIR2=$(mktemp -d)
+_CLEANUP_DIRS+=("$ODIR2")
+printf '{"rules":[{"tool":"list_directory","action":"deny"}]}' >"$ODIR2/policy.json"
+OVERLAY2=$(mktemp)
+_CLEANUP_DIRS+=("$OVERLAY2")
+printf '{"rules":[{"tool":"print_file","action":"allow"}]}' >"$OVERLAY2"
+RES=$(SHAI_HOME="$ODIR2" SHAI_POLICY_OVERLAY="$OVERLAY2" run_check_policy "list_directory" '{}')
+assert_eq "$RES" "deny" "overlay: unmatched tool falls through to base"
+
+# overlay with no base policy
+ODIR3=$(empty_home)
+OVERLAY3=$(mktemp)
+_CLEANUP_DIRS+=("$OVERLAY3")
+printf '{"rules":[{"tool":"gh_repo_clone","action":"allow"}]}' >"$OVERLAY3"
+RES=$(SHAI_HOME="$ODIR3" SHAI_POLICY_OVERLAY="$OVERLAY3" run_check_policy "gh_repo_clone" '{}')
+assert_eq "$RES" "allow" "overlay: works without base policy file"
+RES=$(SHAI_HOME="$ODIR3" SHAI_POLICY_OVERLAY="$OVERLAY3" run_check_policy "other_tool" '{}')
+assert_eq "$RES" "prompt" "overlay: unmatched tool with no base → prompt"
+
+# overlay default supersedes base default
+ODIR4=$(mktemp -d)
+_CLEANUP_DIRS+=("$ODIR4")
+printf '{"default":"deny","rules":[]}' >"$ODIR4/policy.json"
+OVERLAY4=$(mktemp)
+_CLEANUP_DIRS+=("$OVERLAY4")
+printf '{"default":"allow","rules":[]}' >"$OVERLAY4"
+RES=$(SHAI_HOME="$ODIR4" SHAI_POLICY_OVERLAY="$OVERLAY4" run_check_policy "any_tool" '{}')
+assert_eq "$RES" "allow" "overlay: overlay default supersedes base default"
+
+# nonexistent overlay path → ignored, base still works
+ODIR5=$(setup_policy '{"rules":[{"tool":"print_file","action":"deny"}]}')
+RES=$(SHAI_HOME="$ODIR5" SHAI_POLICY_OVERLAY="/nonexistent/path.json" run_check_policy "print_file" '{}')
+assert_eq "$RES" "deny" "overlay: nonexistent overlay path ignored, base applies"
 
 # --- integration: the permission gate wired into run_tool, exercised through the full
 #     shai-dispatch pipeline (not the extracted functions) ---
