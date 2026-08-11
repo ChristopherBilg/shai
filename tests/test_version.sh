@@ -2,6 +2,7 @@
 # test_version.sh — tests for shai --version flag
 # Covers: shai --version — VERSION file, git describe fallback, dev fallback
 set -uo pipefail
+# shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai --version"

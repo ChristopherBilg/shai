@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_install.sh — hermetic tests for the shai installer
-# Covers: install.sh — tarball extraction, symlinking, download failure cleanup
+# Covers: install.sh — tarball extraction, exec-wrapper installation, download failure cleanup
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -58,12 +58,23 @@ assert_eq "$([ -f "$FAKE_HOME/.local/share/shai/v2026.01.01/shai-doctor" ] && ec
   "install: shai-doctor extracted"
 assert_eq "$([ -f "$FAKE_HOME/.local/share/shai/v2026.01.01/VERSION" ] && echo y)" "y" \
   "install: VERSION extracted"
-assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai" ] && echo y)" "y" \
-  "install: shai symlinked"
-assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai-doctor" ] && echo y)" "y" \
-  "install: shai-doctor symlinked"
-assert_eq "$([ -L "$FAKE_HOME/.local/bin/README.md" ] && echo y || echo n)" "n" \
-  "install: non-executable README.md not symlinked"
+assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai" ] && echo y)" "y" \
+  "install: shai wrapper is executable"
+assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai" ] && echo y || echo n)" "n" \
+  "install: shai wrapper is a real file, not a symlink"
+assert_contains "$(cat "$FAKE_HOME/.local/bin/shai")" \
+  "exec \"$FAKE_HOME/.local/share/shai/v2026.01.01/shai\"" \
+  "install: shai wrapper execs the real script path"
+assert_eq "$("$FAKE_HOME/.local/bin/shai")" "hello" \
+  "install: shai wrapper runs the real script"
+assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai-doctor" ] && echo y)" "y" \
+  "install: shai-doctor wrapper is executable"
+assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai-doctor" ] && echo y || echo n)" "n" \
+  "install: shai-doctor wrapper is a real file, not a symlink"
+assert_eq "$("$FAKE_HOME/.local/bin/shai-doctor")" "doctor" \
+  "install: shai-doctor wrapper runs the real script"
+assert_eq "$([ -e "$FAKE_HOME/.local/bin/README.md" ] && echo y || echo n)" "n" \
+  "install: non-executable README.md gets no wrapper"
 
 # --- Test: failed download cleans up ---
 FAKE_HOME2="$WORK/home2"
