@@ -20,8 +20,10 @@ run_doctor() {
         for t in "${fail_list[@]}"; do
           if [ "$2" = "$t" ]; then return 1; fi
         done
-        # Fall through to real builtin for everything else
-        builtin command "$@"
+        # Every tool not explicitly failed is reported present — never fall through to the
+        # real builtin here, or the host's actual tool availability (e.g. no systemd on
+        # macOS / minimal CI containers) would leak into the test and break exact counts.
+        return 0
       else
         builtin command "$@"
       fi
@@ -42,7 +44,7 @@ RC=$?
 assert_eq "$RC" "0" "doctor: all pass → exit 0"
 assert_contains "$OUT" "[OK]" "doctor: at least one OK in output"
 if [[ "$OUT" == *"[FAIL]"* ]]; then
-  assert_eq "no-fail" "no-fail" "dummy" # won't reach
+  assert_eq "found-fail" "no-fail" "doctor: no FAIL markers when all present"
 else
   assert_eq "0" "0" "doctor: no FAIL markers when all present"
 fi
