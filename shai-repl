@@ -72,7 +72,7 @@ while read -r -p "> " line || [ -n "$line" ]; do
   esac
 
   # a run is one user turn; shai-loop mints/advances spans and manages the run log internally.
-  # 2>&1 >/dev/null sends shai-loop's stderr (its human-readable shai-print output) to shai's
+  # 2>&1 >/dev/null sends shai-loop's stderr (its human-readable shai-print output) to shai-repl's
   # stdout (the terminal), and discards shai-loop's actual stdout (the final event JSON, which
   # the interactive REPL has no use for).
   SHAI_RUN_ID="$(mint_id run)"
