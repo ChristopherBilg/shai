@@ -1,0 +1,7 @@
+{
+  "rules": [
+    { "tool": "gh_repo_clone", "action": "allow" },
+    { "tool": "git_checkout_pr", "action": "allow" },
+    { "tool": "gh_pr_review_create", "action": "allow" }
+  ]
+}

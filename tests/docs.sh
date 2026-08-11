@@ -154,6 +154,14 @@ check_file() {
       if tool_json_ok "$f"; then ok "tool schema: $f"; else note "tool schema missing description(s): $f"; fi
       return
       ;;
+    workflows/*.policy.json)
+      if jq -e '.rules | type == "array"' "$f" >/dev/null 2>&1; then
+        ok "policy: $f"
+      else
+        note "policy file missing .rules array: $f"
+      fi
+      return
+      ;;
     *.json)
       if json_ok "$f"; then ok "json descriptions: $f"; else note "json missing description(s): $f"; fi
       return

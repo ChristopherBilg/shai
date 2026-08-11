@@ -243,4 +243,14 @@ assert_eq "$RC" "0" "library: compliant passes"
 run_docs lib/bad-lib.sh
 assert_eq "$RC" "1" "library: filename-only purpose fails"
 
+# --- workflow policy: valid .rules array ---
+printf '{"rules":[{"tool":"gh_repo_clone","action":"allow"}]}\n' >"$FIX/workflows/good.policy.json"
+printf '{"not_rules":true}\n' >"$FIX/workflows/bad.policy.json"
+
+run_docs workflows/good.policy.json
+assert_eq "$RC" "0" "policy: valid .rules array passes"
+
+run_docs workflows/bad.policy.json
+assert_eq "$RC" "1" "policy: missing .rules array fails"
+
 finish

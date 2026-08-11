@@ -32,7 +32,7 @@ api_comments=$(printf '%s' "$comments" | jq -c '[.[] | {
 payload=$(jq -nc \
   --arg body "$body" \
   --argjson comments "$api_comments" \
-  '{event: "PENDING", body: $body, comments: $comments}')
+  '{body: $body, comments: $comments}')
 
 result=$(timeout 30s gh api "repos/$owner/$name/pulls/$number/reviews" \
   --method POST \

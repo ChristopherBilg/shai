@@ -223,9 +223,16 @@ interactive REPL.
 **Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
 Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:
 `allow` (execute silently), `prompt` (interactive Y/N on `/dev/tty`; non-interactive → fail
-closed as error event), `deny` (error event, never execute). When no policy file exists, the
-fallback is per-tool: a tool whose `tool.json` declares `capabilities.read_only: true` (the four
-built-in read-only tools) is auto-allowed, and everything else defaults to `prompt`.
+closed as error event), `deny` (error event, never execute). When no rule matches and no
+explicit `default` is set, the fallback is per-tool: a tool whose `tool.json` declares
+`capabilities.read_only: true` is auto-allowed, and everything else defaults to `prompt`.
+
+**Policy overlay** — `SHAI_POLICY_OVERLAY` (env var) points to an optional overlay policy file.
+Overlay rules are checked **before** base rules and intentionally supersede them, including
+`deny`. This lets workflows grant the tools they need without requiring the user to modify their
+base policy. Workflows set this automatically via a co-located `<name>.policy.json` file (e.g.
+`workflows/pr_review.policy.json`). When unset or pointing to a nonexistent file, behavior is
+identical to before.
 
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
 (mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
