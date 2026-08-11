@@ -1,6 +1,6 @@
 #!/bin/bash
 # pr_review.sh — review a GitHub pull request via LLM and post a draft review
-# Usage: workflows/pr_review.sh <number> [--repo OWNER/REPO]
+# Usage: workflows/pr_review.sh <number> [--repo OWNER/REPO] [-q|--quiet]
 # Reads: ANTHROPIC_API_KEY from environment; prompts/pr_review.txt for review instructions
 # Writes: pending GitHub review with inline comments; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error
@@ -10,6 +10,7 @@ source "$(dirname "$0")/../lib/workflow.sh"
 
 NUMBER=""
 REPO=""
+QUIET=false
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -20,6 +21,10 @@ while [ "$#" -gt 0 ]; do
       }
       REPO="$2"
       shift 2
+      ;;
+    -q | --quiet)
+      QUIET=true
+      shift
       ;;
     -*)
       printf 'error: unknown option: %s\n' "$1" >&2
@@ -60,7 +65,11 @@ PROMPT_TEMPLATE=$("$DIR/shai-prompt" pr_review) || wf_fail "cannot load prompts/
 
 PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g")
 
-RESULT=$(wf_llm --tools "$PROMPT" 2>/dev/null) || wf_fail "pipeline error reviewing PR #$NUMBER"
+if "$QUIET"; then
+  RESULT=$(wf_llm --tools "$PROMPT" 2>/dev/null) || wf_fail "pipeline error reviewing PR #$NUMBER"
+else
+  RESULT=$(wf_llm --tools "$PROMPT") || wf_fail "pipeline error reviewing PR #$NUMBER"
+fi
 
 TYPE=$(printf '%s' "$RESULT" | jq -r '.type // empty' 2>/dev/null) || TYPE=""
 SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE=""
