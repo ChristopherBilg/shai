@@ -7,7 +7,7 @@
 #        default $DIR/tools) from environment (retry skips non-read-only tools)
 # Writes: one tool_result event per tool_use (output truncated to 32000 bytes);
 #         write_file and patch_file modify the local filesystem
-# Exit: 1 if any tool ran (signals shai to re-evaluate), 0 otherwise
+# Exit: 1 if any tool ran (signals shai-repl to re-evaluate), 0 otherwise
 set -euo pipefail
 
 MAX_BYTES=32000
