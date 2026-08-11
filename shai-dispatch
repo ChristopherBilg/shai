@@ -74,6 +74,11 @@ check_policy() {
       "$match_filter" "$policy_file" 2>/dev/null | head -n 1) || action=""
   fi
 
+  if [ -n "$action" ]; then
+    printf '%s' "$action"
+    return 0
+  fi
+
   local fallback=""
   if "$has_overlay"; then
     fallback=$(jq -r '.default // empty' "$overlay_file" 2>/dev/null) || fallback=""
@@ -81,7 +86,18 @@ check_policy() {
   if [ -z "$fallback" ] && "$has_base"; then
     fallback=$(jq -r '.default // empty' "$policy_file" 2>/dev/null) || fallback=""
   fi
-  printf '%s' "${action:-${fallback:-prompt}}"
+  if [ -n "$fallback" ]; then
+    printf '%s' "$fallback"
+    return 0
+  fi
+
+  local ro
+  ro=$(tool_is_read_only "$tool_name" 2>/dev/null)
+  if [ "$ro" = "true" ]; then
+    printf 'allow'
+  else
+    printf 'prompt'
+  fi
 }
 
 prompt_user() {

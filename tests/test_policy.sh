@@ -62,23 +62,28 @@ PDIR=$(empty_home)
 RES=$(SHAI_HOME="$PDIR" run_check_policy "some_write_tool" '{}')
 assert_eq "$RES" "prompt" "no policy file: non-read-only tool → prompt"
 
-# --- empty policy file → prompt (not a crash, not an empty string) ---
+# --- empty policy file: read-only auto-allows, non-read-only prompts ---
 PDIR=$(setup_policy '')
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{}')
-assert_eq "$RES" "prompt" "empty policy file → prompt"
+assert_eq "$RES" "allow" "empty policy file: read-only tool → allow"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "some_write_tool" '{}')
+assert_eq "$RES" "prompt" "empty policy file: non-read-only tool → prompt"
 
-# regression: whitespace-only is the same failure mode as zero-byte (both jq calls succeed
-# with zero output, so the nested ${fallback:-prompt} expansion must still catch it)
+# regression: whitespace-only is the same failure mode as zero-byte
 WSDIR=$(mktemp -d)
 _CLEANUP_DIRS+=("$WSDIR")
 printf '   \n\t\n' >"$WSDIR/policy.json"
 RES=$(SHAI_HOME="$WSDIR" run_check_policy "print_file" '{}')
-assert_eq "$RES" "prompt" "whitespace-only policy file → prompt"
+assert_eq "$RES" "allow" "whitespace-only policy file: read-only → allow"
+RES=$(SHAI_HOME="$WSDIR" run_check_policy "some_write_tool" '{}')
+assert_eq "$RES" "prompt" "whitespace-only policy file: non-read-only → prompt"
 
-# --- malformed (non-JSON) policy file → prompt; must not crash the caller ---
+# --- malformed (non-JSON) policy file: falls back to read-only heuristic ---
 PDIR=$(setup_policy 'not json {')
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{}')
-assert_eq "$RES" "prompt" "malformed policy file → prompt"
+assert_eq "$RES" "allow" "malformed policy file: read-only → allow"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "some_write_tool" '{}')
+assert_eq "$RES" "prompt" "malformed policy file: non-read-only → prompt"
 
 # --- exact tool match ---
 PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"print_file","action":"allow"}]}')
@@ -124,10 +129,12 @@ PDIR=$(setup_policy '{"version":"1.0","default":"deny","rules":[{"tool":"other_t
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{}')
 assert_eq "$RES" "deny" "no rule matches → policy default field wins"
 
-# --- no rule matches and no `default` field → prompt ---
+# --- no rule matches and no `default` field → read-only heuristic ---
 PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"other_tool","action":"allow"}]}')
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{}')
-assert_eq "$RES" "prompt" "no rule matches, no default field → prompt"
+assert_eq "$RES" "allow" "no rule matches, no default: read-only → allow"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "some_write_tool" '{}')
+assert_eq "$RES" "prompt" "no rule matches, no default: non-read-only → prompt"
 
 # --- overlay: rules checked before base, base still applies for unmatched tools ---
 
