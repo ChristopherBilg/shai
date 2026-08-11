@@ -41,12 +41,12 @@ trap 'rm -rf "$TMPDIR_EXTRACT"' EXIT
 
 printf 'Installing shai %s...\n' "$VERSION"
 if ! gh release download "$VERSION" --repo "$REPO" \
-    --pattern "shai-${VERSION}.tar.gz" --dir "$TMPDIR_EXTRACT" 2>/dev/null; then
+  --pattern "shai-${VERSION}.tar.gz" --dir "$TMPDIR_EXTRACT" 2>/dev/null; then
   printf 'error: failed to download shai %s\n' "$VERSION" >&2
   exit 1
 fi
 if ! tar xzf "$TMPDIR_EXTRACT/shai-${VERSION}.tar.gz" \
-    -C "$TMPDIR_EXTRACT" --strip-components=1; then
+  -C "$TMPDIR_EXTRACT" --strip-components=1; then
   printf 'error: failed to extract shai %s\n' "$VERSION" >&2
   exit 1
 fi
