@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_retry_idempotent.sh — tests for buffer-then-commit and idempotent replay
-# Covers: shai — buffer-then-commit write path (commit_run, error guard, /dev/null fallback);
+# Covers: shai-repl — buffer-then-commit write path (commit_run, error guard, /dev/null fallback);
 #         shai-retry --run — idempotent replay, retry_of metadata, already-committed guard
 set -uo pipefail
 # shellcheck source=tests/lib.sh
