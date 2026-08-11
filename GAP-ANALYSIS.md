@@ -5,7 +5,7 @@ again to record the ordering constraints among the open items; revised 2026-07-2
 execution envelope and env-var context propagation shipped. Tracked in-repo._
 
 **Design reference:** `AI-Assistant-Unix-Philosophy-Design.md` (the origin Gemini conversation; uses `pa-*` naming, implemented as `shai-*`).
-**Method:** every concrete proposal in the design doc, classified against the current scripts (`shai`, `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-print`, `tools.json`).
+**Method:** every concrete proposal in the design doc, classified against the current scripts (`shai-repl`, `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-print`, `tools.json`).
 
 **Legend:** ✅ done · ⚠️ partial · ❌ not started
 
@@ -14,7 +14,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 ## ✅ Done — core pipeline & the "day-one" architectural choices
 
 - **Append-only JSONL state** — `~/.shai/sessions/<session_id>.jsonl` (+ `latest.json`). Design choice #1 ("State Storage Format").
-- **The 5 filters** — `shai-read → shai-context → shai-eval → shai-dispatch → shai-print`, each a pure stdin→stdout filter, plus the `shai` REPL/orchestrator and the re-eval/dispatch loop (`shai:96`).
+- **The 5 filters** — `shai-read → shai-context → shai-eval → shai-dispatch → shai-print`, each a pure stdin→stdout filter, plus the `shai-repl` REPL/orchestrator and the re-eval/dispatch loop (`shai-repl:96`).
 - **Byte-budget context windowing** — `shai-context` measures turn groups with `utf8bytelength`
   and keeps as many recent turns as fit within `SHAI_MAX_CONTEXT_BYTES` (default 1,300,000;
   `--max-bytes` overrides). System prompt and latest turn group are always preserved. Replaces
@@ -27,7 +27,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 - **Read-only tools** — `gh_pr_view`, `gh_issue_view`, `list_directory`, `print_file` (`tools.json` + `run_tool` in `shai-dispatch`).
 - **Loop-safe error handling** — every API/curl/parse failure becomes an `error` event with exit 0; `error` events are dropped in `shai-context` so failures never contaminate future context. (One slice of the design's "Resumability & Error Handling".)
 - **Per-tool timeouts** — `timeout` wraps tool execution in `shai-dispatch`. (One slice of the design's concurrency "hard timeouts on network-bound tools".)
-- **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai:16`) teaches the convention. *(done 2026-07-28)*
+- **Context-contamination boundaries** (design "Operational reality #3") — `shai-read --external <source>` and `shai-dispatch` fence untrusted content in `<external_data source="…">…</external_data>`, sanitizing the source label and neutralizing injected `</external_data>` so the fence can't be escaped; the system prompt (`shai-repl:16`) teaches the convention. *(done 2026-07-28)*
 - **Always-on request observability** (design "Operational reality #2") — `shai-eval` best-effort dumps the exact finalized request to `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` before every real call. *(done 2026-07-28)*
 - **Resumability** (design "Operational reality #4") — `shai-retry` classifies the history tail and resumes an interrupted run (dispatch a dangling tool_use, or re-eval after an error / tool_result / user turn) without re-prompting. *(done 2026-07-28)*
 - **Standard execution envelope** (design concurrency §1) — every event carries
@@ -45,9 +45,9 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
   guards — concurrent sessions write to separate files by construction. *(done 2026-07-31)*
 - **`flock` atomic appends** (design concurrency §2) — eliminated by design: per-session file
   isolation removes the concurrent-append surface, so no locking mechanism is needed. The
-  user contract is: don't run `shai` and `shai-retry` on the same session concurrently.
+  user contract is: don't run `shai-repl` and `shai-retry` on the same session concurrently.
   *(done 2026-07-31)*
-- **Idempotent, non-destructive retries** (design concurrency §4) — `shai` buffers events
+- **Idempotent, non-destructive retries** (design concurrency §4) — `shai-repl` buffers events
   in the run log during a turn and commits filtered events to the session log only on
   success. `shai-retry --run <run_id>` replays a failed run under a new run_id with
   `retry_of` metadata. Falls back to direct session-log writes when the run dir is
@@ -94,7 +94,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
 ### Extensibility (§ 3rd exchange)
 - **MCP** — stdio MCP servers discovered/attached dynamically instead of hardcoded `run_tool` cases. ⚠️ **Must follow the permission gate** — see [Ordering constraints](#ordering-constraints).
 - **Input "translators"** — separate single-purpose scripts converting PDF / image / web page → markdown or base64 text before piping into `shai-read`. *Unconstrained; fully standalone.*
-- **"Tee" middleware hooks** — the split-the-stream pattern exposed as a real extension point (local analytics DB, embeddings, RAG) grafted onto the pipeline without touching the core loop. (`shai` uses `tee` internally, but not as a user-facing hook.) *Unconstrained; benefits from the envelope's `version` field but does not require it.*
+- **"Tee" middleware hooks** — the split-the-stream pattern exposed as a real extension point (local analytics DB, embeddings, RAG) grafted onto the pipeline without touching the core loop. (`shai-repl` uses `tee` internally, but not as a user-facing hook.) *Unconstrained; benefits from the envelope's `version` field but does not require it.*
 
 ### Operational realities (§ 4th exchange)
 
