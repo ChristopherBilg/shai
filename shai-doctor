@@ -9,7 +9,7 @@ set -euo pipefail
 ERRORS=0
 WARNINGS=0
 
-CORE_TOOLS=(jq curl date od mktemp)
+CORE_TOOLS=(jq curl date od mktemp tr)
 COND_TOOLS=(gh git systemctl journalctl timeout)
 
 check_tool() {

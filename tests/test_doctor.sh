@@ -87,8 +87,8 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   unset JIRA_BASE_URL
   unset JIRA_USER_EMAIL
   OUT=$(run_doctor jq gh)
-  assert_contains "$OUT" "1 error" "doctor: summary counts 1 error (jq)"
-  assert_contains "$OUT" "3 warning" "doctor: summary counts 3 warnings (gh + 2 JIRA vars)"
+  SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+  assert_eq "$SUMMARY" "1 error, 3 warnings" "doctor: summary line exact match"
 )
 
 finish
