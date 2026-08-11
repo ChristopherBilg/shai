@@ -1,0 +1,16 @@
+{
+  "name": "git_checkout_pr",
+  "description": "Check out a pull request branch in a local Git repository. Uses gh pr checkout to fetch and switch to the PR branch.",
+  "capabilities": {
+    "read_only": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "number": { "type": "string", "description": "The pull request number." },
+      "repo": { "type": "string", "description": "Optional OWNER/REPO. Defaults to the repository of the current directory." },
+      "path": { "type": "string", "description": "Optional path to the local Git repository. Defaults to current directory." }
+    },
+    "required": ["number"]
+  }
+}
