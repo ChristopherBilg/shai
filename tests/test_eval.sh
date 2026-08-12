@@ -7,6 +7,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-eval"
 
+DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' "$DIR/shai-eval")
+DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="\(.*\)"/\1/p' "$DIR/shai-eval")
+
 # isolate SHAI_HOME so the always-on request dump never writes to a real ~/.shai
 SHAI_HOME_TMP="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_HOME_TMP")
@@ -17,8 +20,8 @@ TOOLS_TMP=$(mktemp)
 _CLEANUP_DIRS+=("$TOOLS_TMP")
 "$DIR/shai-tools" >"$TOOLS_TMP"
 DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools-file "$TOOLS_TMP")
-assert_contains "$DRY" '"model":"claude-opus-4-8"' "eval: default model"
-assert_contains "$DRY" '"max_tokens":16000' "eval: default max_tokens"
+assert_contains "$DRY" "\"model\":\"$DEFAULT_MODEL\"" "eval: default model"
+assert_contains "$DRY" "\"max_tokens\":$DEFAULT_MAX_TOKENS" "eval: default max_tokens"
 assert_contains "$DRY" '"gh_pr_view"' "eval: tools included with --tools-file"
 
 NOTOOLS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
