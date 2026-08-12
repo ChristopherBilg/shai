@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_install.sh — hermetic tests for the shai installer
-# Covers: install.sh — tarball extraction, exec-wrapper installation, download failure cleanup
+# Covers: install.sh — tarball extraction, exec-wrapper installation, download failure cleanup, gh prereqs
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -25,29 +25,58 @@ build_fake_tarball() {
   (cd "$WORK" && tar czf "shai-${version}.tar.gz" "shai-${version}")
 }
 
-# Helper: curl stub that outputs the fake tarball
-make_install_curl_stub() {
+# Helper: gh stub that handles auth + release download for a given version
+make_install_gh_stub() {
   local version="${1:-v2026.01.01}"
   mkdir -p "$WORK/bin"
-  cat >"$WORK/bin/curl" <<STUB
+  cat >"$WORK/bin/gh" <<STUB
 #!/bin/bash
-cat "$WORK/shai-${version}.tar.gz"
+if [ "\$1" = "auth" ]; then exit 0; fi
+if [ "\$1" = "release" ] && [ "\$2" = "download" ]; then
+  dir=""
+  prev=""
+  for i in "\$@"; do
+    if [ "\$prev" = "--dir" ]; then dir="\$i"; break; fi
+    prev="\$i"
+  done
+  cp "$WORK/shai-${version}.tar.gz" "\$dir/"
+  exit 0
+fi
+if [ "\$1" = "release" ] && [ "\$2" = "view" ]; then
+  printf '%s\n' "${version}"
+  exit 0
+fi
+exit 1
 STUB
-  chmod +x "$WORK/bin/curl"
+  chmod +x "$WORK/bin/gh"
 }
 
-# Helper: curl stub that fails
-make_failing_curl_stub() {
+# Helper: gh stub that fails downloads (auth passes)
+make_failing_gh_stub() {
   mkdir -p "$WORK/bin"
-  printf '#!/bin/bash\nexit 1\n' >"$WORK/bin/curl"
-  chmod +x "$WORK/bin/curl"
+  cat >"$WORK/bin/gh" <<'STUB'
+#!/bin/bash
+if [ "$1" = "auth" ]; then exit 0; fi
+exit 1
+STUB
+  chmod +x "$WORK/bin/gh"
+}
+
+# Helper: gh stub that reports unauthenticated
+make_unauthed_gh_stub() {
+  mkdir -p "$WORK/bin"
+  cat >"$WORK/bin/gh" <<'STUB'
+#!/bin/bash
+exit 1
+STUB
+  chmod +x "$WORK/bin/gh"
 }
 
 # --- Test: successful install ---
 FAKE_HOME="$WORK/home1"
 mkdir -p "$FAKE_HOME"
 build_fake_tarball "v2026.01.01"
-make_install_curl_stub "v2026.01.01"
+make_install_gh_stub "v2026.01.01"
 
 HOME="$FAKE_HOME" SHAI_VERSION="v2026.01.01" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
@@ -79,7 +108,7 @@ assert_eq "$([ -e "$FAKE_HOME/.local/bin/README.md" ] && echo y || echo n)" "n" 
 # --- Test: failed download cleans up ---
 FAKE_HOME2="$WORK/home2"
 mkdir -p "$FAKE_HOME2"
-make_failing_curl_stub
+make_failing_gh_stub
 
 HOME="$FAKE_HOME2" SHAI_VERSION="v2026.01.01" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1 || true
@@ -91,7 +120,7 @@ assert_eq "$([ -d "$FAKE_HOME2/.local/share/shai/v2026.01.01" ] && echo y || ech
 FAKE_HOME3="$WORK/home3"
 mkdir -p "$FAKE_HOME3"
 build_fake_tarball "v2026.02.15"
-make_install_curl_stub "v2026.02.15"
+make_install_gh_stub "v2026.02.15"
 
 HOME="$FAKE_HOME3" SHAI_VERSION="v2026.02.15" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
@@ -104,6 +133,7 @@ assert_eq "$(cat "$FAKE_HOME3/.local/share/shai/v2026.02.15/VERSION")" "v2026.02
 # --- Test: path traversal in SHAI_VERSION is rejected ---
 FAKE_HOME4="$WORK/home4"
 mkdir -p "$FAKE_HOME4"
+make_install_gh_stub
 err=$(HOME="$FAKE_HOME4" SHAI_VERSION="../../../etc" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1 || true)
 assert_contains "$err" "must not contain" \
@@ -113,5 +143,30 @@ err2=$(HOME="$FAKE_HOME4" SHAI_VERSION="v1/../../x" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1 || true)
 assert_contains "$err2" "must not contain" \
   "install: rejects SHAI_VERSION with /"
+
+# --- Test: unauthenticated gh exits 2 ---
+FAKE_HOME5="$WORK/home5"
+mkdir -p "$FAKE_HOME5"
+make_unauthed_gh_stub
+err3=$(HOME="$FAKE_HOME5" SHAI_VERSION="v2026.01.01" \
+  PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1 || echo "EXIT:$?")
+assert_contains "$err3" "not authenticated" \
+  "install: unauthenticated gh prints clear error"
+assert_contains "$err3" "EXIT:2" \
+  "install: unauthenticated gh exits 2"
+
+# --- Test: latest version resolution via gh release view ---
+FAKE_HOME6="$WORK/home6"
+mkdir -p "$FAKE_HOME6"
+build_fake_tarball "v2026.03.20"
+make_install_gh_stub "v2026.03.20"
+
+HOME="$FAKE_HOME6" \
+  PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
+
+assert_eq "$([ -d "$FAKE_HOME6/.local/share/shai/v2026.03.20" ] && echo y)" "y" \
+  "install: resolves latest version via gh release view"
+assert_eq "$(cat "$FAKE_HOME6/.local/share/shai/v2026.03.20/VERSION")" "v2026.03.20" \
+  "install: latest resolution installs correct version"
 
 finish

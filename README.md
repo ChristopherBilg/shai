@@ -12,10 +12,10 @@ Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl
 ## Install
 
 ```shell
-curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
+gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
 ```
 
-Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback: `export SHAI_VERSION=v2026.08.09 && curl ... | bash`.
+Requires `gh` CLI, authenticated (`gh auth login`). Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback: `export SHAI_VERSION=v2026.08.09 && gh api ... | base64 -d | bash`.
 
 Check your version: `shai-repl --version`
 
