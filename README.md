@@ -12,10 +12,10 @@ Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl
 ## Install
 
 ```shell
-curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
+gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
 ```
 
-Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback: `export SHAI_VERSION=v2026.08.09 && curl ... | bash`.
+Requires `gh` CLI, authenticated (`gh auth login`). Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback: `export SHAI_VERSION=v2026.08.10 && gh api ... | base64 -d | bash`.
 
 Check your version: `shai-repl --version`
 
@@ -39,12 +39,19 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 ## Tools
 - `gh_pr_view` — view a GitHub pull request (read-only)
 - `gh_issue_view` — view a GitHub issue (read-only)
+- `gh_pr_comments` — list comments on a GitHub pull request (read-only)
+- `jira_issue_view` — view a Jira issue (read-only)
 - `list_directory` — list the files and folders in a local directory (read-only)
 - `print_file` — print the contents of a local file (read-only)
 - `write_file` — create or overwrite a file with given content, creating parent directories as needed (write, requires approval)
 - `patch_file` — replace a unique string in an existing file; the string must appear exactly once (write, requires approval)
+- `delete_file` — delete a file; the file must exist and must not be a directory (write, requires approval)
+- `gh_pr_review_create` — create a pending pull request review with inline comments (write, requires approval)
+- `gh_pr_review_submit` — submit a pending pull request review (write, requires approval)
+- `gh_repo_clone` — clone a GitHub repository into a temporary directory (write, requires approval)
+- `git_checkout_pr` — check out a pull request branch in a local repository (write, requires approval)
 
-Defined in `tools.json` (Anthropic shape). Outputs are truncated to 32000 bytes before entering context.
+Each tool is a directory under `tools/<name>/` with a `tool.json` (Anthropic schema) and a `run.sh`. Outputs are truncated to 32000 bytes before entering context.
 
 ## Observability
 Inspect sessions, runs, and aggregate metrics from the terminal:
@@ -68,8 +75,8 @@ All four scripts accept `--json` for structured output and ID prefix matching (e
 ```
 Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (into `bin/`):
 ```shell
-./bin/shellcheck install.sh shai-* tests/*.sh
-./bin/shfmt -d install.sh shai-* tests/*.sh
+./bin/shellcheck install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
+./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
 ```
 CI runs all of the above on every push and pull request.
 
