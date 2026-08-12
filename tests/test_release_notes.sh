@@ -98,6 +98,15 @@ assert_contains "$STDOUT" "(#2)" "release_notes: stdout contains second PR refer
 assert_contains "$STDOUT" "Infrastructure" "release_notes: stdout contains Infrastructure category"
 assert_contains "$STDOUT" "(#3)" "release_notes: stdout contains third PR reference"
 
+# --- success case: 2-arg invocation (auto-detect HEAD) ---
+write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
+printf '%s' "$LLM_RESPONSE" | write_curl_stub 200
+
+STDOUT=$("$DIR/workflows/release_notes.sh" owner/repo v1 2>/dev/null)
+RC=$?
+assert_eq "$RC" "0" "release_notes: exit 0 on 2-arg invocation"
+assert_contains "$STDOUT" "Added" "release_notes: 2-arg stdout contains Added category"
+
 # --- no commits (identical refs) ---
 COMPARE_EMPTY='{"merge_base_commit":{"commit":{"committer":{"date":"2026-08-10T00:00:00Z"}}},"commits":[]}'
 write_release_notes_gh_stub "$COMPARE_EMPTY" '[]'

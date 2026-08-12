@@ -33,7 +33,7 @@ if [ -z "$HEAD" ]; then
   HEAD=$(gh api "repos/$REPO" --jq '.default_branch') || wf_fail "cannot resolve default branch for $REPO"
 fi
 
-COMPARE=$(gh api "repos/$REPO/compare/$BASE...$HEAD" --paginate) || wf_fail "cannot compare $BASE...$HEAD on $REPO"
+COMPARE=$(gh api "repos/$REPO/compare/$BASE...$HEAD") || wf_fail "cannot compare $BASE...$HEAD on $REPO"
 
 # shellcheck disable=SC2016
 COMMIT_COUNT=$(printf '%s' "$COMPARE" | jq '[.commits[].sha] | length')
@@ -70,10 +70,9 @@ fi
 
 PROMPT_TEMPLATE=$("$DIR/shai-prompt" release_notes) || wf_fail "cannot load prompts/release_notes.txt"
 
-PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed \
-  -e "s|{{REPO}}|$REPO|g" \
-  -e "s|{{BASE}}|$BASE|g" \
-  -e "s|{{HEAD}}|$HEAD|g")
+PROMPT="${PROMPT_TEMPLATE//\{\{REPO\}\}/$REPO}"
+PROMPT="${PROMPT//\{\{BASE\}\}/$BASE}"
+PROMPT="${PROMPT//\{\{HEAD\}\}/$HEAD}"
 PROMPT="${PROMPT//\{\{PR_DATA\}\}/$PR_DATA}"
 
 RESULT=$(wf_llm "$PROMPT") || wf_fail "pipeline error generating release notes"
