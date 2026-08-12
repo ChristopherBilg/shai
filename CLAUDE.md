@@ -18,9 +18,9 @@ export ANTHROPIC_API_KEY=sk-ant-...   # required at runtime
 ./shai-doctor                          # check environment prerequisites
 ./shai-repl --version                  # print installed version
 
-# Install from a release:
-curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
-export SHAI_VERSION=v2026.08.10 && curl -sSL .../install.sh | bash  # pin a version
+# Install from a release (requires gh CLI, authenticated):
+gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
+export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base64 -d | bash
 
 # Run the pipeline by hand (every stage is a filter):
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
