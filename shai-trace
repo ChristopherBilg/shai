@@ -1,0 +1,236 @@
+#!/bin/bash
+# shai-trace -- render a run's full span chain with inputs, outputs, and metrics
+# Usage: shai-trace <run_id> [--request <span>] [--response <span>] [--verbose] [--json]
+# Reads: $SHAI_HOME/runs/<run_id>/events.jsonl, $SHAI_HOME/sessions/*.jsonl (fallback)
+# Writes: stdout (trace rendering or JSON)
+# Exit: 0 on success; 1 on invalid arguments, ambiguous/missing run, or dump not found
+set -euo pipefail
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+SESSIONS_DIR="$STATE_DIR/sessions"
+RUNS_DIR="$STATE_DIR/runs"
+
+if [ $# -lt 1 ] || [ "${1:0:1}" = "-" ]; then
+  printf 'usage: shai-trace <run_id> [--request|--response <span>] [--verbose] [--json]\n' >&2
+  exit 1
+fi
+RUN_PREFIX="$1"
+shift
+
+REQUEST_SPAN="" RESPONSE_SPAN="" VERBOSE=false JSON=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --request)
+      shift
+      REQUEST_SPAN="${1:-}"
+      if [ -z "$REQUEST_SPAN" ]; then
+        printf 'error: --request requires a span_id\n' >&2
+        exit 1
+      fi
+      ;;
+    --response)
+      shift
+      RESPONSE_SPAN="${1:-}"
+      if [ -z "$RESPONSE_SPAN" ]; then
+        printf 'error: --response requires a span_id\n' >&2
+        exit 1
+      fi
+      ;;
+    --verbose) VERBOSE=true ;;
+    --json) JSON=true ;;
+    *)
+      printf 'error: unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+TMPFILES=()
+cleanup_tmpfiles() { rm -f "${TMPFILES[@]}"; }
+trap cleanup_tmpfiles EXIT
+
+# resolve_run_prefix <prefix>: the single "$RUNS_DIR/<prefix>*" directory match, printed to
+# stdout (basename only, no trailing newline). The return code distinguishes failure modes so
+# the caller can tell "no run directory at all -- fall back to the session log" (1) apart from
+# "found one, but the prefix is ambiguous" (2): the latter must never be silently swapped for a
+# looser (startswith) match against the session logs.
+resolve_run_prefix() {
+  local prefix="$1"
+  local matches=()
+  for entry in "$RUNS_DIR"/"${prefix}"*/; do
+    [ -d "$entry" ] || continue
+    matches+=("$entry")
+  done
+  if [ ${#matches[@]} -eq 1 ]; then
+    printf '%s' "$(basename "${matches[0]}")"
+    return 0
+  elif [ ${#matches[@]} -gt 1 ]; then
+    printf 'error: ambiguous prefix "%s" matches:\n' "$prefix" >&2
+    for m in "${matches[@]}"; do printf '  %s\n' "$(basename "$m")" >&2; done
+    return 2
+  fi
+  return 1
+}
+
+# Resolve the run: prefer a run directory; fall back to searching session logs (the run
+# directory may have been pruned -- see shai-prune).
+RUN_ID=""
+EVENTS_FILE=""
+ALREADY_CLEAN=false
+
+RESOLVE_STATUS=0
+RUN_ID=$(resolve_run_prefix "$RUN_PREFIX") || RESOLVE_STATUS=$?
+if [ "$RESOLVE_STATUS" -eq 2 ]; then
+  # resolve_run_prefix already printed the candidate list. A run directory *does* exist here,
+  # it's just not unique -- falling through to the fallback below would silently trade that
+  # ambiguity for a looser (startswith) match against the session logs instead of reporting it.
+  exit 1
+elif [ "$RESOLVE_STATUS" -eq 0 ]; then
+  CANDIDATE="$RUNS_DIR/$RUN_ID/events.jsonl"
+  [ -f "$CANDIDATE" ] && EVENTS_FILE="$CANDIDATE"
+fi
+
+if [ -z "$EVENTS_FILE" ]; then
+  TMPEVENTS=$(mktemp)
+  TMPFILES+=("$TMPEVENTS")
+  for f in "$SESSIONS_DIR"/*.jsonl; do
+    [ -e "$f" ] || continue
+    # Plain (non-slurp) `jq` parses incrementally and keeps whatever complete JSON values came
+    # before a later parse error; only its exit status goes non-zero. A truncated,
+    # crash-mid-append session log (the same realistic failure shai-sessions/shai-runs already
+    # guard against) would otherwise abort this whole script right here under `set -e`.
+    if ! jq -c --arg prefix "$RUN_PREFIX" \
+      'select(.meta?.run_id? // "" | startswith($prefix))' "$f" >>"$TMPEVENTS" 2>/dev/null; then
+      printf 'warning: skipping %s (parse error)\n' "$f" >&2
+    fi
+  done
+  if [ ! -s "$TMPEVENTS" ]; then
+    printf 'error: no events found for run "%s"\n' "$RUN_PREFIX" >&2
+    exit 1
+  fi
+  EVENTS_FILE="$TMPEVENTS"
+  ALREADY_CLEAN=true # every line above is jq's own re-serialized output: guaranteed well-formed
+  RUN_ID=$(jq -r '.meta.run_id' "$EVENTS_FILE" | head -1)
+  printf 'warning: run directory not found; using session log (error events may be missing)\n' >&2
+fi
+
+# dump_json_file <path>: pretty-print a single JSON dump, or a clean error on missing/malformed.
+dump_json_file() {
+  local f="$1"
+  if [ ! -f "$f" ]; then
+    printf 'error: %s not found\n' "$f" >&2
+    return 1
+  fi
+  if ! jq '.' "$f" 2>/dev/null; then
+    printf 'error: %s is not valid JSON\n' "$f" >&2
+    return 1
+  fi
+}
+
+# --request / --response read the per-span dump directly and never touch EVENTS_FILE, so they
+# work even in fallback mode (where the dumps are almost certainly gone along with the run dir).
+if [ -n "$REQUEST_SPAN" ]; then
+  dump_json_file "$RUNS_DIR/$RUN_ID/${REQUEST_SPAN}-request.json" || exit 1
+  exit 0
+fi
+if [ -n "$RESPONSE_SPAN" ]; then
+  dump_json_file "$RUNS_DIR/$RUN_ID/${RESPONSE_SPAN}-response.json" || exit 1
+  exit 0
+fi
+
+# Guard EVENTS_FILE the same way the fallback loop above guards each session log: route it
+# through one incremental (non-slurp) jq pass so a truncated trailing line (e.g. a crash
+# mid-append to the run's own events.jsonl) is dropped -- with a warning -- instead of taking
+# every `-s` (slurp mode, all-or-nothing) call below down with it. Skipped when the file is
+# already guaranteed clean (the fallback branch above already built it that way).
+if ! "$ALREADY_CLEAN"; then
+  CLEAN_TMP=$(mktemp)
+  TMPFILES+=("$CLEAN_TMP")
+  if ! jq -c '.' "$EVENTS_FILE" >"$CLEAN_TMP" 2>/dev/null; then
+    printf 'warning: %s contains malformed data; showing only well-formed events\n' "$EVENTS_FILE" >&2
+  fi
+  EVENTS_FILE="$CLEAN_TMP"
+fi
+
+# JSON mode: output the raw (cleaned) event stream as an array
+if [ "$JSON" = true ]; then
+  jq -sc '.' "$EVENTS_FILE"
+  exit 0
+fi
+
+# Human-readable trace
+SESSION_ID=$(jq -r 'select(.meta?.session_id?) | .meta.session_id' "$EVENTS_FILE" | head -1)
+SESSION_ID="${SESSION_ID:-unknown}"
+
+printf 'RUN %s  (session: %s)\n' "$RUN_ID" "$SESSION_ID"
+
+# Group by span -- sorted numerically, since span_10 must sort after span_2, not before it
+# lexicographically -- and render input/output per span. --verbose disables the default
+# preview truncation so full event content (text, tool_use input, tool_result content) shows.
+jq -sc --argjson verbose "$VERBOSE" '
+  group_by(.meta?.span_id? // "unknown")
+  | sort_by(
+      (.[0].meta?.span_id? // "unknown") as $sid
+      | if ($sid | test("^span_[0-9]+$")) then ($sid | sub("^span_"; "") | tonumber) else 1e9 end
+    )
+  | .[] | {
+      span_id: (.[0].meta?.span_id? // "unknown"),
+      events: [.[] | {type, source,
+        text: (
+          if .type == "message" and .source == "user" then
+            (if $verbose then .payload.text else .payload.text[0:120] end)
+          elif .type == "message" and .source == "assistant" then
+            ([.payload.content[]? |
+              if .type == "text" then (if $verbose then .text else .text[0:120] end)
+              elif .type == "tool_use" then
+                (if $verbose then "tool_use \(.name)(\(.input | tojson))"
+                 else "tool_use \(.name)(\(.input | tojson | .[0:80]))" end)
+              else empty end] | join("; "))
+          elif .type == "tool_result" then
+            (if $verbose then
+              "tool_result (tool_use_id: \(.payload.tool_use_id)): \(.payload.content | tostring)"
+             else
+              "tool_result (tool_use_id: \(.payload.tool_use_id), \(.payload.content | tostring | length) bytes)"
+             end)
+          elif .type == "error" then "ERROR: \(.payload.text)"
+          else "\(.type)/\(.source)" end
+        )
+      }],
+      api: ([.[] | .api? // empty | values] | if length > 0 then .[0] else null end)
+    }
+' "$EVENTS_FILE" | while IFS= read -r span_json; do
+  span_id=$(printf '%s' "$span_json" | jq -r '.span_id')
+  api_in=$(printf '%s' "$span_json" | jq '.api.usage.input_tokens // 0')
+  api_out=$(printf '%s' "$span_json" | jq '.api.usage.output_tokens // 0')
+  latency=$(printf '%s' "$span_json" | jq '.api.latency_ms // 0')
+
+  printf '\n%s\n' "$span_id"
+
+  printf '%s' "$span_json" | jq -r '.events[] |
+    if .source == "user" then "  -> user: \"\(.text)\""
+    elif .source == "assistant" then "  <- assistant: \(.text)"
+    elif .source == "tool" then "  -> \(.text)"
+    elif .type == "error" then "  !! \(.text)"
+    else "  .. \(.text)" end'
+
+  if [ "$api_in" != "0" ] || [ "$api_out" != "0" ]; then
+    printf '  tokens: %s in / %s out' "$api_in" "$api_out"
+    [ "$latency" != "0" ] && printf '  (%sms)' "$latency"
+    printf '\n'
+  fi
+done
+
+# Print total
+TOTALS=$(jq -sc '[.[] | .api?.usage? // empty | values | {i: (.input_tokens // 0), o: (.output_tokens // 0)}]
+  | {input: (map(.i) | add // 0), output: (map(.o) | add // 0)}' "$EVENTS_FILE")
+TOTAL_IN=$(printf '%s' "$TOTALS" | jq '.input')
+TOTAL_OUT=$(printf '%s' "$TOTALS" | jq '.output')
+TOTAL_LAT=$(jq -sc '[.[] | .api?.latency_ms? // empty | values] | add // 0' "$EVENTS_FILE")
+
+if [ "$TOTAL_IN" != "0" ] || [ "$TOTAL_OUT" != "0" ]; then
+  printf '\nTOTAL: %s in / %s out tokens' "$TOTAL_IN" "$TOTAL_OUT"
+  [ "$TOTAL_LAT" != "0" ] && printf '  (%sms wall)' "$TOTAL_LAT"
+  printf '\n'
+fi
