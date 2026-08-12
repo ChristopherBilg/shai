@@ -96,4 +96,22 @@ finish() {
   exit "$FAILED"
 }
 
+# desc: print a one-line label ahead of a group of related assertions (readability only).
+desc() { printf '%s\n' "$1"; }
+
+# Create a stamped fixture event for observability filter tests
+# Usage: fixture_event <type> <source> <payload_json> [run_id] [session_id] [span_id] [api_json] [timestamp]
+fixture_event() {
+  local type="$1" source="$2" payload="$3"
+  local run_id="${4:-run_test}" session_id="${5:-sess_test}" span_id="${6:-span_1}"
+  local api="${7:-null}" ts="${8:-2026-08-11T12:00:00Z}"
+  jq -nc \
+    --arg t "$type" --arg s "$source" --argjson p "$payload" \
+    --arg rid "$run_id" --arg sid "$session_id" --arg spid "$span_id" \
+    --argjson api "$api" --arg ts "$ts" \
+    '{type:$t, source:$s, payload:$p, version:"1.0",
+      meta:{run_id:$rid, session_id:$sid, span_id:$spid, parent_span_id:null, timestamp:$ts}}
+     + (if $api == null then {} else {api:$api} end)'
+}
+
 export ANTHROPIC_API_KEY="test-key"
