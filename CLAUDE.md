@@ -18,9 +18,9 @@ export ANTHROPIC_API_KEY=sk-ant-...   # required at runtime
 ./shai-doctor                          # check environment prerequisites
 ./shai-repl --version                  # print installed version
 
-# Install from a release:
-curl -sSL https://raw.githubusercontent.com/ChristopherBilg/shai/main/install.sh | bash
-export SHAI_VERSION=v2026.08.10 && curl -sSL .../install.sh | bash  # pin a version
+# Install from a release (requires gh CLI, authenticated):
+gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
+export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base64 -d | bash
 
 # Run the pipeline by hand (every stage is a filter):
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
@@ -211,7 +211,7 @@ workflows drive it once per `wf_llm` call.
 tool-definition shape — `name`, `description`, `input_schema` — plus an optional `capabilities`
 object, currently just `read_only`) and an executable `run.sh` that takes the tool's JSON input
 as `$1` and prints its result to stdout. Built-in tools: `gh_pr_view`, `gh_issue_view`,
-`list_directory`, `print_file` (read-only), `write_file`, `patch_file` (write). `shai-tools`
+`list_directory`, `print_file` (read-only), `write_file`, `patch_file`, `delete_file` (write). `shai-tools`
 aggregates every `tools/*/tool.json` into the Anthropic tool array at startup, and
 `shai-dispatch` resolves a `tool_use` call straight to `tools/<name>/run.sh`. There is no central
 manifest or dispatch table to keep in sync — adding a tool means adding a directory. Workflows
