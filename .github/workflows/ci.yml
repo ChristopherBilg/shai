@@ -70,6 +70,13 @@ jobs:
       - name: Documentation checks (fail-closed)
         run: ./tests/docs.sh
 
+  tools-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tool documentation sync check
+        run: ./tests/tools-sync.sh
+
   actionlint:
     runs-on: ubuntu-latest
     steps:
