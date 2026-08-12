@@ -104,6 +104,21 @@ printf '{"type":"message","source":"user","payload":{"text":"old"}}\n' >"$SHAI_H
 OUT=$("$SESSIONS" --json | jq '.[0].runs')
 assert_eq "$OUT" "0" "no meta -> runs 0"
 
+desc "malformed session file: skipped with a warning, other sessions unaffected"
+setup_sessions
+GOOD="sess_20260810T140000_aabbccdd"
+BAD="sess_20260811T090000_eeff0011"
+fixture_event "message" "user" '{"text":"a"}' "run_1" "$GOOD" "span_1" >"$SHAI_HOME/sessions/$GOOD.jsonl"
+# Simulate a crash mid-append: a truncated, unparseable trailing line with no closing braces.
+printf '{"type":"message","source":"user","payload":{"text":"trunc' >"$SHAI_HOME/sessions/$BAD.jsonl"
+OUT=$("$SESSIONS" --json 2>/dev/null)
+ERR=$("$SESSIONS" 2>&1 >/dev/null)
+assert_eq "$?" "0" "malformed file does not abort the run (exit 0)"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "malformed file excluded, good session still listed"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].session_id')" "$GOOD" "good session id still correct"
+assert_contains "$ERR" "warning" "warning printed to stderr for the malformed file"
+assert_contains "$ERR" "$BAD" "warning names the malformed file"
+
 desc "human output: contains session id and header"
 setup_sessions
 SID="sess_20260810T140000_aabbccdd"

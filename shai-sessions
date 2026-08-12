@@ -85,12 +85,19 @@ for f in "$SESSIONS_DIR"/*.jsonl; do
   sess_date=$(id_date "$session_id")
   if [ -n "$AFTER" ] && [[ "$sess_date" < "$AFTER" ]]; then continue; fi
   if [ -n "$BEFORE" ] && [[ "$sess_date" > "$BEFORE" ]]; then continue; fi
-  # Extract metrics in a single jq pass
-  metrics=$(jq -sc '{
+  # Extract metrics in a single jq pass. A truncated/corrupted line (realistic
+  # for an append-only log with no locking -- see shai-context's same-shaped
+  # guard) makes `jq -s` fail outright since it can't finish parsing the
+  # stream; skip that file with a warning instead of aborting the whole
+  # listing for every other session.
+  if ! metrics=$(jq -sc '{
     events: length,
     runs: ([.[] | .meta?.run_id? // empty | strings | select(length > 0)] | unique | length),
     tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.input_tokens // 0) + (.output_tokens // 0))] | add // 0)
-  }' "$f")
+  }' "$f" 2>/dev/null); then
+    printf 'warning: skipping %s (parse error)\n' "$f" >&2
+    continue
+  fi
   entries+=("$session_id$TAB$metrics")
 done
 
