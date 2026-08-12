@@ -23,12 +23,14 @@ else
 fi
 
 # --- error on missing file ---
-OUT=$("$DIR/tools/delete_file/run.sh" "{\"path\":\"$TDIR/no_such_file\"}" 2>&1) || true
+OUT=$("$DIR/tools/delete_file/run.sh" "{\"path\":\"$TDIR/no_such_file\"}" 2>&1)
+assert_eq "$?" "1" "delete: missing file exits 1"
 assert_contains "$OUT" "file not found" "delete: missing file error message"
 
 # --- error on directory ---
 mkdir -p "$TDIR/subdir"
-OUT=$("$DIR/tools/delete_file/run.sh" "{\"path\":\"$TDIR/subdir\"}" 2>&1) || true
+OUT=$("$DIR/tools/delete_file/run.sh" "{\"path\":\"$TDIR/subdir\"}" 2>&1)
+assert_eq "$?" "1" "delete: directory exits 1"
 assert_contains "$OUT" "cannot delete directory" "delete: directory error message"
 
 finish

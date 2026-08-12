@@ -7,11 +7,11 @@
 set -euo pipefail
 input="$1"
 path=$(printf '%s' "$input" | jq -r '.path')
-if [ ! -e "$path" ]; then
+if [ ! -e "$path" ] && [ ! -L "$path" ]; then
   printf 'file not found: %s' "$path"
   exit 1
 fi
-if [ -d "$path" ]; then
+if [ -d "$path" ] && [ ! -L "$path" ]; then
   printf 'cannot delete directory: %s' "$path"
   exit 1
 fi
