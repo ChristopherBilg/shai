@@ -23,6 +23,10 @@ SHFMT_VER=$(sed -n 's/^SHFMT_VERSION="\(.*\)"/\1/p' tests/install-lint-tools.sh)
 
 check() {
   local value="$1" file="$2" label="$3"
+  if [ -z "$value" ]; then
+    note "could not extract $label — check the sed pattern"
+    return
+  fi
   if [ ! -f "$file" ]; then
     note "$file not found"
     return

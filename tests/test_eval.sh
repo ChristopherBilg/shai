@@ -9,6 +9,8 @@ echo "shai-eval"
 
 DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' "$DIR/shai-eval")
 DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="\(.*\)"/\1/p' "$DIR/shai-eval")
+[ -n "$DEFAULT_MODEL" ] || { echo "FATAL: could not extract DEFAULT_MODEL from shai-eval" >&2; exit 1; }
+[ -n "$DEFAULT_MAX_TOKENS" ] || { echo "FATAL: could not extract DEFAULT_MAX_TOKENS from shai-eval" >&2; exit 1; }
 
 # isolate SHAI_HOME so the always-on request dump never writes to a real ~/.shai
 SHAI_HOME_TMP="$(mktemp -d)"
