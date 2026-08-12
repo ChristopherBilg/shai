@@ -109,7 +109,10 @@ if [ -n "${SHAI_RUN_ID:-}" ]; then
   { mkdir -p "$RUN_DIR" && printf '%s\n' "$PAYLOAD" >"$REQ_FILE"; } 2>/dev/null || true
 fi
 
-_START_MS=$(date +%s%3N)
+# date failure (nonzero exit) falls back to the literal string "0"; a `date` with no %N support
+# (non-GNU) exits 0 but emits non-numeric text instead -- guarded below, before it ever reaches
+# arithmetic, since `$(( ))` cannot safely catch its own malformed-operand error via `|| fallback`.
+_START_MS=$(date +%s%3N 2>/dev/null || printf '0')
 RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' -X POST "$API_URL" \
   -H "content-type: application/json" \
   -H "x-api-key: $ANTHROPIC_API_KEY" \
@@ -118,7 +121,15 @@ RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' 
   jq -nc '{type:"error", source:"system", payload:{text:"request failed (curl)"}}'
   exit 0
 }
-LATENCY_MS=$(($(date +%s%3N) - _START_MS))
+_END_MS=$(date +%s%3N 2>/dev/null || printf '0')
+LATENCY_MS=0
+case "$_START_MS$_END_MS" in
+  *[!0-9]*) : ;; # non-numeric on either side (date failed, or lacks %N support) -- leave 0
+  *)
+    LATENCY_MS=$((_END_MS - _START_MS))
+    [ "$LATENCY_MS" -lt 0 ] && LATENCY_MS=0 # never report negative latency (e.g. clock skew)
+    ;;
+esac
 
 HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -n1)
 BODY=$(printf '%s' "$RESPONSE" | sed '$d')
