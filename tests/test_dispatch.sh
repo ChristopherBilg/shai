@@ -10,7 +10,10 @@ make_stub_bin
 write_gh_stub
 
 DEFAULT_MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
-[ -n "$DEFAULT_MAX_BYTES" ] || { echo "FATAL: could not extract DEFAULT_MAX_BYTES from shai-dispatch" >&2; exit 1; }
+[ -n "$DEFAULT_MAX_BYTES" ] || {
+  echo "FATAL: could not extract DEFAULT_MAX_BYTES from shai-dispatch" >&2
+  exit 1
+}
 
 # --- ported from tests/tests.sh:156-201 (no-tool exit 0, gh tool_result + exit 1,
 #     unknown tool is_error, MAX_BYTES truncation, multiple tool_use, backslash path,
