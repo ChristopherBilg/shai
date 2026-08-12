@@ -1,0 +1,14 @@
+{
+  "name": "delete_file",
+  "description": "Delete a file. The file must exist and must not be a directory.",
+  "capabilities": {
+    "read_only": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "Absolute or relative path to the file." }
+    },
+    "required": ["path"]
+  }
+}
