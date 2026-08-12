@@ -33,8 +33,9 @@ assert_eq "$(printf '%s' "$WITHSYS" | jq -r '.system')" "S" "eval: non-empty sys
 # --- stubbed 200 assistant event (curl-using tests start here) ---
 make_stub_bin
 
-printf '%s' '{"type":"message","content":[{"type":"text","text":"stub reply"}],"stop_reason":"end_turn"}' |
-  write_curl_stub 200
+write_curl_stub 200 <<'STUB'
+{"id":"msg_test123","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"stub reply"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
+STUB
 EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
 assert_contains "$EV" '"stop_reason":"end_turn"' "eval: stop_reason parsed"
@@ -122,7 +123,7 @@ assert_eq "$(find "$HCHOME/runs" -name '*-request.json' 2>/dev/null | wc -l | tr
 
 # an unwritable SHAI_HOME must not break the call (best-effort dump)
 make_stub_bin
-printf '%s' '{"type":"message","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}' | write_curl_stub 200
+printf '%s' '{"id":"msg_uw","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}' | write_curl_stub 200
 UNWRITABLE="$(mktemp)" # a regular file — mkdir -p over it fails
 _CLEANUP_DIRS+=("$UNWRITABLE")
 EVUW=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_HOME="$UNWRITABLE" "$DIR/shai-eval")
@@ -134,7 +135,7 @@ assert_eq "$RC" "0" "eval: unwritable SHAI_HOME still exits 0"
 EVH="$(mktemp -d)"
 _CLEANUP_DIRS+=("$EVH")
 write_curl_stub 200 <<'JSON'
-{"type":"message","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}
+{"id":"msg_dump","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
 JSON
 
 echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
@@ -169,5 +170,107 @@ RC4=$?
 assert_eq "$RC4" "0" "eval: unwritable runs path still exits 0"
 assert_eq "$(printf '%s' "$OUT4" | jq -r '.source')" "assistant" \
   "eval: unwritable runs path still emits the assistant event"
+
+# --- response metadata: api key + response dump ------------------------------
+make_stub_bin
+write_curl_stub 200 <<'STUB'
+{"id":"msg_test123","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
+STUB
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+assert_eq "$(printf '%s' "$OUT" | jq -r '.api.message_id')" "msg_test123" "api.message_id"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "claude-opus-4-8-20250806" "api.model"
+assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.input_tokens')" "100" "api.usage.input_tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.output_tokens')" "50" "api.usage.output_tokens"
+assert_contains "$(printf '%s' "$OUT" | jq '.api.latency_ms')" "" "api.latency_ms is present"
+# latency_ms should be a non-negative integer
+LATENCY=$(printf '%s' "$OUT" | jq '.api.latency_ms')
+[ "$LATENCY" -ge 0 ] 2>/dev/null || {
+  printf 'FAIL: api.latency_ms not a non-negative integer: %s\n' "$LATENCY"
+  FAILED=1
+}
+
+make_stub_bin
+write_curl_stub 500 <<'STUB'
+{"error":{"message":"overloaded"}}
+STUB
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+assert_eq "$(printf '%s' "$OUT" | jq '.api // "absent"')" '"absent"' "api key: absent on HTTP error event"
+
+make_stub_bin
+write_curl_stub 200 <<'STUB'
+{"type":"error","error":{"message":"rate limited"}}
+STUB
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+assert_eq "$(printf '%s' "$OUT" | jq '.api // "absent"')" '"absent"' "api key: absent on API-level error (HTTP 200)"
+
+# response dump written alongside the request dump; its latency matches the event's
+EVR1=$(mktemp -d)
+_CLEANUP_DIRS+=("$EVR1")
+make_stub_bin
+write_curl_stub 200 <<'STUB'
+{"id":"msg_resp","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}
+STUB
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_HOME="$EVR1" SHAI_RUN_ID=run_resp_test SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
+assert_eq "$([ -f "$EVR1/runs/run_resp_test/span_1-response.json" ] && echo "exists")" "exists" \
+  "response dump: written alongside request dump"
+assert_eq "$(jq -r '.message_id' "$EVR1/runs/run_resp_test/span_1-response.json")" "msg_resp" \
+  "response dump: message_id"
+assert_eq "$(jq '.usage.input_tokens' "$EVR1/runs/run_resp_test/span_1-response.json")" "10" \
+  "response dump: usage.input_tokens"
+assert_eq "$(jq '.latency_ms' "$EVR1/runs/run_resp_test/span_1-response.json")" \
+  "$(printf '%s' "$OUT" | jq '.api.latency_ms')" "response dump: latency matches the event's api.latency_ms"
+
+# no response dump for an HTTP-level error
+EVR2=$(mktemp -d)
+_CLEANUP_DIRS+=("$EVR2")
+make_stub_bin
+write_curl_stub 500 <<'STUB'
+{"error":{"message":"fail"}}
+STUB
+echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_HOME="$EVR2" SHAI_RUN_ID=run_err_resp SHAI_SPAN_ID=span_1 "$DIR/shai-eval" >/dev/null
+assert_eq "$([ -f "$EVR2/runs/run_err_resp/span_1-response.json" ] && echo "exists" || echo "absent")" "absent" \
+  "response dump: not written for an HTTP error event"
+
+# no response dump for an API-level error under HTTP 200 either (guards the select() in shai-eval:
+# a naive `jq ... > file` redirect would still create an empty file even when select() matches nothing)
+EVR2B=$(mktemp -d)
+_CLEANUP_DIRS+=("$EVR2B")
+make_stub_bin
+write_curl_stub 200 <<'STUB'
+{"type":"error","error":{"message":"rate limited"}}
+STUB
+echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_HOME="$EVR2B" SHAI_RUN_ID=run_200err_resp SHAI_SPAN_ID=span_1 "$DIR/shai-eval" >/dev/null
+assert_eq "$([ -f "$EVR2B/runs/run_200err_resp/span_1-response.json" ] && echo "exists" || echo "absent")" "absent" \
+  "response dump: not written for a 200 API-level error"
+
+# unwritable runs path: response dump is best-effort, call still succeeds
+EVR3=$(mktemp -d)
+_CLEANUP_DIRS+=("$EVR3")
+touch "$EVR3/runs"
+make_stub_bin
+write_curl_stub 200 <<'STUB'
+{"id":"msg_x","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
+STUB
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_HOME="$EVR3" SHAI_RUN_ID=run_unwrite SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
+RC=$?
+assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" \
+  "response dump: unwritable runs path still emits the assistant event"
+assert_eq "$RC" "0" "response dump: unwritable runs path still exits 0"
+
+# span_id unset -> response dump falls back to span_0, same as the request dump
+EVR4=$(mktemp -d)
+_CLEANUP_DIRS+=("$EVR4")
+make_stub_bin
+write_curl_stub 200 <<'STUB'
+{"id":"msg_ns","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
+STUB
+echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_HOME="$EVR4" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
+assert_eq "$([ -f "$EVR4/runs/run_nospan/span_0-response.json" ] && echo "exists")" "exists" \
+  "response dump: unset span falls back to span_0"
 
 finish

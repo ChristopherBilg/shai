@@ -2,9 +2,11 @@
 # shai-eval — the only network hop: call the Anthropic Messages API
 # Usage: cat request.json | shai-eval [--tools-file <path>|--model M|--max-tokens N|--dry-run|--health-check]
 # Reads: a {system, messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
-#        environment to locate the per-span request dump
-# Writes: one assistant/error event; on a real call, also dumps the request to
-#         $SHAI_HOME/runs/<run_id>/<span_id>-request.json (best-effort); --dry-run prints payload
+#        environment to locate the per-span request/response dumps
+# Writes: one assistant/error event (assistant events carry an `api` key: message_id, model,
+#         usage, latency_ms); on a real call, also dumps the request, and on success the response
+#         metadata, to $SHAI_HOME/runs/<run_id>/<span_id>-{request,response}.json (best-effort);
+#         --dry-run prints payload
 # Exit: 0 always; --health-check exits 1 if ANTHROPIC_API_KEY missing; 2 on bad CLI args
 set -euo pipefail
 
@@ -107,6 +109,7 @@ if [ -n "${SHAI_RUN_ID:-}" ]; then
   { mkdir -p "$RUN_DIR" && printf '%s\n' "$PAYLOAD" >"$REQ_FILE"; } 2>/dev/null || true
 fi
 
+_START_MS=$(date +%s%3N)
 RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' -X POST "$API_URL" \
   -H "content-type: application/json" \
   -H "x-api-key: $ANTHROPIC_API_KEY" \
@@ -115,6 +118,7 @@ RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' 
   jq -nc '{type:"error", source:"system", payload:{text:"request failed (curl)"}}'
   exit 0
 }
+LATENCY_MS=$(($(date +%s%3N) - _START_MS))
 
 HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -n1)
 BODY=$(printf '%s' "$RESPONSE" | sed '$d')
@@ -126,12 +130,30 @@ if [ "$HTTP_CODE" != "200" ]; then
   exit 0
 fi
 
-if OUT=$(printf '%s' "$BODY" | jq -c '
-  if .type == "error" then {type:"error", source:"system", payload:{text: (.error.message // "unknown API error")}}
-  elif (.content | type) == "array" then {type:"message", source:"assistant", payload:{content: .content, stop_reason: .stop_reason}}
+if OUT=$(printf '%s' "$BODY" | jq -c --argjson latency "$LATENCY_MS" '
+  if .type == "error" then
+    {type:"error", source:"system", payload:{text: (.error.message // "unknown API error")}}
+  elif (.content | type) == "array" then
+    {type:"message", source:"assistant",
+     payload:{content: .content, stop_reason: .stop_reason},
+     api:{message_id: .id, model: .model, usage: .usage, latency_ms: $latency}}
   else error("unexpected response shape")
   end' 2>/dev/null) && [ -n "$OUT" ]; then
   printf '%s\n' "$OUT"
 else
   jq -nc '{type:"error", source:"system", payload:{text:"unparseable or unexpected API response (HTTP 200)"}}'
+fi
+
+# best-effort observability: dump response metadata alongside the request dump (never fail the
+# loop). select() only matches a real assistant response, so API-level errors under HTTP 200
+# (and any other non-assistant/malformed body) leave RESP_DUMP empty and no file is written.
+if [ -n "${SHAI_RUN_ID:-}" ]; then
+  {
+    RESP_DUMP=$(printf '%s' "$BODY" | jq -c --argjson lat "$LATENCY_MS" '
+      select((.content | type) == "array") |
+      {message_id: .id, model: .model, usage: .usage, stop_reason: .stop_reason, latency_ms: $lat}
+    ')
+    [ -n "$RESP_DUMP" ] && printf '%s\n' "$RESP_DUMP" \
+      >"$STATE_DIR/runs/$SHAI_RUN_ID/${SHAI_SPAN_ID:-span_0}-response.json"
+  } 2>/dev/null || true
 fi
