@@ -28,7 +28,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 > exit
 ```
 
-State lives in `~/.shai/`: `sessions/<session_id>.jsonl` (per-session append-only logs), `sessions/<session_id>.latest.json` (the most recent event), and `runs/<run_id>/` holding a per-turn `events.jsonl` plus a `<span_id>-request.json` for each API call in that turn. Rewind the assistant's memory by slicing the log, e.g. `head -n 20 ~/.shai/sessions/<session_id>.jsonl` or truncating the file.
+State lives in `~/.shai/`: `sessions/<session_id>.jsonl` (per-session append-only logs), `sessions/<session_id>.latest.json` (the most recent event), and `runs/<run_id>/` holding a per-turn `events.jsonl` plus `<span_id>-request.json` and `<span_id>-response.json` for each API call in that turn. Rewind the assistant's memory by slicing the log, e.g. `head -n 20 ~/.shai/sessions/<session_id>.jsonl` or truncating the file.
 
 ## Composability
 Every stage is a filter, so you can run the pipeline by hand:
@@ -45,6 +45,21 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `patch_file` — replace a unique string in an existing file; the string must appear exactly once (write, requires approval)
 
 Defined in `tools.json` (Anthropic shape). Outputs are truncated to 32000 bytes before entering context.
+
+## Observability
+Inspect sessions, runs, and aggregate metrics from the terminal:
+```shell
+./shai-sessions                          # list sessions with event/run/token counts
+./shai-sessions --recent 5 --json        # last 5 sessions as JSON
+./shai-runs --session <id>               # list runs within a session
+./shai-runs --failed                     # show only failed runs
+./shai-trace <run_id>                    # render a run's full span chain
+./shai-trace <run_id> --request span_1   # dump the exact API request for a span
+./shai-stats                             # aggregate metrics across all sessions
+./shai-stats --after 2026-08-01 --json   # scoped stats as JSON
+```
+
+All four scripts accept `--json` for structured output and ID prefix matching (e.g. `shai-trace run_2026` resolves to the full run ID if unambiguous).
 
 ## Tests
 ```shell
