@@ -44,3 +44,23 @@ wf_fail() {
   printf '%s %s ERROR: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WF_NAME" "$*" >&2
   exit 1
 }
+
+# wf_seen KEY: exit 0 if KEY was previously wf_mark'd for this $WF_NAME, exit 1 otherwise.
+# -s/any always yields exactly one boolean, sidestepping jq -e's exit code 4 ("no output
+# at all") that a bare `select | halt` would otherwise return for a miss.
+wf_seen() {
+  local ledger="$SHAI_HOME/ledgers/$WF_NAME.jsonl"
+  [ -f "$ledger" ] || return 1
+  jq -e --arg k "$1" -s 'any(.[]; .key == $k)' "$ledger" >/dev/null 2>&1
+}
+
+# wf_mark KEY: append a ledger entry for KEY under this $WF_NAME (idempotent — a KEY
+# already seen is a no-op, so double-marking never produces a duplicate line).
+wf_mark() {
+  local ledger_dir="$SHAI_HOME/ledgers"
+  local ledger="$ledger_dir/$WF_NAME.jsonl"
+  wf_seen "$1" && return 0
+  mkdir -p "$ledger_dir"
+  jq -nc --arg k "$1" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sid "$SHAI_SESSION_ID" \
+    '{key: $k, ts: $ts, session_id: $sid}' >>"$ledger"
+}
