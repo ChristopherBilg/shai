@@ -54,7 +54,7 @@ execution envelope and env-var context propagation shipped. Tracked in-repo._
   unavailable. *(done 2026-08-01)*
 - **Process supervision** (design concurrency §4.3) — `shai-supervise` generates and manages
   `systemd --user` `.service` + `.timer` unit files for any shai workflow script.
-  `workflows/heartbeat.sh` is the stub consumer (migrated from the former top-level
+  `workflows/heartbeat/run.sh` is the stub consumer (migrated from the former top-level
   `shai-heartbeat`): exercises the full pipeline via `wf_init` + `wf_llm`, reports pass/fail
   to the journal, and writes an ephemeral session log (prunable via `shai-prune`).
   *(done 2026-08-02; migrated to workflows/ 2026-08-06)*

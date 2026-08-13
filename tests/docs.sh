@@ -154,7 +154,7 @@ check_file() {
       if tool_json_ok "$f"; then ok "tool schema: $f"; else note "tool schema missing description(s): $f"; fi
       return
       ;;
-    workflows/*.policy.json)
+    workflows/*/policy.json)
       if jq -e '.rules | type == "array"' "$f" >/dev/null 2>&1; then
         ok "policy: $f"
       else
@@ -182,7 +182,7 @@ check_file() {
       if [ -s "$f" ]; then ok "prompt ok: $f"; else note "empty prompt file: $f"; fi
       return
       ;;
-    workflows/*.sh)
+    workflows/*/run.sh)
       check_shell "$f" runtime
       return
       ;;

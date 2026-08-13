@@ -52,9 +52,9 @@ jobs:
         run: ./tests/install-lint-tools.sh
       # If you change these globs, also update README.md and CLAUDE.md
       - name: ShellCheck all scripts
-        run: ./bin/shellcheck install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
+        run: ./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
       - name: shfmt diff check
-        run: ./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
+        run: ./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
 
   conventions:
     runs-on: ubuntu-latest
