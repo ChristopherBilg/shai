@@ -1,0 +1,196 @@
+#!/bin/bash
+# shai-stats -- aggregate metrics across sessions and runs
+# Usage: shai-stats [--session ID] [--after DATE] [--before DATE] [--json]
+# Reads: $SHAI_HOME/sessions/*.jsonl
+# Writes: stdout (aggregate metrics)
+# Exit: 0 on success; 1 on invalid arguments or no match
+set -euo pipefail
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+SESSIONS_DIR="$STATE_DIR/sessions"
+
+SESSION="" AFTER="" BEFORE="" JSON=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session)
+      shift
+      SESSION="${1:?--session requires an ID or prefix}"
+      ;;
+    --after)
+      shift
+      AFTER="${1:?--after requires a date}"
+      [[ "$AFTER" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
+        printf 'error: --after must be YYYY-MM-DD\n' >&2
+        exit 1
+      }
+      ;;
+    --before)
+      shift
+      BEFORE="${1:?--before requires a date}"
+      [[ "$BEFORE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || {
+        printf 'error: --before must be YYYY-MM-DD\n' >&2
+        exit 1
+      }
+      ;;
+    --json) JSON=true ;;
+    *)
+      printf 'error: unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# id_date <session_id>: "YYYY-MM-DD" from sess_YYYYMMDDTHHMMSS_XXXXXXXX
+id_date() {
+  local ts="${1#*_}"
+  ts="${ts%%T*}"
+  printf '%s-%s-%s' "${ts:0:4}" "${ts:4:2}" "${ts:6:2}"
+}
+
+# resolve_prefix <prefix> <dir> <suffix>: the single "<dir>/<prefix>*<suffix>" match,
+# printed to stdout with no trailing newline. No match or an ambiguous match is an
+# error on stderr and a non-zero return.
+resolve_prefix() {
+  local prefix="$1" dir="$2" suffix="${3:-}"
+  local matches=()
+  for entry in "$dir"/"${prefix}"*"$suffix"; do
+    [ -e "$entry" ] || continue
+    matches+=("$entry")
+  done
+  if [ ${#matches[@]} -eq 0 ]; then
+    printf 'error: no match for "%s"\n' "$prefix" >&2
+    return 1
+  elif [ ${#matches[@]} -gt 1 ]; then
+    printf 'error: ambiguous prefix "%s"\n' "$prefix" >&2
+    return 1
+  fi
+  printf '%s' "${matches[0]}"
+}
+
+# Collect matching session files
+files=()
+if [ -n "$SESSION" ]; then
+  f=$(resolve_prefix "$SESSION" "$SESSIONS_DIR" ".jsonl") || exit 1
+  files+=("$f")
+else
+  for f in "$SESSIONS_DIR"/*.jsonl; do
+    [ -e "$f" ] || continue
+    sid=$(basename "$f" .jsonl)
+    date=$(id_date "$sid")
+    if [ -n "$AFTER" ] && [[ "$date" < "$AFTER" ]]; then continue; fi
+    if [ -n "$BEFORE" ] && [[ "$date" > "$BEFORE" ]]; then continue; fi
+    files+=("$f")
+  done
+fi
+
+# Validate each matched file parses before aggregating. `jq -s` parses its entire
+# input before the filter body ever runs, so a truncated/corrupted line (realistic
+# for an append-only log with no locking -- see shai-sessions' and shai-runs'
+# identical guard) would otherwise fail the whole aggregate over every session.
+# Skip that file with a warning instead of aborting the run for everyone else.
+valid_files=()
+for f in "${files[@]+"${files[@]}"}"; do
+  if jq -s '.' "$f" >/dev/null 2>&1; then
+    valid_files+=("$f")
+  else
+    printf 'warning: skipping %s (parse error)\n' "$f" >&2
+  fi
+done
+
+session_count=${#valid_files[@]}
+
+if [ "$session_count" -eq 0 ]; then
+  if [ "$JSON" = true ]; then
+    printf '{"sessions":0,"runs":0,"statuses":{"complete":0,"error":0,"incomplete":0},"tokens":{"input":0,"output":0,"total":0},"tools":[],"avg_per_run":{"input":0,"output":0},"avg_latency_ms":0}\n'
+  else
+    printf 'No sessions found.\n'
+  fi
+  exit 0
+fi
+
+# Aggregate all events from matching files in a single jq pass.
+AGGREGATE=$(cat "${valid_files[@]}" | jq -sc '
+  def run_status:
+    .[-1] as $last |
+    if $last.type == "message" and $last.source == "assistant" then
+      if [($last.payload.content // [])[] | select(.type == "tool_use")] | length > 0
+      then "incomplete" else "complete" end
+    elif $last.type == "error" then "error"
+    else "incomplete" end;
+
+  . as $all |
+  ($all | [.[] | .meta?.run_id? // empty | strings | select(length > 0)] | unique) as $run_ids |
+  ($run_ids | map(. as $rid | $all | map(select(.meta?.run_id? == $rid))) | map(run_status)
+    | group_by(.) | map({key: .[0], value: length}) | from_entries) as $statuses |
+  {
+    runs: ($run_ids | length),
+    statuses: {
+      complete: ($statuses.complete // 0),
+      error: ($statuses.error // 0),
+      incomplete: ($statuses.incomplete // 0)
+    },
+    tokens_in: ([$all[] | select(.api?.usage?) | .api.usage.input_tokens // 0] | add // 0),
+    tokens_out: ([$all[] | select(.api?.usage?) | .api.usage.output_tokens // 0] | add // 0),
+    tools: (
+      [$all[] | select(.type == "message" and .source == "assistant") | .payload.content[]? | select(.type == "tool_use") | .name]
+      | group_by(.) | map({name: .[0], count: length}) | sort_by(-.count)
+    ),
+    latencies: ([$all[] | select(.api?.latency_ms?) | .api.latency_ms])
+  }
+')
+
+runs=$(printf '%s' "$AGGREGATE" | jq '.runs')
+tokens_in=$(printf '%s' "$AGGREGATE" | jq '.tokens_in')
+tokens_out=$(printf '%s' "$AGGREGATE" | jq '.tokens_out')
+tokens_total=$((tokens_in + tokens_out))
+complete=$(printf '%s' "$AGGREGATE" | jq '.statuses.complete')
+err=$(printf '%s' "$AGGREGATE" | jq '.statuses.error')
+incomplete=$(printf '%s' "$AGGREGATE" | jq '.statuses.incomplete')
+
+avg_in=0 avg_out=0
+if [ "$runs" -gt 0 ]; then
+  avg_in=$((tokens_in / runs))
+  avg_out=$((tokens_out / runs))
+fi
+
+latency_count=$(printf '%s' "$AGGREGATE" | jq '.latencies | length')
+avg_latency=0
+if [ "$latency_count" -gt 0 ]; then
+  avg_latency=$(printf '%s' "$AGGREGATE" | jq '.latencies | (add / length | floor)')
+fi
+
+if [ "$JSON" = true ]; then
+  printf '%s' "$AGGREGATE" | jq -c --argjson sessions "$session_count" \
+    --argjson total "$tokens_total" --argjson avg_in "$avg_in" --argjson avg_out "$avg_out" \
+    --argjson avg_lat "$avg_latency" \
+    '{sessions: $sessions, runs: .runs, statuses: .statuses,
+      tokens: {input: .tokens_in, output: .tokens_out, total: $total},
+      tools: .tools,
+      avg_per_run: {input: $avg_in, output: $avg_out},
+      avg_latency_ms: $avg_lat}'
+else
+  printf 'Sessions:     %d\n' "$session_count"
+  printf 'Runs:         %d\n' "$runs"
+  if [ "$runs" -gt 0 ]; then
+    pct() { if [ "$runs" -gt 0 ]; then echo $(($1 * 100 / runs)); else echo 0; fi; }
+    printf '  complete:   %d (%d%%)\n' "$complete" "$(pct "$complete")"
+    printf '  error:      %d (%d%%)\n' "$err" "$(pct "$err")"
+    printf '  incomplete: %d (%d%%)\n' "$incomplete" "$(pct "$incomplete")"
+  fi
+  printf '\nTokens:\n'
+  printf '  input:      %d\n' "$tokens_in"
+  printf '  output:     %d\n' "$tokens_out"
+  printf '  total:      %d\n' "$tokens_total"
+  tools_out=$(printf '%s' "$AGGREGATE" | jq -r '.tools[] | "  \(.name): \(.count) calls"')
+  if [ -n "$tools_out" ]; then
+    printf '\nTool usage:\n%s\n' "$tools_out"
+  fi
+  if [ "$runs" -gt 0 ]; then
+    printf '\nAvg per run:  %d in / %d out tokens\n' "$avg_in" "$avg_out"
+  fi
+  if [ "$avg_latency" -gt 0 ]; then
+    printf 'Avg latency:  %dms per span\n' "$avg_latency"
+  fi
+fi

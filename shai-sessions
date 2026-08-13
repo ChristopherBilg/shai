@@ -1,0 +1,155 @@
+#!/bin/bash
+# shai-sessions -- list sessions with summary metadata (events, runs, tokens)
+# Usage: shai-sessions [--recent N] [--after DATE] [--before DATE] [--json]
+# Reads: $SHAI_HOME/sessions/*.jsonl
+# Writes: stdout (session listing)
+# Exit: 0 on success; 1 on invalid arguments
+set -euo pipefail
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+SESSIONS_DIR="$STATE_DIR/sessions"
+
+RECENT="" AFTER="" BEFORE="" JSON=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --recent)
+      shift
+      RECENT="${1:-}"
+      if [ -z "$RECENT" ]; then
+        printf 'error: --recent requires a value\n' >&2
+        exit 1
+      fi
+      if ! [[ "$RECENT" =~ ^[0-9]+$ ]]; then
+        printf 'error: --recent value must be an integer\n' >&2
+        exit 1
+      fi
+      ;;
+    --after)
+      shift
+      AFTER="${1:-}"
+      if [ -z "$AFTER" ]; then
+        printf 'error: --after requires a date (YYYY-MM-DD)\n' >&2
+        exit 1
+      fi
+      if ! [[ "$AFTER" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        printf 'error: --after date must be YYYY-MM-DD\n' >&2
+        exit 1
+      fi
+      ;;
+    --before)
+      shift
+      BEFORE="${1:-}"
+      if [ -z "$BEFORE" ]; then
+        printf 'error: --before requires a date (YYYY-MM-DD)\n' >&2
+        exit 1
+      fi
+      if ! [[ "$BEFORE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        printf 'error: --before date must be YYYY-MM-DD\n' >&2
+        exit 1
+      fi
+      ;;
+    --json) JSON=true ;;
+    *)
+      printf 'error: unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# id_date <session_id>: "YYYY-MM-DD" from sess_YYYYMMDDTHHMMSS_XXXXXXXX
+id_date() {
+  local ts="${1#*_}"
+  ts="${ts%%T*}"
+  printf '%s-%s-%s' "${ts:0:4}" "${ts:4:2}" "${ts:6:2}"
+}
+
+# id_timestamp <session_id>: "YYYY-MM-DD HH:MM" from sess_YYYYMMDDTHHMMSS_XXXXXXXX
+id_timestamp() {
+  local ts="${1#*_}"
+  ts="${ts%_*}"
+  printf '%s-%s-%s %s:%s' "${ts:0:4}" "${ts:4:2}" "${ts:6:2}" "${ts:9:2}" "${ts:11:2}"
+}
+
+# Fields are joined with a real tab; jq's compact output never emits a raw tab
+# byte (control characters are escaped as \t inside JSON strings), so a literal
+# tab is a safe, unambiguous separator between the session id and its metrics.
+TAB=$'\t'
+
+entries=()
+for f in "$SESSIONS_DIR"/*.jsonl; do
+  [ -e "$f" ] || continue
+  session_id=$(basename "$f" .jsonl)
+  # Date filter (inclusive on both ends)
+  sess_date=$(id_date "$session_id")
+  if [ -n "$AFTER" ] && [[ "$sess_date" < "$AFTER" ]]; then continue; fi
+  if [ -n "$BEFORE" ] && [[ "$sess_date" > "$BEFORE" ]]; then continue; fi
+  # Extract metrics in a single jq pass. A truncated/corrupted line (realistic
+  # for an append-only log with no locking -- see shai-context's same-shaped
+  # guard) makes `jq -s` fail outright since it can't finish parsing the
+  # stream; skip that file with a warning instead of aborting the whole
+  # listing for every other session.
+  if ! metrics=$(jq -sc '{
+    events: length,
+    runs: ([.[] | .meta?.run_id? // empty | strings | select(length > 0)] | unique | length),
+    tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.input_tokens // 0) + (.output_tokens // 0))] | add // 0)
+  }' "$f" 2>/dev/null); then
+    printf 'warning: skipping %s (parse error)\n' "$f" >&2
+    continue
+  fi
+  entries+=("$session_id$TAB$metrics")
+done
+
+# Sort by session ID (which is chronological). Guard the empty case explicitly
+# rather than feeding zero arguments through printf/sort/mapfile: printf '%s\n'
+# with no arguments still emits one blank line, which would otherwise become a
+# single bogus empty entry.
+sorted=()
+if [ "${#entries[@]}" -gt 0 ]; then
+  mapfile -t sorted < <(printf '%s\n' "${entries[@]}" | sort)
+fi
+
+# Apply --recent. Handled as its own branch: `${arr[@]: -0}` is not "the last
+# zero elements" -- a negative offset of -0 is arithmetically 0, so bash would
+# treat it as "from the start" and return the whole array instead of none.
+if [ -n "$RECENT" ]; then
+  if [ "$RECENT" -eq 0 ]; then
+    sorted=()
+  elif [ "${#sorted[@]}" -gt "$RECENT" ]; then
+    sorted=("${sorted[@]: -$RECENT}")
+  fi
+fi
+
+if [ "${#sorted[@]}" -eq 0 ]; then
+  if [ "$JSON" = true ]; then printf '[]\n'; fi
+  exit 0
+fi
+
+if [ "$JSON" = true ]; then
+  printf '['
+  first=true
+  for entry in "${sorted[@]}"; do
+    sid="${entry%%"$TAB"*}"
+    metrics="${entry#*"$TAB"}"
+    started=$(id_timestamp "$sid")
+    "$first" || printf ','
+    first=false
+    printf '%s' "$metrics" | jq -c --arg sid "$sid" --arg ts "$started" \
+      '. + {session_id: $sid, started: $ts}'
+  done
+  printf ']\n'
+else
+  printf '%-40s %-20s %7s %5s %8s\n' "SESSION" "STARTED" "EVENTS" "RUNS" "TOKENS"
+  for entry in "${sorted[@]}"; do
+    sid="${entry%%"$TAB"*}"
+    metrics="${entry#*"$TAB"}"
+    started=$(id_timestamp "$sid")
+    events=$(printf '%s' "$metrics" | jq -r '.events')
+    runs=$(printf '%s' "$metrics" | jq -r '.runs')
+    tokens=$(printf '%s' "$metrics" | jq -r '.tokens')
+    [ "$runs" = "0" ] && runs_display="--" || runs_display="$runs"
+    [ "$tokens" = "0" ] && tok_display="--" || tok_display="$tokens"
+    printf '%-40s %-20s %7s %5s %8s\n' "$sid" "$started" "$events" "$runs_display" "$tok_display"
+  done
+fi

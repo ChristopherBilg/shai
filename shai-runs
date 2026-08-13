@@ -1,0 +1,214 @@
+#!/bin/bash
+# shai-runs -- list runs with span count, tool count, status, and token totals
+# Usage: shai-runs [--session ID] [--recent N] [--failed] [--json]
+# Reads: $SHAI_HOME/runs/*/events.jsonl or $SHAI_HOME/sessions/<id>.jsonl
+# Writes: stdout (run listing)
+# Exit: 0 on success; 1 on invalid arguments or no match
+set -euo pipefail
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+SESSIONS_DIR="$STATE_DIR/sessions"
+RUNS_DIR="$STATE_DIR/runs"
+
+SESSION="" RECENT="" FAILED=false JSON=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session)
+      shift
+      SESSION="${1:-}"
+      if [ -z "$SESSION" ]; then
+        printf 'error: --session requires an ID or prefix\n' >&2
+        exit 1
+      fi
+      ;;
+    --recent)
+      shift
+      RECENT="${1:-}"
+      if [ -z "$RECENT" ]; then
+        printf 'error: --recent requires a value\n' >&2
+        exit 1
+      fi
+      if ! [[ "$RECENT" =~ ^[0-9]+$ ]]; then
+        printf 'error: --recent value must be an integer\n' >&2
+        exit 1
+      fi
+      ;;
+    --failed) FAILED=true ;;
+    --json) JSON=true ;;
+    *)
+      printf 'error: unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# id_timestamp <run_id>: "YYYY-MM-DD HH:MM" from run_YYYYMMDDTHHMMSS_XXXXXXXX
+id_timestamp() {
+  local ts="${1#*_}"
+  ts="${ts%_*}"
+  printf '%s-%s-%s %s:%s' "${ts:0:4}" "${ts:4:2}" "${ts:6:2}" "${ts:9:2}" "${ts:11:2}"
+}
+
+# resolve_prefix <prefix> <dir> <suffix>: the single "<dir>/<prefix>*<suffix>" match,
+# printed to stdout with no trailing newline. No match or an ambiguous match is an
+# error on stderr (listing the candidates) and a non-zero return.
+resolve_prefix() {
+  local prefix="$1" dir="$2" suffix="${3:-}"
+  local matches=()
+  for entry in "$dir"/"${prefix}"*"$suffix"; do
+    [ -e "$entry" ] || continue
+    matches+=("$entry")
+  done
+  if [ ${#matches[@]} -eq 0 ]; then
+    printf 'error: no match for "%s"\n' "$prefix" >&2
+    return 1
+  elif [ ${#matches[@]} -gt 1 ]; then
+    printf 'error: ambiguous prefix "%s" matches:\n' "$prefix" >&2
+    for m in "${matches[@]}"; do printf '  %s\n' "$(basename "$m" "$suffix")" >&2; done
+    return 1
+  fi
+  printf '%s' "${matches[0]}"
+}
+
+# Extract run metrics ({spans, tools, status, tokens}) from a JSONL event stream on stdin.
+run_metrics() {
+  jq -sc '{
+    spans: ([.[] | .meta?.span_id? // empty | strings | select(length > 0)] | unique | length),
+    tools: ([.[] | select(.type == "tool_result")] | length),
+    status: (
+      if length == 0 then "incomplete"
+      else .[-1] as $last |
+        if $last.type == "message" and $last.source == "assistant" then
+          if [($last.payload.content // [])[] | select(.type == "tool_use")] | length > 0
+          then "incomplete" else "complete" end
+        elif $last.type == "error" then "error"
+        else "incomplete" end
+      end
+    ),
+    tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.input_tokens // 0) + (.output_tokens // 0))] | add // 0)
+  }'
+}
+
+# Fields are joined with a real tab; jq's compact output never emits a raw tab
+# byte (control characters are escaped as \t inside JSON strings), so a literal
+# tab is a safe, unambiguous separator between the run id and its metrics.
+TAB=$'\t'
+
+entries=()
+
+if [ -n "$SESSION" ]; then
+  session_file=$(resolve_prefix "$SESSION" "$SESSIONS_DIR" ".jsonl") || exit 1
+  # `jq -s` parses its entire input before the filter body ever runs, so a
+  # truncated/corrupted line (realistic for an append-only log with no locking --
+  # see shai-sessions' identical guard on the same kind of file) makes the whole
+  # invocation fail with no output at all. Warn and yield no runs rather than
+  # aborting the listing.
+  if grouped=$(jq -sc '
+      group_by(.meta?.run_id? // "unknown")
+      | map(select(.[0].meta?.run_id? != null and .[0].meta?.run_id? != "" and .[0].meta?.run_id? != "unknown"))
+      | map({run_id: .[0].meta.run_id, metrics: {
+          spans: ([.[] | .meta?.span_id? // empty | strings | select(length > 0)] | unique | length),
+          tools: ([.[] | select(.type == "tool_result")] | length),
+          status: (.[-1] as $last |
+            if $last.type == "message" and $last.source == "assistant" then
+              if [($last.payload.content // [])[] | select(.type == "tool_use")] | length > 0
+              then "incomplete" else "complete" end
+            elif $last.type == "error" then "error"
+            else "incomplete" end
+          ),
+          tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.input_tokens // 0) + (.output_tokens // 0))] | add // 0)
+        }})
+      | .[] | {run_id, metrics: (.metrics | tojson)}
+    ' "$session_file" 2>/dev/null); then
+    if [ -n "$grouped" ]; then
+      while IFS= read -r line; do
+        run_id=$(printf '%s' "$line" | jq -r '.run_id')
+        metrics=$(printf '%s' "$line" | jq -r '.metrics')
+        entries+=("$run_id$TAB$metrics")
+      done <<<"$grouped"
+    fi
+  else
+    printf 'warning: skipping %s (parse error)\n' "$session_file" >&2
+  fi
+else
+  for d in "$RUNS_DIR"/*/; do
+    [ -d "$d" ] || continue
+    run_id=$(basename "$d")
+    evlog="$d/events.jsonl"
+    [ -f "$evlog" ] || continue
+    # Same tolerance as the session branch above: one run's corrupted log is
+    # skipped (with a warning), the rest of the listing is unaffected.
+    if ! metrics=$(run_metrics <"$evlog" 2>/dev/null); then
+      printf 'warning: skipping %s (parse error)\n' "$evlog" >&2
+      continue
+    fi
+    entries+=("$run_id$TAB$metrics")
+  done
+fi
+
+# Sort by run ID (chronological). Guard the empty case explicitly rather than
+# feeding zero arguments through printf/sort/mapfile: printf '%s\n' with no
+# arguments still emits one blank line, which would otherwise become a single
+# bogus empty entry.
+sorted=()
+if [ "${#entries[@]}" -gt 0 ]; then
+  mapfile -t sorted < <(printf '%s\n' "${entries[@]}" | sort)
+fi
+
+# Apply --failed filter
+if [ "$FAILED" = true ]; then
+  filtered=()
+  for entry in "${sorted[@]}"; do
+    metrics="${entry#*"$TAB"}"
+    status=$(printf '%s' "$metrics" | jq -r '.status')
+    [ "$status" = "error" ] && filtered+=("$entry")
+  done
+  sorted=("${filtered[@]+"${filtered[@]}"}")
+fi
+
+# Apply --recent. Handled as its own branch: `${arr[@]: -0}` is not "the last
+# zero elements" -- a negative offset of -0 is arithmetically 0, so bash would
+# treat it as "from the start" and return the whole array instead of none.
+if [ -n "$RECENT" ]; then
+  if [ "$RECENT" -eq 0 ]; then
+    sorted=()
+  elif [ "${#sorted[@]}" -gt "$RECENT" ]; then
+    sorted=("${sorted[@]: -$RECENT}")
+  fi
+fi
+
+if [ "${#sorted[@]}" -eq 0 ]; then
+  if [ "$JSON" = true ]; then printf '[]\n'; fi
+  exit 0
+fi
+
+if [ "$JSON" = true ]; then
+  printf '['
+  first=true
+  for entry in "${sorted[@]}"; do
+    rid="${entry%%"$TAB"*}"
+    metrics="${entry#*"$TAB"}"
+    started=$(id_timestamp "$rid")
+    "$first" || printf ','
+    first=false
+    printf '%s' "$metrics" | jq -c --arg rid "$rid" --arg ts "$started" \
+      '. + {run_id: $rid, started: $ts}'
+  done
+  printf ']\n'
+else
+  printf '%-40s %-20s %6s %6s %-10s %8s\n' "RUN" "STARTED" "SPANS" "TOOLS" "STATUS" "TOKENS"
+  for entry in "${sorted[@]}"; do
+    rid="${entry%%"$TAB"*}"
+    metrics="${entry#*"$TAB"}"
+    started=$(id_timestamp "$rid")
+    spans=$(printf '%s' "$metrics" | jq -r '.spans')
+    tools=$(printf '%s' "$metrics" | jq -r '.tools')
+    status=$(printf '%s' "$metrics" | jq -r '.status')
+    tokens=$(printf '%s' "$metrics" | jq -r '.tokens')
+    tok_display="$tokens"
+    [ "$tokens" = "0" ] && tok_display="--"
+    printf '%-40s %-20s %6s %6s %-10s %8s\n' "$rid" "$started" "$spans" "$tools" "$status" "$tok_display"
+  done
+fi
