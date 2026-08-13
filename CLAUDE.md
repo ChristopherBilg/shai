@@ -31,7 +31,7 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
 
 # Retention:
-./shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]  # manual retention
+./shai-prune [--sessions] [--runs] [--ledgers] [--dry-run] [--before YYYY-MM-DD]  # manual retention
 
 # Replay a failed run (idempotent, non-destructive):
 ./shai-retry --run <run_id>               # replay under a new run_id, commit on success
@@ -83,8 +83,9 @@ Data flows as one JSON **event** per line. Each script is a pure stdin→stdout 
 only shared state is the append-only session log. To rewind the assistant's memory, slice
 the file (`head -n 20 ~/.shai/sessions/<session_id>.jsonl`) — there is no database.
 
-State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs) and
-`sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop).
+State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs),
+`sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop), and
+`ledgers/<workflow_name>.jsonl` (per-workflow idempotency ledgers — see below).
 
 **The event schema is the contract between every script.** Records in `sessions/<session_id>.jsonl`:
 
@@ -274,6 +275,12 @@ identical to before.
 (mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
 wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
 `wf_fail "message"` (stderr + exit 1). Sets `DIR` to the shai install directory.
+
+**Work ledger** — `$SHAI_HOME/ledgers/<workflow_name>.jsonl` stores per-workflow idempotency
+keys. Each line: `{"key":"...","ts":"...","session_id":"..."}`. Two helpers in `lib/workflow.sh`:
+`wf_seen "key"` (exit 0 if processed, 1 otherwise) and `wf_mark "key"` (append entry,
+idempotent). Keys are opaque, workflow-defined strings (e.g. `pr:owner/repo:123`). Mark after
+success so failures retry on next invocation.
 
 **Workflows** live in `workflows/`. Each is a standalone bash script following the same
 conventions as runtime scripts (shebang, strict mode, doc header). Workflows mix mechanical
