@@ -19,6 +19,13 @@ new_home() {
   printf '%s\n' '{}' >"$PHOME/runs/run_002/events.jsonl"
 }
 
+new_home_with_ledgers() {
+  new_home
+  mkdir -p "$PHOME/ledgers"
+  printf '{"key":"pr:1","ts":"2026-08-01T00:00:00Z","session_id":"s1"}\n' >"$PHOME/ledgers/review.jsonl"
+  printf '{"key":"item:1","ts":"2026-08-01T00:00:00Z","session_id":"s2"}\n' >"$PHOME/ledgers/poll.jsonl"
+}
+
 # --sessions prunes only session files
 new_home
 SHAI_HOME="$PHOME" "$DIR/shai-prune" --sessions </dev/null >/dev/null 2>&1
@@ -81,5 +88,37 @@ assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l
 
 # unknown option exits 1
 assert_exit 1 "prune: unknown option exits 1" -- "$DIR/shai-prune" --bogus
+
+# --ledgers prunes only ledger files
+new_home_with_ledgers
+SHAI_HOME="$PHOME" "$DIR/shai-prune" --ledgers </dev/null >/dev/null 2>&1
+assert_eq "$(find "$PHOME/ledgers/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "prune: --ledgers removes ledger files"
+assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "4" \
+  "prune: --ledgers leaves sessions untouched"
+assert_eq "$(find "$PHOME/runs/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "2" \
+  "prune: --ledgers leaves runs untouched"
+
+# default prune (no flags) does NOT remove ledger files
+new_home_with_ledgers
+SHAI_HOME="$PHOME" "$DIR/shai-prune" </dev/null >/dev/null 2>&1
+assert_eq "$(find "$PHOME/ledgers/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "2" \
+  "prune: no flags leaves ledger files untouched"
+
+# --ledgers --before filters by mtime
+new_home_with_ledgers
+touch -t 202501010000 "$PHOME/ledgers/review.jsonl"
+SHAI_HOME="$PHOME" "$DIR/shai-prune" --ledgers --before 2026-01-01 </dev/null >/dev/null 2>&1
+assert_eq "$(find "$PHOME/ledgers/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "1" \
+  "prune: --ledgers --before removes only old ledger"
+assert_eq "$(find "$PHOME/ledgers/" -maxdepth 1 -type f -printf '%f\n')" "poll.jsonl" \
+  "prune: --ledgers --before keeps recent ledger"
+
+# --ledgers --dry-run lists but does not delete
+new_home_with_ledgers
+DRYOUT_L=$(SHAI_HOME="$PHOME" "$DIR/shai-prune" --ledgers --dry-run </dev/null 2>&1)
+assert_contains "$DRYOUT_L" "dry run" "prune: --ledgers --dry-run prints dry run notice"
+assert_eq "$(find "$PHOME/ledgers/" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "2" \
+  "prune: --ledgers --dry-run does not delete"
 
 finish
