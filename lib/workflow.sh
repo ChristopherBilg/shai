@@ -46,12 +46,13 @@ wf_fail() {
 }
 
 # wf_seen KEY: exit 0 if KEY was previously wf_mark'd for this $WF_NAME, exit 1 otherwise.
-# -s/any always yields exactly one boolean, sidestepping jq -e's exit code 4 ("no output
-# at all") that a bare `select | halt` would otherwise return for a miss.
+# -n/inputs streams the JSONL without loading the whole file; any() short-circuits on first
+# match. Produces exactly one boolean, sidestepping jq -e's exit code 4 ("no output at
+# all") that a bare `select | halt` would otherwise return for a miss.
 wf_seen() {
   local ledger="$SHAI_HOME/ledgers/$WF_NAME.jsonl"
   [ -f "$ledger" ] || return 1
-  jq -e --arg k "$1" -s 'any(.[]; .key == $k)' "$ledger" >/dev/null 2>&1
+  jq -ne --arg k "$1" 'any(inputs; .key == $k)' "$ledger" >/dev/null 2>&1
 }
 
 # wf_mark KEY: append a ledger entry for KEY under this $WF_NAME (idempotent — a KEY
