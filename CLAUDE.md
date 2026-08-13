@@ -274,7 +274,8 @@ PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run 
   `.editorconfig`.
 - **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
-  undocumented **or of an unrecognized type**. Per type:
+  undocumented **or of an unrecognized type**. This fail-closed design is intentional and should not be
+  relaxed — it ensures new file types are consciously classified rather than silently ignored. Per type:
   - **Runtime scripts** (`shai-repl`, `shai-*`, `tools/*/run.sh`, `workflows/*.sh`): a header block after the shebang
     with a purpose line plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
   - **Test files** (`tests/test_*.sh`): purpose line + `# Covers:`.
