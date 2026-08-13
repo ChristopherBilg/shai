@@ -4,7 +4,7 @@
   "capabilities": {
     "read_only": false,
     "requires": {
-      "tools": ["git"]
+      "tools": ["git", "gh"]
     }
   },
   "input_schema": {
