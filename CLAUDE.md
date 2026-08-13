@@ -72,8 +72,8 @@ by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its
 | `SHAI_PARENT_SPAN_ID` | previous span | forms a linear chain within a run |
 
 Unset variables become explicit `null`s, so hand-run pipelines work with no ambient context.
-State gains `runs/<run_id>/events.jsonl` and `runs/<run_id>/<span_id>-request.json`;
-`sessions/<session_id>.jsonl` is the session log.
+State gains `runs/<run_id>/events.jsonl`, `runs/<run_id>/<span_id>-request.json`, and
+`runs/<run_id>/<span_id>-response.json`; `sessions/<session_id>.jsonl` is the session log.
 A hand-run `shai-eval` with `SHAI_RUN_ID` set but no `SHAI_SPAN_ID` dumps to `span_0-request.json`
 (real spans start at `span_1`, so it can never collide).
 
@@ -95,6 +95,12 @@ State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-o
 | `message` / `assistant` | `{content:[...], stop_reason}` (raw Anthropic content array) | `shai-eval` |
 | `tool_result` / `tool` | `{tool_use_id, content, is_error}` | `shai-dispatch` |
 | `error` / `system` | `{text}` | `shai-eval` |
+
+Assistant events additionally carry an **`api` key** (added by `shai-eval`, not by `shai-stamp`):
+`{message_id, model, usage: {input_tokens, output_tokens}, latency_ms}`. This is a top-level
+sibling of `type`/`source`/`payload`, like the envelope. No existing pipeline script reads it;
+it is consumed only by the observability filters (`shai-sessions`, `shai-runs`, `shai-trace`,
+`shai-stats`). Error events never carry `api`.
 
 Every event additionally carries an **execution envelope**, added by `shai-stamp`:
 `version` (schema version, default `1.0`) and `meta` with `run_id`, `session_id`, `span_id`,
@@ -140,7 +146,11 @@ The scripts:
   missing). `--dry-run` prints the payload without calling out; `--tools-file <path>` attaches
   the aggregated tool array at that path (built by `shai-tools`). Before each real call it
   best-effort dumps the exact request to
-  `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` (observability; never fails the loop).
+  `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` and, on successful API responses, a
+  normalized response metadata file to `<span_id>-response.json` containing
+  `{message_id, model, usage, stop_reason, latency_ms}` (observability; never fails the loop).
+  Successful assistant events carry an `api` key with the same fields — see the event schema
+  note above.
 - **`shai-dispatch`** (`shai-dispatch:1`) — reads the latest assistant event, runs each
   `tool_use` block via `run_tool`, and emits `tool_result` events. Tools are resolved by
   directory lookup: `run_tool` execs `$TOOLS_DIR/<name>/run.sh` with the tool's JSON input as
@@ -189,6 +199,30 @@ The scripts:
 - **`shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
   retention: removes session log files and/or run directories, optionally filtered by date.
   Interactive prompts for confirmation; non-interactive skips it.
+- **`shai-sessions [--recent N] [--after DATE] [--before DATE] [--json]`**
+  (`shai-sessions:1`) — lists sessions from `$SHAI_HOME/sessions/*.jsonl` with event count,
+  distinct run count, and total tokens (from `api.usage`). Human-readable table by default;
+  `--json` outputs a JSON array. Filters: `--recent N` (last N by timestamp), `--after`/`--before`
+  (inclusive date range, `YYYY-MM-DD`). Gracefully skips malformed session files with a warning.
+  Exit 0 on success; 1 on invalid arguments.
+- **`shai-runs [--session ID] [--recent N] [--failed] [--json]`** (`shai-runs:1`) — lists runs
+  with span count, tool count, status (`complete`/`error`/`incomplete`), and token totals.
+  Without `--session`: scans `$SHAI_HOME/runs/*/events.jsonl`. With `--session`: groups events
+  from the session log by `meta.run_id`. `--failed` filters to error runs. Supports ID prefix
+  matching for `--session`. Exit 0 on success; 1 on invalid arguments or no match.
+- **`shai-trace <run_id> [--request <span>] [--response <span>] [--verbose] [--json]`**
+  (`shai-trace:1`) — renders a run's full span chain: inputs, outputs, tool calls, token usage,
+  and latency per span. Reads from `$SHAI_HOME/runs/<run_id>/events.jsonl`; falls back to
+  searching session logs if the run directory was pruned (warns that error events may be missing).
+  `--request`/`--response` dump the raw request/response JSON for a span. `--verbose` shows full
+  event content. Supports run ID prefix matching. Exit 0 on success; 1 on not found or invalid
+  arguments.
+- **`shai-stats [--session ID] [--after DATE] [--before DATE] [--json]`** (`shai-stats:1`) —
+  aggregates metrics across sessions: session/run counts, status breakdown with percentages,
+  token totals (in/out/total), tool usage frequency, averages per run, and average latency.
+  `--session` scopes to a single session (prefix matching). `--after`/`--before` filter by
+  session date. `--json` outputs a JSON summary object. Exit 0 on success; 1 on invalid
+  arguments or no match.
 - **`shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]`**
   (`shai-supervise:1`) — generates and manages a `systemd --user` `.service`+`.timer` pair that
   runs any shai workflow script on a timer. `<script>` may be a bare name or a
