@@ -42,17 +42,17 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./shai-workflow describe heartbeat     # show a workflow's doc header
 
 # Process supervision (systemd --user):
-./shai-supervise install workflows/heartbeat.sh                # install + enable the heartbeat timer
-./shai-supervise install workflows/heartbeat.sh --interval 1h  # custom interval
-./shai-supervise uninstall|start|stop workflows/heartbeat.sh   # lifecycle management
-./shai-supervise status                                        # list all shai-* units
-./shai-supervise logs workflows/heartbeat.sh                   # tail journal
-./workflows/heartbeat.sh                                       # one-shot pipeline health check
+./shai-supervise install workflows/heartbeat/run.sh                # install + enable the heartbeat timer
+./shai-supervise install workflows/heartbeat/run.sh --interval 1h  # custom interval
+./shai-supervise uninstall|start|stop workflows/heartbeat/run.sh   # lifecycle management
+./shai-supervise status                                            # list all shai-* units
+./shai-supervise logs workflows/heartbeat/run.sh                   # tail journal
+./workflows/heartbeat/run.sh                                       # one-shot pipeline health check
 
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
-./bin/shellcheck install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
-./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh  # -w to rewrite in place
+./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
+./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh  # -w to rewrite in place
 ```
 
 Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
@@ -107,8 +107,8 @@ Every event additionally carries an **execution envelope**, added by `shai-stamp
 `version` (schema version, default `1.0`) and `meta` with `run_id`, `session_id`, `span_id`,
 `parent_span_id`, and `timestamp`. The envelope is **additive** — `type` and `source` stay
 top-level because four filters' `jq` selectors discriminate on them, and `payload` keeps its
-existing per-event shape. This deliberately diverges from the design doc's literal envelope
-(which moves `source` into `meta`); the field *set* is adopted in full, the placement is not.
+existing per-event shape. The field *set* from the original design is adopted in full;
+the placement diverges (`source` stays top-level rather than moving into `meta`).
 Unstamped events from before the envelope still parse, so old session logs keep working.
 
 The scripts:
@@ -228,9 +228,9 @@ The scripts:
 - **`shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]`**
   (`shai-supervise:1`) — generates and manages a `systemd --user` `.service`+`.timer` pair that
   runs any shai workflow script on a timer. `<script>` may be a bare name or a
-  `workflows/<name>.sh` path; `install` resolves it against `$DIR` then `$DIR/workflows`, and
+  `workflows/<name>/run.sh` path; `install` resolves it against `$DIR` then `$DIR/workflows`, and
   the shared `unit_name` helper derives the systemd unit (strips a `workflows/` prefix and
-  `.sh` suffix, rejects any other `/` or `..`, then normalizes to `shai-<name>`), requires the
+  `/run.sh` suffix, rejects any other `/` or `..`, then normalizes to `shai-<name>`), requires the
   script to be executable and `ANTHROPIC_API_KEY` to be set, writes the units to
   `$SHAI_UNIT_DIR` (default `~/.config/systemd/user`) embedding `ANTHROPIC_API_KEY`/`SHAI_HOME`
   as `Environment=` lines, then `chmod 600`s the `.service` file (it holds the plaintext key)
@@ -268,8 +268,8 @@ explicit `default` is set, the fallback is per-tool: a tool whose `tool.json` de
 **Policy overlay** — `SHAI_POLICY_OVERLAY` (env var) points to an optional overlay policy file.
 Overlay rules are checked **before** base rules and intentionally supersede them, including
 `deny`. This lets workflows grant the tools they need without requiring the user to modify their
-base policy. Workflows set this automatically via a co-located `<name>.policy.json` file (e.g.
-`workflows/pr_review.policy.json`). When unset or pointing to a nonexistent file, behavior is
+base policy. Workflows set this automatically via a co-located `<name>/policy.json` file (e.g.
+`workflows/pr_review/policy.json`). When unset or pointing to a nonexistent file, behavior is
 identical to before.
 
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
@@ -284,15 +284,15 @@ keys. Each line: `{"key":"...","ts":"...","session_id":"..."}`. Two helpers in `
 idempotent). Keys are opaque, workflow-defined strings (e.g. `pr:owner/repo:123`). Mark after
 success so failures retry on next invocation.
 
-**Workflows** live in `workflows/`. Each is a standalone bash script following the same
-conventions as runtime scripts (shebang, strict mode, doc header). Workflows mix mechanical
-bash steps with LLM steps via `wf_llm`. Each execution mints an ephemeral session (prunable
-via `shai-prune`). Schedulable via `shai-supervise install workflows/<name>.sh`.
+**Workflows** live in `workflows/`. Each is a standalone bash script (at `workflows/<name>/run.sh`)
+following the same conventions as runtime scripts (shebang, strict mode, doc header). Workflows
+mix mechanical bash steps with LLM steps via `wf_llm`. Each execution mints an ephemeral session
+(prunable via `shai-prune`). Schedulable via `shai-supervise install workflows/<name>/run.sh`.
 
-**`workflows/heartbeat.sh`** is the first workflow: it calls `wf_init` then `wf_llm --quiet`
+**`workflows/heartbeat/run.sh`** is the first workflow: it calls `wf_init` then `wf_llm --quiet`
 with a canned prompt, checks the reply is an `assistant` message, and prints a timestamped
 PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run periodically via
-`shai-supervise install workflows/heartbeat.sh`. Exit 0 on pipeline success, 1 on failure.
+`shai-supervise install workflows/heartbeat/run.sh`. Exit 0 on pipeline success, 1 on failure.
 
 ## Conventions to preserve
 
@@ -317,8 +317,9 @@ PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run 
   `.editorconfig`.
 - **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
-  undocumented **or of an unrecognized type**. Per type:
-  - **Runtime scripts** (`shai-repl`, `shai-*`, `tools/*/run.sh`, `workflows/*.sh`): a header block after the shebang
+  undocumented **or of an unrecognized type**. This fail-closed design is intentional and should not be
+  relaxed — it ensures new file types are consciously classified rather than silently ignored. Per type:
+  - **Runtime scripts** (`shai-repl`, `shai-*`, `tools/*/run.sh`, `workflows/*/run.sh`): a header block after the shebang
     with a purpose line plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
   - **Test files** (`tests/test_*.sh`): purpose line + `# Covers:`.
   - **Infra scripts** (other `tests/*.sh`, `lib/*.sh`): purpose line + `# Usage:`.
@@ -340,9 +341,3 @@ Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
 `tests/install-lint-tools.sh` and checksum-verified against `tests/lint-tools.sha256`
 (trust-on-first-use).
 
-## Design reference
-
-`AI-Assistant-Unix-Philosophy-Design.md` is the origin design doc (uses `pa-*` naming; the
-implementation renamed these to `shai-*`). Note: `README.md` points to a
-`docs/superpowers/specs/...` design path that is gitignored and not committed to this repo.
-Deferred beyond the MVP: streaming, concurrency, and MCP.

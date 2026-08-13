@@ -6,7 +6,7 @@ set -uo pipefail
 WF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 DIR="$(cd "$WF_DIR/.." &>/dev/null && pwd)"
 
-WF_NAME="${WF_NAME:-$(basename "${BASH_SOURCE[1]:-workflow}" .sh)}"
+WF_NAME="${WF_NAME:-$(basename "$(dirname "${BASH_SOURCE[1]:-workflow}")")}"
 
 mint_id() {
   printf '%s_%s_%s' "$1" "$(date -u +%Y%m%dT%H%M%S)" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')"

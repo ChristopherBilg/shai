@@ -141,6 +141,9 @@ check_file() {
     ok "exempt: $f"
     return
   fi
+  # Fail-closed: unrecognized file types fail the check (the final catch-all
+  # emits an error). Adding a new file type requires a new branch
+  # here plus a fixture in tests/test_docs.sh. This is intentional — see #29.
   case "$f" in
     *.md)
       if md_ok "$f"; then ok "md H1: $f"; else note "markdown missing '# ' H1 title: $f"; fi
@@ -154,7 +157,7 @@ check_file() {
       if tool_json_ok "$f"; then ok "tool schema: $f"; else note "tool schema missing description(s): $f"; fi
       return
       ;;
-    workflows/*.policy.json)
+    workflows/*/policy.json)
       if jq -e '.rules | type == "array"' "$f" >/dev/null 2>&1; then
         ok "policy: $f"
       else
@@ -182,7 +185,7 @@ check_file() {
       if [ -s "$f" ]; then ok "prompt ok: $f"; else note "empty prompt file: $f"; fi
       return
       ;;
-    workflows/*.sh)
+    workflows/*/run.sh)
       check_shell "$f" runtime
       return
       ;;

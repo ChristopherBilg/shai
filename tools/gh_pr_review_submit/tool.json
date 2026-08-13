@@ -2,7 +2,10 @@
   "name": "gh_pr_review_submit",
   "description": "Submit a pending pull request review. Finalizes a draft review created by gh_pr_review_create.",
   "capabilities": {
-    "read_only": false
+    "read_only": false,
+    "requires": {
+      "tools": ["gh"]
+    }
   },
   "input_schema": {
     "type": "object",

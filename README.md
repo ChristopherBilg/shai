@@ -75,10 +75,10 @@ All four scripts accept `--json` for structured output and ID prefix matching (e
 ```
 Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (into `bin/`):
 ```shell
-./bin/shellcheck install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
-./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
+./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
+./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
 ```
 CI runs all of the above on every push and pull request.
 
 ## Scope
-This is an MVP. Design and deferred work (streaming, concurrency, MCP, …) are documented in `AI-Assistant-Unix-Philosophy-Design.md`.
+This is an MVP. Deferred beyond the MVP: streaming, concurrency, and MCP.
