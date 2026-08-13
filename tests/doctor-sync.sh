@@ -23,7 +23,7 @@ for tj in "$ROOT"/tools/*/tool.json; do
   tname=$(jq -r '.name' "$tj")
   while IFS= read -r dep; do
     [ -n "$dep" ] || continue
-    if echo "$DOCTOR_OUT" | grep -qF "$dep"; then
+    if echo "$DOCTOR_OUT" | grep -qE "\[(OK|WARN|FAIL)\][[:space:]]+${dep}$"; then
       ok "$tname requires tool '$dep' — covered by shai-doctor"
     else
       note "$tname requires tool '$dep' — NOT found in shai-doctor output"
@@ -33,7 +33,7 @@ for tj in "$ROOT"/tools/*/tool.json; do
   # Check env vars
   while IFS= read -r env_name; do
     [ -n "$env_name" ] || continue
-    if echo "$DOCTOR_OUT" | grep -qF "$env_name"; then
+    if echo "$DOCTOR_OUT" | grep -qE "\[(OK|WARN|FAIL)\][[:space:]]+${env_name}$"; then
       ok "$tname requires env '$env_name' — covered by shai-doctor"
     else
       note "$tname requires env '$env_name' — NOT found in shai-doctor output"

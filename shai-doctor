@@ -53,7 +53,7 @@ check_env ANTHROPIC_API_KEY core
 
 # Derive additional deps from tool plugins
 if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
-  SEEN_TOOLS=()
+  SEEN_TOOLS=("${CORE_TOOLS[@]}" "${COND_TOOLS[@]}")
   is_seen() {
     local item="$1" s
     for s in "${SEEN_TOOLS[@]+"${SEEN_TOOLS[@]}"}"; do

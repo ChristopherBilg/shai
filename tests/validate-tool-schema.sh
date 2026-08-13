@@ -110,6 +110,13 @@ for tool_dir in "$ROOT"/tools/*/; do
   [ -f "$tj" ] || continue
   tname=$(jq -r '.name' "$tj")
 
+  # requires: must be an object if present
+  req_type=$(jq -r '.capabilities.requires | type' "$tj" 2>/dev/null) || req_type="null"
+  if [ "$req_type" != "null" ] && [ "$req_type" != "object" ]; then
+    note "$tname: capabilities.requires must be an object (got $req_type)"
+    continue
+  fi
+
   # requires.tools: must be array of non-empty strings if present
   req_tools_type=$(jq -r '.capabilities.requires.tools | type' "$tj" 2>/dev/null) || req_tools_type="null"
   if [ "$req_tools_type" != "null" ]; then
@@ -129,11 +136,11 @@ for tool_dir in "$ROOT"/tools/*/; do
       note "$tname: capabilities.requires.env must be an array (got $req_env_type)"
     elif ! jq -e '
       .capabilities.requires.env | all(
-        (.name | type == "string" and length > 0)
+        (.name | type == "string" and length > 0 and test("^[A-Za-z_][A-Za-z0-9_]*$"))
         and (.level == "core" or .level == "conditional")
       )
     ' "$tj" >/dev/null 2>&1; then
-      note "$tname: capabilities.requires.env entries must have name (string) and level (core|conditional)"
+      note "$tname: capabilities.requires.env entries must have name (valid shell identifier) and level (core|conditional)"
     else
       ok "$tname: requires.env valid"
     fi
