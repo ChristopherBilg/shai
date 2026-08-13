@@ -142,7 +142,7 @@ check_file() {
     return
   fi
   # Fail-closed: unrecognized file types fail the check (the final catch-all
-  # on line 204 emits an error). Adding a new file type requires a new branch
+  # emits an error). Adding a new file type requires a new branch
   # here plus a fixture in tests/test_docs.sh. This is intentional — see #29.
   case "$f" in
     *.md)
