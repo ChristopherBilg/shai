@@ -103,6 +103,43 @@ for i in $(seq 0 $((count - 1))); do
   fi
 done
 
+# 4. Per-tool capabilities.requires validation (reads raw tool.json, not aggregated)
+for tool_dir in "$ROOT"/tools/*/; do
+  [ -d "$tool_dir" ] || continue
+  tj="$tool_dir/tool.json"
+  [ -f "$tj" ] || continue
+  tname=$(jq -r '.name' "$tj")
+
+  # requires.tools: must be array of non-empty strings if present
+  req_tools_type=$(jq -r '.capabilities.requires.tools | type' "$tj" 2>/dev/null) || req_tools_type="null"
+  if [ "$req_tools_type" != "null" ]; then
+    if [ "$req_tools_type" != "array" ]; then
+      note "$tname: capabilities.requires.tools must be an array (got $req_tools_type)"
+    elif ! jq -e '.capabilities.requires.tools | all(type == "string" and length > 0)' "$tj" >/dev/null 2>&1; then
+      note "$tname: capabilities.requires.tools entries must be non-empty strings"
+    else
+      ok "$tname: requires.tools valid"
+    fi
+  fi
+
+  # requires.env: must be array of {name: string, level: "core"|"conditional"} if present
+  req_env_type=$(jq -r '.capabilities.requires.env | type' "$tj" 2>/dev/null) || req_env_type="null"
+  if [ "$req_env_type" != "null" ]; then
+    if [ "$req_env_type" != "array" ]; then
+      note "$tname: capabilities.requires.env must be an array (got $req_env_type)"
+    elif ! jq -e '
+      .capabilities.requires.env | all(
+        (.name | type == "string" and length > 0)
+        and (.level == "core" or .level == "conditional")
+      )
+    ' "$tj" >/dev/null 2>&1; then
+      note "$tname: capabilities.requires.env entries must have name (string) and level (core|conditional)"
+    else
+      ok "$tname: requires.env valid"
+    fi
+  fi
+done
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo -e "${GREEN}TOOL SCHEMA OK${NC}"
