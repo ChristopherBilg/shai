@@ -1,5 +1,5 @@
 #!/bin/bash
-# run.sh — exercise the full pipeline and report pass/fail
+# heartbeat/run.sh — exercise the full pipeline and report pass/fail
 # Usage: workflows/heartbeat/run.sh
 # Reads: ANTHROPIC_API_KEY from environment
 # Writes: timestamped pass/fail line to stderr; ephemeral session log (prunable)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# run.sh — review a GitHub pull request via LLM and post a draft review
+# pr_review/run.sh — review a GitHub pull request via LLM and post a draft review
 # Usage: workflows/pr_review/run.sh <repo> <number>
 # Reads: ANTHROPIC_API_KEY from environment; prompts/pr_review.txt for review instructions
 # Writes: pending GitHub review with inline comments; ephemeral session log (prunable)
@@ -9,7 +9,7 @@ set -euo pipefail
 source "$(dirname "$0")/../../lib/workflow.sh"
 
 if [ "$#" -ne 2 ]; then
-  printf 'Usage: pr_review.sh <repo> <number>\n' >&2
+  printf 'Usage: workflows/pr_review/run.sh <repo> <number>\n' >&2
   exit 2
 fi
 

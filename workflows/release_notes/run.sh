@@ -1,5 +1,5 @@
 #!/bin/bash
-# run.sh — generate categorized release notes from merged PRs between two refs
+# release_notes/run.sh — generate categorized release notes from merged PRs between two refs
 # Usage: workflows/release_notes/run.sh <repo> <base> [head]
 # Reads: ANTHROPIC_API_KEY from environment; prompts/release_notes.txt for LLM instructions
 # Writes: markdown changelog to stdout; ephemeral session log (prunable)
@@ -9,7 +9,7 @@ set -euo pipefail
 source "$(dirname "$0")/../../lib/workflow.sh"
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  printf 'Usage: release_notes.sh <repo> <base> [head]\n' >&2
+  printf 'Usage: workflows/release_notes/run.sh <repo> <base> [head]\n' >&2
   exit 2
 fi
 

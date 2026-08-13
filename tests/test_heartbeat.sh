@@ -47,7 +47,7 @@ assert_contains "$OUT" "FAIL" "heartbeat: prints FAIL on curl hard-failure"
 # (it only needs shai-prompt/shai-read/shai-stamp plus prompts/system.txt), but wf_llm's
 # "$DIR/shai-loop" then resolves to a nonexistent path, bash reports "No such file or directory"
 # (127), and pipefail carries that non-zero status out of wf_llm — exactly the case
-# heartbeat.sh's `|| { ...; exit 1; }` catch exists for.
+# run.sh's `|| { ...; exit 1; }` catch exists for.
 PIPEDIR="$(mktemp -d)"
 _CLEANUP_DIRS+=("$PIPEDIR")
 mkdir -p "$PIPEDIR/lib" "$PIPEDIR/workflows/heartbeat" "$PIPEDIR/prompts"

@@ -14,7 +14,7 @@ cmd_list() {
   for d in "$WF_DIR"/*/; do
     [ -d "$d" ] || continue
     name="$(basename "$d")"
-    f="$d/run.sh"
+    f="${d}run.sh"
     [ -f "$f" ] || continue
     purpose="$(sed -n '2s/^# //p' "$f")"
     printf '  %-20s %s\n' "$name" "${purpose:-(no description)}"
