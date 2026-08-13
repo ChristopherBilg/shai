@@ -31,7 +31,7 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
 
 # Retention:
-./shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]  # manual retention
+./shai-prune [--sessions] [--runs] [--ledgers] [--dry-run] [--before YYYY-MM-DD]  # manual retention
 
 # Replay a failed run (idempotent, non-destructive):
 ./shai-retry --run <run_id>               # replay under a new run_id, commit on success
@@ -83,8 +83,9 @@ Data flows as one JSON **event** per line. Each script is a pure stdin→stdout 
 only shared state is the append-only session log. To rewind the assistant's memory, slice
 the file (`head -n 20 ~/.shai/sessions/<session_id>.jsonl`) — there is no database.
 
-State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs) and
-`sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop).
+State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs),
+`sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop), and
+`ledgers/<workflow_name>.jsonl` (per-workflow idempotency ledgers — see below).
 
 **The event schema is the contract between every script.** Records in `sessions/<session_id>.jsonl`:
 
@@ -196,9 +197,10 @@ The scripts:
   replays a failed run's user message under a new run_id using buffer-then-commit — events go to
   the new run log during execution and are committed to the session log only on success. Records
   `retry_of` in the envelope meta. Detects already-committed runs as no-ops.
-- **`shai-prune [--sessions] [--runs] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
-  retention: removes session log files and/or run directories, optionally filtered by date.
-  Interactive prompts for confirmation; non-interactive skips it.
+- **`shai-prune [--sessions] [--runs] [--ledgers] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
+  retention: removes session log files, run directories, and/or workflow ledger files, optionally
+  filtered by date. Ledgers are excluded from the default (no-flags) prune — they must be
+  explicitly requested via `--ledgers`. Interactive prompts for confirmation; non-interactive skips it.
 - **`shai-sessions [--recent N] [--after DATE] [--before DATE] [--json]`**
   (`shai-sessions:1`) — lists sessions from `$SHAI_HOME/sessions/*.jsonl` with event count,
   distinct run count, and total tokens (from `api.usage`). Human-readable table by default;
@@ -273,7 +275,14 @@ identical to before.
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
 (mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
 wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
-`wf_fail "message"` (stderr + exit 1). Sets `DIR` to the shai install directory.
+`wf_fail "message"` (stderr + exit 1), `wf_seen "key"` / `wf_mark "key"` (work ledger — see
+below). Sets `DIR` to the shai install directory.
+
+**Work ledger** — `$SHAI_HOME/ledgers/<workflow_name>.jsonl` stores per-workflow idempotency
+keys. Each line: `{"key":"...","ts":"...","session_id":"..."}`. Two helpers in `lib/workflow.sh`:
+`wf_seen "key"` (exit 0 if processed, 1 otherwise) and `wf_mark "key"` (append entry,
+idempotent). Keys are opaque, workflow-defined strings (e.g. `pr:owner/repo:123`). Mark after
+success so failures retry on next invocation.
 
 **Workflows** live in `workflows/`. Each is a standalone bash script (at `workflows/<name>/run.sh`)
 following the same conventions as runtime scripts (shebang, strict mode, doc header). Workflows

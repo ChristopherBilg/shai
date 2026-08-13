@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_workflow_lib.sh — unit tests for lib/workflow.sh
-# Covers: lib/workflow.sh — wf_init, wf_llm, wf_output, wf_fail
+# Covers: lib/workflow.sh — wf_init, wf_llm, wf_output, wf_fail, wf_seen, wf_mark
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -94,5 +94,82 @@ FERR=$(
 ) || FAIL_RC=$?
 assert_eq "${FAIL_RC:-0}" "1" "wf_fail: exits 1"
 assert_contains "$FERR" "something broke" "wf_fail: message on stderr"
+
+# --- wf_seen/wf_mark: per-workflow idempotency ledger ---
+TMP_LEDGER1="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMP_LEDGER1")
+
+printf '{"type":"message","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}' |
+  write_curl_stub 200
+
+# shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this test case
+(
+  export SHAI_HOME="$TMP_LEDGER1"
+  WF_NAME="test-ledger"
+  source "$DIR/lib/workflow.sh"
+  wf_init
+
+  # unseen key (no ledger file yet)
+  wf_seen "pr:owner/repo:42" && SEEN=0 || SEEN=$?
+  assert_eq "$SEEN" "1" "wf_seen: returns 1 for unseen key (no ledger)"
+
+  # mark a key
+  wf_mark "pr:owner/repo:42"
+
+  # now it should be seen
+  wf_seen "pr:owner/repo:42" && SEEN=0 || SEEN=$?
+  assert_eq "$SEEN" "0" "wf_seen: returns 0 after wf_mark"
+
+  # different key still unseen
+  wf_seen "pr:owner/repo:99" && SEEN=0 || SEEN=$?
+  assert_eq "$SEEN" "1" "wf_seen: returns 1 for different key"
+
+  # double mark is idempotent
+  wf_mark "pr:owner/repo:42"
+  LINE_COUNT=$(wc -l <"$SHAI_HOME/ledgers/test-ledger.jsonl" | tr -d ' ')
+  assert_eq "$LINE_COUNT" "1" "wf_mark: double mark produces exactly one line"
+
+  # ledger entry is valid JSONL with correct fields
+  ENTRY=$(cat "$SHAI_HOME/ledgers/test-ledger.jsonl")
+  KEY=$(printf '%s' "$ENTRY" | jq -r '.key')
+  TS=$(printf '%s' "$ENTRY" | jq -r '.ts')
+  SID=$(printf '%s' "$ENTRY" | jq -r '.session_id')
+  assert_eq "$KEY" "pr:owner/repo:42" "wf_mark: ledger entry has correct key"
+  assert_eq "$(printf '%s' "$TS" | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T')" "1" \
+    "wf_mark: ledger entry has ISO timestamp"
+  assert_eq "$SID" "$SHAI_SESSION_ID" "wf_mark: ledger entry has session_id"
+
+  exit "$FAILED"
+) || FAILED=1
+
+# --- wf_seen/wf_mark: separate WF_NAME → separate files ---
+TMP_LEDGER2="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMP_LEDGER2")
+
+printf '{"type":"message","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}' |
+  write_curl_stub 200
+
+# shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this test case
+(
+  export SHAI_HOME="$TMP_LEDGER2"
+  source "$DIR/lib/workflow.sh"
+  wf_init
+
+  WF_NAME="workflow-a"
+  wf_mark "item:1"
+  WF_NAME="workflow-b"
+  wf_mark "item:2"
+
+  assert_eq "$(test -f "$SHAI_HOME/ledgers/workflow-a.jsonl" && echo exists)" "exists" \
+    "wf_mark: workflow-a gets its own ledger"
+  assert_eq "$(test -f "$SHAI_HOME/ledgers/workflow-b.jsonl" && echo exists)" "exists" \
+    "wf_mark: workflow-b gets its own ledger"
+
+  WF_NAME="workflow-a"
+  wf_seen "item:2" && SEEN=0 || SEEN=$?
+  assert_eq "$SEEN" "1" "wf_seen: workflow-a cannot see workflow-b keys"
+
+  exit "$FAILED"
+) || FAILED=1
 
 finish
