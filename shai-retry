@@ -133,7 +133,7 @@ if [ -n "$REPLAY_RUN" ]; then
   fi
 fi
 
-# an inherited session always wins; a resume is a NEW run, per the design doc
+# an inherited session always wins; a resume is a NEW run
 SHAI_SESSION_ID="${SHAI_SESSION_ID:-$(mint_id sess)}"
 if [[ "$SHAI_SESSION_ID" =~ [/] ]] || [[ "$SHAI_SESSION_ID" == *..* ]]; then
   printf 'error: SHAI_SESSION_ID must not contain / or .. (got "%s")\n' "$SHAI_SESSION_ID" >&2

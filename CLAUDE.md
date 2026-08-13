@@ -106,8 +106,8 @@ Every event additionally carries an **execution envelope**, added by `shai-stamp
 `version` (schema version, default `1.0`) and `meta` with `run_id`, `session_id`, `span_id`,
 `parent_span_id`, and `timestamp`. The envelope is **additive** — `type` and `source` stay
 top-level because four filters' `jq` selectors discriminate on them, and `payload` keeps its
-existing per-event shape. This deliberately diverges from the design doc's literal envelope
-(which moves `source` into `meta`); the field *set* is adopted in full, the placement is not.
+existing per-event shape. The field *set* from the original design is adopted in full;
+the placement diverges (`source` stays top-level rather than moving into `meta`).
 Unstamped events from before the envelope still parse, so old session logs keep working.
 
 The scripts:
@@ -308,7 +308,8 @@ PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run 
   `.editorconfig`.
 - **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
-  undocumented **or of an unrecognized type**. Per type:
+  undocumented **or of an unrecognized type**. This fail-closed design is intentional and should not be
+  relaxed — it ensures new file types are consciously classified rather than silently ignored. Per type:
   - **Runtime scripts** (`shai-repl`, `shai-*`, `tools/*/run.sh`, `workflows/*/run.sh`): a header block after the shebang
     with a purpose line plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
   - **Test files** (`tests/test_*.sh`): purpose line + `# Covers:`.
@@ -331,9 +332,3 @@ Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
 `tests/install-lint-tools.sh` and checksum-verified against `tests/lint-tools.sha256`
 (trust-on-first-use).
 
-## Design reference
-
-`AI-Assistant-Unix-Philosophy-Design.md` is the origin design doc (uses `pa-*` naming; the
-implementation renamed these to `shai-*`). Note: `README.md` points to a
-`docs/superpowers/specs/...` design path that is gitignored and not committed to this repo.
-Deferred beyond the MVP: streaming, concurrency, and MCP.

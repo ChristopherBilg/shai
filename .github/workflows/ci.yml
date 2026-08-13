@@ -84,6 +84,13 @@ jobs:
       - name: Constants documentation sync check
         run: ./tests/constants-sync.sh
 
+  doctor-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Doctor dependency sync check
+        run: ./tests/doctor-sync.sh
+
   actionlint:
     runs-on: ubuntu-latest
     steps:

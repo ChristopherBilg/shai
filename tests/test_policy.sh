@@ -7,6 +7,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-dispatch: check_policy"
 
+# Derive read-only tool names from tool.json instead of hardcoding
+mapfile -t READ_ONLY_TOOLS < <(
+  for tj in "$DIR"/tools/*/tool.json; do
+    jq -r 'select(.capabilities.read_only == true) | .name' "$tj"
+  done | sort
+)
+[ "${#READ_ONLY_TOOLS[@]}" -gt 0 ] || {
+  echo "FATAL: could not find any read-only tools in tools/*/tool.json" >&2
+  exit 1
+}
+
 # shai-dispatch runs its dispatch loop at the global scope (no `main` guard), so it can't be
 # `source`d directly without also running the loop against stdin. Extract just the function
 # definitions -- everything from the top of the file up to (but not including) the loop's
@@ -51,8 +62,8 @@ empty_home() {
   printf '%s' "$tmpdir"
 }
 
-# --- no policy file: allow for the four read-only tools, prompt for anything else ---
-for t in print_file list_directory gh_pr_view gh_issue_view; do
+# --- no policy file: allow for all read-only tools, prompt for anything else ---
+for t in "${READ_ONLY_TOOLS[@]}"; do
   PDIR=$(empty_home)
   RES=$(SHAI_HOME="$PDIR" run_check_policy "$t" '{}')
   assert_eq "$RES" "allow" "no policy file: $t → allow"

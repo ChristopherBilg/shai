@@ -5,12 +5,13 @@
 # Writes: diagnostic report to stderr
 # Exit: 0 if all core checks pass; 1 if any core check fails
 set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
 ERRORS=0
 WARNINGS=0
 
 CORE_TOOLS=(jq curl date od mktemp tr)
-COND_TOOLS=(gh git systemctl journalctl timeout)
+COND_TOOLS=(systemctl journalctl timeout)
 
 check_tool() {
   local name="$1" level="$2"
@@ -49,9 +50,38 @@ for t in "${COND_TOOLS[@]}"; do check_tool "$t" conditional; done
 
 printf '\nEnvironment:\n' >&2
 check_env ANTHROPIC_API_KEY core
-check_env JIRA_BASE_URL conditional
-check_env JIRA_USER_EMAIL conditional
-check_env JIRA_API_TOKEN conditional
+
+# Derive additional deps from tool plugins
+if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
+  SEEN_TOOLS=("${CORE_TOOLS[@]}" "${COND_TOOLS[@]}")
+  is_seen() {
+    local item="$1" s
+    for s in "${SEEN_TOOLS[@]+"${SEEN_TOOLS[@]}"}"; do
+      [ "$s" = "$item" ] && return 0
+    done
+    return 1
+  }
+
+  printf '\nTool-declared dependencies:\n' >&2
+  for tj in "$DIR"/tools/*/tool.json; do
+    [ -f "$tj" ] || continue
+    # tools
+    while IFS= read -r dep; do
+      [ -n "$dep" ] || continue
+      if ! is_seen "$dep"; then
+        SEEN_TOOLS+=("$dep")
+        check_tool "$dep" conditional
+      fi
+    done < <(jq -r '.capabilities.requires.tools // [] | .[]' "$tj" 2>/dev/null)
+    # env vars
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      local_name=$(printf '%s' "$line" | jq -r '.name')
+      local_level=$(printf '%s' "$line" | jq -r '.level')
+      check_env "$local_name" "$local_level"
+    done < <(jq -c '.capabilities.requires.env // [] | .[]' "$tj" 2>/dev/null)
+  done
+fi
 
 printf '\n%d error%s, %d warning%s\n' \
   "$ERRORS" "$([ "$ERRORS" -ne 1 ] && echo s)" \

@@ -141,6 +141,9 @@ check_file() {
     ok "exempt: $f"
     return
   fi
+  # Fail-closed: unrecognized file types fail the check (the final catch-all
+  # emits an error). Adding a new file type requires a new branch
+  # here plus a fixture in tests/test_docs.sh. This is intentional — see #29.
   case "$f" in
     *.md)
       if md_ok "$f"; then ok "md H1: $f"; else note "markdown missing '# ' H1 title: $f"; fi
