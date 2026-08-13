@@ -2,7 +2,10 @@
   "name": "gh_pr_view",
   "description": "View a GitHub pull request (read-only). Returns title, body, state, author, and other metadata.",
   "capabilities": {
-    "read_only": true
+    "read_only": true,
+    "requires": {
+      "tools": ["gh"]
+    }
   },
   "input_schema": {
     "type": "object",

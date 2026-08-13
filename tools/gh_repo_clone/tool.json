@@ -2,7 +2,10 @@
   "name": "gh_repo_clone",
   "description": "Clone a GitHub repository into a temporary directory. Returns the clone path. Optionally checks out a specific branch or tag.",
   "capabilities": {
-    "read_only": false
+    "read_only": false,
+    "requires": {
+      "tools": ["gh"]
+    }
   },
   "input_schema": {
     "type": "object",

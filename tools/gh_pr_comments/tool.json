@@ -2,7 +2,10 @@
   "name": "gh_pr_comments",
   "description": "List comments on a GitHub pull request (read-only). Returns both review comments (inline on diff) and conversation comments.",
   "capabilities": {
-    "read_only": true
+    "read_only": true,
+    "requires": {
+      "tools": ["gh"]
+    }
   },
   "input_schema": {
     "type": "object",
