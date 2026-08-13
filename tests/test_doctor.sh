@@ -88,9 +88,26 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
 (
   unset JIRA_BASE_URL
   unset JIRA_USER_EMAIL
-  OUT=$(run_doctor jq gh)
+  # 'od' (not 'jq') stands in for the failing core tool here: jq gates the tool.json
+  # dependency scan below, so failing jq would also suppress the gh/JIRA checks this
+  # test relies on (see Test 7 for that scenario).
+  OUT=$(run_doctor od gh)
   SUMMARY=$(printf '%s' "$OUT" | tail -n1)
   assert_eq "$SUMMARY" "1 error, 3 warnings" "doctor: summary line exact match"
+  exit "$FAILED"
+) || FAILED=1
+
+# --- Test 7: jq missing → tool.json dependency scan skipped gracefully ---
+(
+  OUT=$(run_doctor jq)
+  RC=$?
+  assert_eq "$RC" "1" "doctor: missing jq → exit 1 from the core-tool FAIL alone"
+  assert_contains "$OUT" "[FAIL]" "doctor: missing jq still reported as FAIL"
+  if [[ "$OUT" == *"Tool-declared dependencies:"* ]]; then
+    assert_eq "section-present" "section-absent" "doctor: missing jq skips the Tool-declared dependencies section"
+  else
+    assert_eq "0" "0" "doctor: missing jq skips the Tool-declared dependencies section"
+  fi
   exit "$FAILED"
 ) || FAILED=1
 
