@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_prune.sh — tests for shai-prune
-# Covers: shai-prune — session/run pruning, --dry-run, --before, confirmation, edge cases
+# Covers: shai-prune — session/run/ledger pruning, --dry-run, --before, confirmation, edge cases
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

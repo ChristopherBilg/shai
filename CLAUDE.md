@@ -275,7 +275,8 @@ identical to before.
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
 (mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
 wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
-`wf_fail "message"` (stderr + exit 1). Sets `DIR` to the shai install directory.
+`wf_fail "message"` (stderr + exit 1), `wf_seen "key"` / `wf_mark "key"` (work ledger — see
+below). Sets `DIR` to the shai install directory.
 
 **Work ledger** — `$SHAI_HOME/ledgers/<workflow_name>.jsonl` stores per-workflow idempotency
 keys. Each line: `{"key":"...","ts":"...","session_id":"..."}`. Two helpers in `lib/workflow.sh`:
