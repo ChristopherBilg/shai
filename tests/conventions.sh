@@ -20,7 +20,7 @@ mapfile -t RUNTIME < <({
   git ls-files 'shai-*'
   git ls-files 'install.sh'
   git ls-files 'tools/*/run.sh'
-  git ls-files 'workflows/*.sh'
+  git ls-files 'workflows/*/run.sh'
 } | sort -u)
 
 mapfile -t SCRIPTS < <(

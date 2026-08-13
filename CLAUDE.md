@@ -42,17 +42,17 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./shai-workflow describe heartbeat     # show a workflow's doc header
 
 # Process supervision (systemd --user):
-./shai-supervise install workflows/heartbeat.sh                # install + enable the heartbeat timer
-./shai-supervise install workflows/heartbeat.sh --interval 1h  # custom interval
-./shai-supervise uninstall|start|stop workflows/heartbeat.sh   # lifecycle management
-./shai-supervise status                                        # list all shai-* units
-./shai-supervise logs workflows/heartbeat.sh                   # tail journal
-./workflows/heartbeat.sh                                       # one-shot pipeline health check
+./shai-supervise install workflows/heartbeat/run.sh                # install + enable the heartbeat timer
+./shai-supervise install workflows/heartbeat/run.sh --interval 1h  # custom interval
+./shai-supervise uninstall|start|stop workflows/heartbeat/run.sh   # lifecycle management
+./shai-supervise status                                            # list all shai-* units
+./shai-supervise logs workflows/heartbeat/run.sh                   # tail journal
+./workflows/heartbeat/run.sh                                       # one-shot pipeline health check
 
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
-./bin/shellcheck install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh
-./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*.sh tests/*.sh  # -w to rewrite in place
+./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
+./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh  # -w to rewrite in place
 ```
 
 Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
@@ -226,9 +226,9 @@ The scripts:
 - **`shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]`**
   (`shai-supervise:1`) — generates and manages a `systemd --user` `.service`+`.timer` pair that
   runs any shai workflow script on a timer. `<script>` may be a bare name or a
-  `workflows/<name>.sh` path; `install` resolves it against `$DIR` then `$DIR/workflows`, and
+  `workflows/<name>/run.sh` path; `install` resolves it against `$DIR` then `$DIR/workflows`, and
   the shared `unit_name` helper derives the systemd unit (strips a `workflows/` prefix and
-  `.sh` suffix, rejects any other `/` or `..`, then normalizes to `shai-<name>`), requires the
+  `/run.sh` suffix, rejects any other `/` or `..`, then normalizes to `shai-<name>`), requires the
   script to be executable and `ANTHROPIC_API_KEY` to be set, writes the units to
   `$SHAI_UNIT_DIR` (default `~/.config/systemd/user`) embedding `ANTHROPIC_API_KEY`/`SHAI_HOME`
   as `Environment=` lines, then `chmod 600`s the `.service` file (it holds the plaintext key)
@@ -266,8 +266,8 @@ explicit `default` is set, the fallback is per-tool: a tool whose `tool.json` de
 **Policy overlay** — `SHAI_POLICY_OVERLAY` (env var) points to an optional overlay policy file.
 Overlay rules are checked **before** base rules and intentionally supersede them, including
 `deny`. This lets workflows grant the tools they need without requiring the user to modify their
-base policy. Workflows set this automatically via a co-located `<name>.policy.json` file (e.g.
-`workflows/pr_review.policy.json`). When unset or pointing to a nonexistent file, behavior is
+base policy. Workflows set this automatically via a co-located `<name>/policy.json` file (e.g.
+`workflows/pr_review/policy.json`). When unset or pointing to a nonexistent file, behavior is
 identical to before.
 
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
@@ -275,15 +275,15 @@ identical to before.
 wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
 `wf_fail "message"` (stderr + exit 1). Sets `DIR` to the shai install directory.
 
-**Workflows** live in `workflows/`. Each is a standalone bash script following the same
-conventions as runtime scripts (shebang, strict mode, doc header). Workflows mix mechanical
-bash steps with LLM steps via `wf_llm`. Each execution mints an ephemeral session (prunable
-via `shai-prune`). Schedulable via `shai-supervise install workflows/<name>.sh`.
+**Workflows** live in `workflows/`. Each is a standalone bash script (at `workflows/<name>/run.sh`)
+following the same conventions as runtime scripts (shebang, strict mode, doc header). Workflows
+mix mechanical bash steps with LLM steps via `wf_llm`. Each execution mints an ephemeral session
+(prunable via `shai-prune`). Schedulable via `shai-supervise install workflows/<name>/run.sh`.
 
-**`workflows/heartbeat.sh`** is the first workflow: it calls `wf_init` then `wf_llm --quiet`
+**`workflows/heartbeat/run.sh`** is the first workflow: it calls `wf_init` then `wf_llm --quiet`
 with a canned prompt, checks the reply is an `assistant` message, and prints a timestamped
 PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run periodically via
-`shai-supervise install workflows/heartbeat.sh`. Exit 0 on pipeline success, 1 on failure.
+`shai-supervise install workflows/heartbeat/run.sh`. Exit 0 on pipeline success, 1 on failure.
 
 ## Conventions to preserve
 
@@ -310,7 +310,7 @@ PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run 
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
   undocumented **or of an unrecognized type**. This fail-closed design is intentional and should not be
   relaxed — it ensures new file types are consciously classified rather than silently ignored. Per type:
-  - **Runtime scripts** (`shai-repl`, `shai-*`, `tools/*/run.sh`, `workflows/*.sh`): a header block after the shebang
+  - **Runtime scripts** (`shai-repl`, `shai-*`, `tools/*/run.sh`, `workflows/*/run.sh`): a header block after the shebang
     with a purpose line plus `# Usage:` (names the script), `# Reads:`, `# Writes:`, `# Exit:`.
   - **Test files** (`tests/test_*.sh`): purpose line + `# Covers:`.
   - **Infra scripts** (other `tests/*.sh`, `lib/*.sh`): purpose line + `# Usage:`.

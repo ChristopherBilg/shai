@@ -196,30 +196,31 @@ assert_eq "$RC" "1" "prompt: empty fails"
 assert_contains "$OUT" "empty prompt" "prompt: names the empty problem"
 
 # --- workflow script: runtime rules apply ---
-mkdir -p "$FIX/workflows"
-cat >"$FIX/workflows/good-wf.sh" <<'EOF'
+mkdir -p "$FIX/workflows/good-wf"
+cat >"$FIX/workflows/good-wf/run.sh" <<'EOF'
 #!/bin/bash
-# good-wf.sh — a compliant workflow script
-# Usage: good-wf.sh <TICKET_ID>
+# run.sh — a compliant workflow script
+# Usage: run.sh <TICKET_ID>
 # Reads: ANTHROPIC_API_KEY from environment
 # Writes: draft PR on GitHub
 # Exit: 0 on success; 1 on failure
 set -euo pipefail
 EOF
 
-cat >"$FIX/workflows/bad-wf.sh" <<'EOF'
+mkdir -p "$FIX/workflows/bad-wf"
+cat >"$FIX/workflows/bad-wf/run.sh" <<'EOF'
 #!/bin/bash
-# bad-wf.sh — a workflow missing Exit
-# Usage: bad-wf.sh <TICKET_ID>
+# run.sh — a workflow missing Exit
+# Usage: run.sh <TICKET_ID>
 # Reads: env
 # Writes: stdout
 set -euo pipefail
 EOF
 
-run_docs workflows/good-wf.sh
+run_docs workflows/good-wf/run.sh
 assert_eq "$RC" "0" "workflow: compliant passes"
 
-run_docs workflows/bad-wf.sh
+run_docs workflows/bad-wf/run.sh
 assert_eq "$RC" "1" "workflow: missing Exit fails"
 
 # --- library file: infra rules apply ---
@@ -244,13 +245,15 @@ run_docs lib/bad-lib.sh
 assert_eq "$RC" "1" "library: filename-only purpose fails"
 
 # --- workflow policy: valid .rules array ---
-printf '{"rules":[{"tool":"gh_repo_clone","action":"allow"}]}\n' >"$FIX/workflows/good.policy.json"
-printf '{"not_rules":true}\n' >"$FIX/workflows/bad.policy.json"
+mkdir -p "$FIX/workflows/good-policy"
+printf '{"rules":[{"tool":"gh_repo_clone","action":"allow"}]}\n' >"$FIX/workflows/good-policy/policy.json"
+mkdir -p "$FIX/workflows/bad-policy"
+printf '{"not_rules":true}\n' >"$FIX/workflows/bad-policy/policy.json"
 
-run_docs workflows/good.policy.json
+run_docs workflows/good-policy/policy.json
 assert_eq "$RC" "0" "policy: valid .rules array passes"
 
-run_docs workflows/bad.policy.json
+run_docs workflows/bad-policy/policy.json
 assert_eq "$RC" "1" "policy: missing .rules array fails"
 
 finish

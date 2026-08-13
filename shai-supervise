@@ -10,11 +10,12 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 UNIT_DIR="${SHAI_UNIT_DIR:-$HOME/.config/systemd/user}"
 
-# unit_name <script>: strip workflows/ prefix and .sh suffix, validate, strip
-# leading shai- if present, prepend shai-
+# unit_name <script>: strip workflows/ prefix, /run.sh suffix, and .sh suffix,
+# validate, strip leading shai- if present, prepend shai-
 unit_name() {
   local script="$1"
   script="${script#workflows/}"
+  script="${script%/run.sh}"
   script="${script%.sh}"
   if [[ "$script" =~ [/] ]] || [[ "$script" == *..* ]]; then
     printf 'error: script name must not contain / or .. (got "%s")\n' "$script" >&2
@@ -27,8 +28,9 @@ unit_name() {
 cmd_install() {
   local script="$1" interval="${2:-15min}"
   local script_path="$DIR/$script"
-  if [ ! -x "$script_path" ] && [ -x "$DIR/workflows/$script" ]; then
-    script_path="$DIR/workflows/$script"
+
+  if [ ! -x "$script_path" ] && [ -x "$DIR/workflows/$script/run.sh" ]; then
+    script_path="$DIR/workflows/$script/run.sh"
   fi
 
   if [ ! -x "$script_path" ]; then
