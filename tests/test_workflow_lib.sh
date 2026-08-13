@@ -59,6 +59,29 @@ assert_contains "$OUTMSG" "PR created" "wf_output: includes message"
 assert_eq "$(printf '%s' "$OUTMSG" | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T')" "1" \
   "wf_output: starts with ISO timestamp"
 
+# --- WF_NAME: auto-derived from parent directory of the sourcing script ---
+FIX="$(mktemp -d)"
+_CLEANUP_DIRS+=("$FIX")
+mkdir -p "$FIX/workflows/my_workflow" "$FIX/lib" "$FIX/prompts"
+cp "$DIR/lib/workflow.sh" "$FIX/lib/"
+cp "$DIR/shai-prompt" "$DIR/shai-read" "$DIR/shai-stamp" "$FIX/"
+cp "$DIR/prompts/system.txt" "$FIX/prompts/"
+chmod +x "$FIX"/shai-*
+cat >"$FIX/workflows/my_workflow/run.sh" <<'FIXTURE'
+#!/bin/bash
+set -euo pipefail
+source "$(dirname "$0")/../../lib/workflow.sh"
+printf '%s\n' "$WF_NAME"
+FIXTURE
+chmod +x "$FIX/workflows/my_workflow/run.sh"
+
+# shellcheck disable=SC2030,SC2031
+DERIVED_NAME=$(
+  export SHAI_HOME="$TMP"
+  "$FIX/workflows/my_workflow/run.sh"
+)
+assert_eq "$DERIVED_NAME" "my_workflow" "WF_NAME: auto-derived from parent directory name"
+
 # --- wf_fail: stderr + exit non-zero ---
 # shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this test case
 FERR=$(
