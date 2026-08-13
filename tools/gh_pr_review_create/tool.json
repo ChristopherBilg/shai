@@ -2,7 +2,10 @@
   "name": "gh_pr_review_create",
   "description": "Create a pending (draft) pull request review with inline comments. The review remains in draft on GitHub until submitted via gh_pr_review_submit.",
   "capabilities": {
-    "read_only": false
+    "read_only": false,
+    "requires": {
+      "tools": ["gh"]
+    }
   },
   "input_schema": {
     "type": "object",

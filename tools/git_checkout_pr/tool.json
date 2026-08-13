@@ -2,7 +2,10 @@
   "name": "git_checkout_pr",
   "description": "Check out a pull request branch in a local Git repository. Uses gh pr checkout to fetch and switch to the PR branch.",
   "capabilities": {
-    "read_only": false
+    "read_only": false,
+    "requires": {
+      "tools": ["git", "gh"]
+    }
   },
   "input_schema": {
     "type": "object",
