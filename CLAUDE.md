@@ -93,14 +93,14 @@ State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-o
 | `message` / `user` | `{text}` | `shai-read` |
 | `message` / `system` | `{text}` (the seeded system prompt) | `shai-read --system` |
 | `message` / `assistant` | `{content:[...], stop_reason}` (raw Anthropic content array) | `shai-eval` |
+| `tool_result` / `tool` | `{tool_use_id, content, is_error}` | `shai-dispatch` |
+| `error` / `system` | `{text}` | `shai-eval` |
 
 Assistant events additionally carry an **`api` key** (added by `shai-eval`, not by `shai-stamp`):
 `{message_id, model, usage: {input_tokens, output_tokens}, latency_ms}`. This is a top-level
 sibling of `type`/`source`/`payload`, like the envelope. No existing pipeline script reads it;
 it is consumed only by the observability filters (`shai-sessions`, `shai-runs`, `shai-trace`,
 `shai-stats`). Error events never carry `api`.
-| `tool_result` / `tool` | `{tool_use_id, content, is_error}` | `shai-dispatch` |
-| `error` / `system` | `{text}` | `shai-eval` |
 
 Every event additionally carries an **execution envelope**, added by `shai-stamp`:
 `version` (schema version, default `1.0`) and `meta` with `run_id`, `session_id`, `span_id`,
@@ -146,10 +146,11 @@ The scripts:
   missing). `--dry-run` prints the payload without calling out; `--tools-file <path>` attaches
   the aggregated tool array at that path (built by `shai-tools`). Before each real call it
   best-effort dumps the exact request to
-  `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` and the response metadata (everything except
-  `content`) to `<span_id>-response.json` (observability; never fails the loop). Successful
-  assistant events carry an `api` key with `{message_id, model, usage, latency_ms}` — see the
-  event schema note above.
+  `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` and, on successful API responses, a
+  normalized response metadata file to `<span_id>-response.json` containing
+  `{message_id, model, usage, stop_reason, latency_ms}` (observability; never fails the loop).
+  Successful assistant events carry an `api` key with the same fields — see the event schema
+  note above.
 - **`shai-dispatch`** (`shai-dispatch:1`) — reads the latest assistant event, runs each
   `tool_use` block via `run_tool`, and emits `tool_result` events. Tools are resolved by
   directory lookup: `run_tool` execs `$TOOLS_DIR/<name>/run.sh` with the tool's JSON input as

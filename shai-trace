@@ -110,9 +110,17 @@ if [ -z "$EVENTS_FILE" ]; then
     printf 'error: no events found for run "%s"\n' "$RUN_PREFIX" >&2
     exit 1
   fi
+  # Require exactly one distinct run_id — reject ambiguous prefix matches
+  DISTINCT_RUNS=$(jq -r '.meta.run_id // empty' "$TMPEVENTS" | sort -u)
+  DISTINCT_COUNT=$(printf '%s\n' "$DISTINCT_RUNS" | wc -l)
+  if [ "$DISTINCT_COUNT" -gt 1 ]; then
+    printf 'error: ambiguous prefix "%s" matches %d runs:\n' "$RUN_PREFIX" "$DISTINCT_COUNT" >&2
+    printf '%s\n' "$DISTINCT_RUNS" | while IFS= read -r rid; do printf '  %s\n' "$rid" >&2; done
+    exit 1
+  fi
   EVENTS_FILE="$TMPEVENTS"
   ALREADY_CLEAN=true # every line above is jq's own re-serialized output: guaranteed well-formed
-  RUN_ID=$(jq -r '.meta.run_id' "$EVENTS_FILE" | head -1)
+  RUN_ID=$(printf '%s' "$DISTINCT_RUNS" | head -1)
   printf 'warning: run directory not found; using session log (error events may be missing)\n' >&2
 fi
 
@@ -192,7 +200,7 @@ jq -sc --argjson verbose "$VERBOSE" '
             (if $verbose then
               "tool_result (tool_use_id: \(.payload.tool_use_id)): \(.payload.content | tostring)"
              else
-              "tool_result (tool_use_id: \(.payload.tool_use_id), \(.payload.content | tostring | length) bytes)"
+              "tool_result (tool_use_id: \(.payload.tool_use_id), \(.payload.content | tostring | utf8bytelength) bytes)"
              end)
           elif .type == "error" then "ERROR: \(.payload.text)"
           else "\(.type)/\(.source)" end
