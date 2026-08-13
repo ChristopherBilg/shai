@@ -63,8 +63,11 @@ assert_eq "$(printf '%s' "$OUTMSG" | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T')" "
 FIX="$(mktemp -d)"
 _CLEANUP_DIRS+=("$FIX")
 mkdir -p "$FIX/workflows/my_workflow" "$FIX/lib" "$FIX/prompts"
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
 cp "$DIR/lib/workflow.sh" "$FIX/lib/"
+# shellcheck disable=SC2031
 cp "$DIR/shai-prompt" "$DIR/shai-read" "$DIR/shai-stamp" "$FIX/"
+# shellcheck disable=SC2031
 cp "$DIR/prompts/system.txt" "$FIX/prompts/"
 chmod +x "$FIX"/shai-*
 cat >"$FIX/workflows/my_workflow/run.sh" <<'FIXTURE'
