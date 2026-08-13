@@ -10,11 +10,12 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 UNIT_DIR="${SHAI_UNIT_DIR:-$HOME/.config/systemd/user}"
 
-# unit_name <script>: strip workflows/ prefix and .sh suffix, validate, strip
+# unit_name <script>: strip workflows/ prefix and .sh/.../run.sh suffixes, validate, strip
 # leading shai- if present, prepend shai-
 unit_name() {
   local script="$1"
   script="${script#workflows/}"
+  script="${script%/run.sh}"
   script="${script%.sh}"
   if [[ "$script" =~ [/] ]] || [[ "$script" == *..* ]]; then
     printf 'error: script name must not contain / or .. (got "%s")\n' "$script" >&2
@@ -27,8 +28,15 @@ unit_name() {
 cmd_install() {
   local script="$1" interval="${2:-15min}"
   local script_path="$DIR/$script"
-  if [ ! -x "$script_path" ] && [ -x "$DIR/workflows/$script" ]; then
-    script_path="$DIR/workflows/$script"
+
+  # Try various script path formats:
+  # 1. Direct path (e.g., shai-foo or workflows/foo/run.sh)
+  # 2. Bare name to workflows/name/run.sh (new subdirectory format)
+  # 3. Bare name to workflows/name.sh (old flat format, for compatibility)
+  if [ ! -x "$script_path" ] && [ -x "$DIR/workflows/$script/run.sh" ]; then
+    script_path="$DIR/workflows/$script/run.sh"
+  elif [ ! -x "$script_path" ] && [ -x "$DIR/workflows/$script.sh" ]; then
+    script_path="$DIR/workflows/$script.sh"
   fi
 
   if [ ! -x "$script_path" ]; then

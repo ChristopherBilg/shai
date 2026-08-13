@@ -10,10 +10,12 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 WF_DIR="$DIR/workflows"
 
 cmd_list() {
-  local f name purpose
-  for f in "$WF_DIR"/*.sh; do
+  local d f name purpose
+  for d in "$WF_DIR"/*/; do
+    [ -d "$d" ] || continue
+    name="$(basename "$d")"
+    f="$d/run.sh"
     [ -f "$f" ] || continue
-    name="$(basename "$f" .sh)"
     purpose="$(sed -n '2s/^# //p' "$f")"
     printf '  %-20s %s\n' "$name" "${purpose:-(no description)}"
   done
@@ -25,7 +27,7 @@ cmd_describe() {
     printf 'error: workflow name must not contain / or .. (got "%s")\n' "$name" >&2
     exit 1
   fi
-  local script="$WF_DIR/$name.sh"
+  local script="$WF_DIR/$name/run.sh"
   if [ ! -f "$script" ]; then
     printf 'error: workflow not found: %s\n' "$name" >&2
     exit 1
@@ -40,7 +42,7 @@ cmd_run() {
     printf 'error: workflow name must not contain / or .. (got "%s")\n' "$name" >&2
     exit 1
   fi
-  local script="$WF_DIR/$name.sh"
+  local script="$WF_DIR/$name/run.sh"
   if [ ! -x "$script" ]; then
     printf 'error: workflow not found or not executable: %s\n' "$name" >&2
     exit 1

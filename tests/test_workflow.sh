@@ -31,34 +31,34 @@ assert_contains "$OUT" "must not contain" "describe: path traversal error messag
 # the fixture dir alongside a fixture workflows/ directory, so $DIR resolves to $FIX.
 FIX="$(mktemp -d)"
 _CLEANUP_DIRS+=("$FIX")
-mkdir -p "$FIX/workflows" "$FIX/lib"
+mkdir -p "$FIX/workflows/echo-test" "$FIX/workflows/exit-code-test" "$FIX/lib"
 cp "$DIR/lib/workflow.sh" "$FIX/lib/"
 cp "$DIR/shai-workflow" "$FIX/shai-workflow"
 chmod +x "$FIX/shai-workflow"
 
-cat >"$FIX/workflows/echo-test.sh" <<'FIXTURE'
+cat >"$FIX/workflows/echo-test/run.sh" <<'FIXTURE'
 #!/bin/bash
-# echo-test — test fixture that prints its args
-# Usage: echo-test.sh [args]
+# run.sh — test fixture that prints its args
+# Usage: workflows/echo-test/run.sh [args]
 # Reads: nothing
 # Writes: args to stdout
 # Exit: 0
 set -euo pipefail
 printf 'ARGS:%s\n' "$*"
 FIXTURE
-chmod +x "$FIX/workflows/echo-test.sh"
+chmod +x "$FIX/workflows/echo-test/run.sh"
 
-cat >"$FIX/workflows/exit-code-test.sh" <<'FIXTURE'
+cat >"$FIX/workflows/exit-code-test/run.sh" <<'FIXTURE'
 #!/bin/bash
-# exit-code-test — test fixture that always exits 7
-# Usage: exit-code-test.sh
+# run.sh — test fixture that always exits 7
+# Usage: workflows/exit-code-test/run.sh
 # Reads: nothing
 # Writes: nothing
 # Exit: 7 (always, to exercise exit-code passthrough)
 set -euo pipefail
 exit 7
 FIXTURE
-chmod +x "$FIX/workflows/exit-code-test.sh"
+chmod +x "$FIX/workflows/exit-code-test/run.sh"
 
 OUT=$("$FIX/shai-workflow" run echo-test hello world 2>&1)
 RC=$?

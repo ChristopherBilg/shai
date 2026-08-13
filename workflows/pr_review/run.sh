@@ -1,12 +1,12 @@
 #!/bin/bash
-# pr_review.sh — review a GitHub pull request via LLM and post a draft review
-# Usage: workflows/pr_review.sh <repo> <number>
+# run.sh — review a GitHub pull request via LLM and post a draft review
+# Usage: workflows/pr_review/run.sh <repo> <number>
 # Reads: ANTHROPIC_API_KEY from environment; prompts/pr_review.txt for review instructions
 # Writes: pending GitHub review with inline comments; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
-source "$(dirname "$0")/../lib/workflow.sh"
+source "$(dirname "$0")/../../lib/workflow.sh"
 
 if [ "$#" -ne 2 ]; then
   printf 'Usage: pr_review.sh <repo> <number>\n' >&2
@@ -28,7 +28,7 @@ fi
 
 wf_init
 
-WF_POLICY="$(dirname "$0")/pr_review.policy.json"
+WF_POLICY="$(dirname "$0")/policy.json"
 if [ -f "$WF_POLICY" ]; then
   export SHAI_POLICY_OVERLAY="$WF_POLICY"
 fi

@@ -1,12 +1,12 @@
 #!/bin/bash
-# heartbeat.sh — exercise the full pipeline and report pass/fail
-# Usage: workflows/heartbeat.sh
+# run.sh — exercise the full pipeline and report pass/fail
+# Usage: workflows/heartbeat/run.sh
 # Reads: ANTHROPIC_API_KEY from environment
 # Writes: timestamped pass/fail line to stderr; ephemeral session log (prunable)
 # Exit: 0 on pipeline success; 1 on pipeline failure
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
-source "$(dirname "$0")/../lib/workflow.sh"
+source "$(dirname "$0")/../../lib/workflow.sh"
 
 wf_init
 
