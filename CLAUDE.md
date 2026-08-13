@@ -331,7 +331,3 @@ Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
 `tests/install-lint-tools.sh` and checksum-verified against `tests/lint-tools.sha256`
 (trust-on-first-use).
 
-## Design reference
-
-Note: `README.md` points to a `docs/superpowers/specs/...` design path that is gitignored
-and not committed to this repo. Deferred beyond the MVP: streaming, concurrency, and MCP.
