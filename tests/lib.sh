@@ -80,6 +80,15 @@ write_gh_stub() {
   chmod +x "$STUB/gh"
 }
 
+# write_git_stub: git that echoes a recognizable line including its args.
+write_git_stub() {
+  {
+    printf '#!/bin/bash\n'
+    printf 'echo "stub git output for: $*"\n'
+  } >"$STUB/git"
+  chmod +x "$STUB/git"
+}
+
 # write_roundtrip_curl_stub <dir>: stateful curl stub for a full tool round-trip.
 # First call returns a list_directory tool_use, second returns end_turn text.
 # Exports SHAI_ROUND_COUNT (the counter file); callers unset it when done.

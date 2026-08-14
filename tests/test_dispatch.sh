@@ -8,6 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "shai-dispatch"
 make_stub_bin
 write_gh_stub
+write_git_stub
 
 DEFAULT_MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
 [ -n "$DEFAULT_MAX_BYTES" ] || {
@@ -93,6 +94,15 @@ GITEMPTY=$(jq -nc '{type:"message",source:"assistant",payload:{content:[{type:"t
 GITEMPTYOUT=$(echo "$GITEMPTY" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
 assert_contains "$GITEMPTYOUT" '"is_error":true' "dispatch: git empty args → is_error true"
 assert_contains "$GITEMPTYOUT" 'must not be empty' "dispatch: git empty args → clear message"
+
+# new: git positive path — multiple args arrive as distinct argv entries via the stub
+GITTOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"gt1","name":"git","input":{"args":["log","--oneline","-5"]}}],"stop_reason":"tool_use"}}'
+GITOUT=$(echo "$GITTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
+GITRC=$?
+assert_eq "$GITRC" "1" "dispatch: git tool exit 1"
+assert_contains "$GITOUT" 'stub git output for: log --oneline -5' "dispatch: git args passed as argv array"
+assert_eq "$(printf '%s' "$GITOUT" | jq -r '.payload.is_error')" "false" "dispatch: git success → is_error false"
+assert_contains "$GITOUT" '<external_data source=\"git\">' "dispatch: git tool_result wrapped with source"
 
 # new: successful real tool sets is_error:false (list_directory on a temp dir)
 TMPD="$(mktemp -d)"
