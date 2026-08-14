@@ -268,7 +268,7 @@ explicit `default` is set, the fallback is per-tool: a tool whose `tool.json` de
 Overlay rules are checked **before** base rules and intentionally supersede them, including
 `deny`. This lets workflows grant the tools they need without requiring the user to modify their
 base policy. Workflows set this automatically via a co-located `<name>/policy.json` file (e.g.
-`workflows/pr_review/policy.json`). When unset or pointing to a nonexistent file, behavior is
+`workflows/pr_reviewer/policy.json`). When unset or pointing to a nonexistent file, behavior is
 identical to before.
 
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`

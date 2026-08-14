@@ -1,7 +1,7 @@
 #!/bin/bash
-# pr_review/run.sh — review a GitHub pull request via LLM and post a draft review
-# Usage: workflows/pr_review/run.sh <repo> <number>
-# Reads: ANTHROPIC_API_KEY from environment; prompts/pr_review.txt for review instructions
+# pr_reviewer/run.sh — review a GitHub pull request via LLM and post a draft review
+# Usage: workflows/pr_reviewer/run.sh <repo> <number>
+# Reads: ANTHROPIC_API_KEY from environment; prompts/pr_reviewer.txt for review instructions
 # Writes: pending GitHub review with inline comments; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error
 set -euo pipefail
@@ -9,7 +9,7 @@ set -euo pipefail
 source "$(dirname "$0")/../../lib/workflow.sh"
 
 if [ "$#" -ne 2 ]; then
-  printf 'Usage: workflows/pr_review/run.sh <repo> <number>\n' >&2
+  printf 'Usage: workflows/pr_reviewer/run.sh <repo> <number>\n' >&2
   exit 2
 fi
 
@@ -33,7 +33,7 @@ if [ -f "$WF_POLICY" ]; then
   export SHAI_POLICY_OVERLAY="$WF_POLICY"
 fi
 
-PROMPT_TEMPLATE=$("$DIR/shai-prompt" pr_review) || wf_fail "cannot load prompts/pr_review.txt"
+PROMPT_TEMPLATE=$("$DIR/shai-prompt" pr_reviewer) || wf_fail "cannot load prompts/pr_reviewer.txt"
 
 PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g")
 
