@@ -300,6 +300,21 @@ changes, commits, pushes, and creates a draft PR with `Closes #<number>` in the 
 `wf_seen`/`wf_mark` for idempotency. Exit 0 on success (including idempotent skip), 1 on failure,
 2 on usage error.
 
+**`workflows/issue_dispatcher/run.sh`** is a pure-bash dispatcher (no LLM calls — the LLM work
+happens inside `issue_worker`). It runs as a `shai-supervise` timer job, globally searching every
+repo via `gh search issues --assignee @me --label shai-issue-worker --state open` for open issues
+assigned to the authenticated user. For each match it checks the `wf_seen`/`wf_mark` ledger (safety
+net, key `issue:<repo>:<number>`), **removes the `shai-issue-worker` label before dispatch** (the
+primary dedup — an issue is never reprocessed even if the worker crashes; a human must re-apply the
+label to retry), then delegates to `shai-workflow run issue_worker <repo> <number>` and marks the
+ledger on success. All matching issues are processed sequentially per invocation. `SHAI_WORKFLOW`
+overrides the `shai-workflow` binary (used by the test suite). Error handling: no matches → exit 0
+(idle tick); `gh search` failure → `wf_fail`/exit 1 (next tick retries); label removal failure for
+one issue → warn, skip, continue (label stays for retry); worker failure → label already removed,
+ledger left unmarked (re-label to retry). Install via
+`shai-supervise install workflows/issue_dispatcher/run.sh --interval 15min`. Exit 0 on success
+(including idle tick), 1 on search failure.
+
 ## Conventions to preserve
 
 - Every runtime script (`shai-repl`, `shai-*`, and each `tools/*/run.sh`) starts with `#!/bin/bash` +
