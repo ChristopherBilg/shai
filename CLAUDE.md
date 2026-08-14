@@ -300,6 +300,21 @@ changes, commits, pushes, and creates a draft PR with `Closes #<number>` in the 
 `wf_seen`/`wf_mark` for idempotency. Exit 0 on success (including idempotent skip), 1 on failure,
 2 on usage error.
 
+**`workflows/issue_dispatcher/run.sh`** is a pure-bash driver (no LLM calls) that automates the
+`issue_worker` pipeline. Meant to run as a `shai-supervise` timer job, it globally searches GitHub
+(`gh search issues --assignee @me --label shai-issue-worker --state open`, across all repos) for
+open issues assigned to the authenticated user carrying the `shai-issue-worker` label. For each
+match it removes the label **before** dispatch (so a crashed worker never re-triggers on the next
+tick — a maintainer must re-apply the label to retry), then delegates to `shai-workflow run
+issue_worker <repo> <number>` and, on success, records the issue in the `wf_seen`/`wf_mark` ledger
+(key `issue:<repo>:<number>`) as a safety net. Idempotency is dual: label removal is the primary
+dedup, the ledger the fallback. Error handling per the flow: no matches → exit 0 (idle tick); `gh
+search` failure → `wf_fail`, exit 1 (next tick retries); a single issue's label-removal failure →
+warn and skip (label stays for retry); a single `issue_worker` failure → warn and continue (label
+already removed, ledger intentionally not marked). Install with `shai-supervise install
+workflows/issue_dispatcher/run.sh --interval 15min`. Exit 0 on success (including no matches), 1 on
+search failure.
+
 ## Conventions to preserve
 
 - Every runtime script (`shai-repl`, `shai-*`, and each `tools/*/run.sh`) starts with `#!/bin/bash` +
