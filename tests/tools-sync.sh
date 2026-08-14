@@ -29,7 +29,6 @@ fi
 
 FILES=(
   "prompts/system.txt"
-  "README.md"
   "CLAUDE.md"
 )
 

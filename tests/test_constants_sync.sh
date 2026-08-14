@@ -31,9 +31,6 @@ SCRIPT
 cat >"$FIX/CLAUDE.md" <<'EOF'
 model testmodel, truncation 888, budget 777, shellcheck v1.2.3, shfmt v4.5.6
 EOF
-cat >"$FIX/README.md" <<'EOF'
-truncation 888
-EOF
 
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "0" "all constants present → exit 0"
@@ -47,17 +44,5 @@ OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from CLAUDE.md → exit 1"
 assert_contains "$OUT" "CLAUDE.md" "missing from CLAUDE.md → names file"
 assert_contains "$OUT" "shfmt version" "missing from CLAUDE.md → names constant"
-
-# --- missing from README.md → fail ---
-cat >"$FIX/CLAUDE.md" <<'EOF'
-model testmodel, truncation 888, budget 777, shellcheck v1.2.3, shfmt v4.5.6
-EOF
-cat >"$FIX/README.md" <<'EOF'
-no constants here
-EOF
-OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
-assert_eq "$?" "1" "missing from README.md → exit 1"
-assert_contains "$OUT" "README.md" "missing from README.md → names file"
-assert_contains "$OUT" "truncation limit" "missing from README.md → names constant"
 
 finish

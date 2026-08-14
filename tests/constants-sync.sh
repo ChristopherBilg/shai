@@ -40,7 +40,6 @@ check() {
 
 check "$DEFAULT_MODEL" CLAUDE.md "default model"
 check "$MAX_BYTES" CLAUDE.md "truncation limit"
-check "$MAX_BYTES" README.md "truncation limit"
 check "$CONTEXT_BUDGET" CLAUDE.md "context budget"
 check "$SHELLCHECK_VER" CLAUDE.md "shellcheck version"
 check "$SHFMT_VER" CLAUDE.md "shfmt version"

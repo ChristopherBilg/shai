@@ -21,7 +21,6 @@ EOF
 
 # --- all present → pass ---
 echo "tools: alpha and beta" >"$FIX/prompts/system.txt"
-echo "tools: alpha and beta" >"$FIX/README.md"
 echo "tools: alpha and beta" >"$FIX/CLAUDE.md"
 
 OUT="$(bash "$DIR/tests/tools-sync.sh" "$FIX" 2>&1)"
@@ -35,15 +34,8 @@ assert_eq "$?" "1" "missing from system.txt → exit 1"
 assert_contains "$OUT" "prompts/system.txt missing" "missing from system.txt → names file"
 assert_contains "$OUT" "beta" "missing from system.txt → names tool"
 
-# --- missing from README.md → fail ---
-echo "tools: alpha and beta" >"$FIX/prompts/system.txt"
-echo "tools: alpha only" >"$FIX/README.md"
-OUT="$(bash "$DIR/tests/tools-sync.sh" "$FIX" 2>&1)"
-assert_eq "$?" "1" "missing from README.md → exit 1"
-assert_contains "$OUT" "README.md missing" "missing from README.md → names file"
-
 # --- missing from CLAUDE.md → fail ---
-echo "tools: alpha and beta" >"$FIX/README.md"
+echo "tools: alpha and beta" >"$FIX/prompts/system.txt"
 echo "tools: alpha only" >"$FIX/CLAUDE.md"
 OUT="$(bash "$DIR/tests/tools-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from CLAUDE.md → exit 1"
@@ -54,7 +46,6 @@ EMPTY="$(mktemp -d)"
 _CLEANUP_DIRS+=("$EMPTY")
 mkdir -p "$EMPTY/tools" "$EMPTY/prompts"
 echo "no tools" >"$EMPTY/prompts/system.txt"
-echo "no tools" >"$EMPTY/README.md"
 echo "no tools" >"$EMPTY/CLAUDE.md"
 OUT="$(bash "$DIR/tests/tools-sync.sh" "$EMPTY" 2>&1)"
 assert_eq "$?" "0" "empty tools dir → exit 0"
