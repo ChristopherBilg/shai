@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_dispatch.sh — unit tests for shai-dispatch
-# Covers: shai-dispatch — tool execution, truncation, exit codes, option-injection guarding
+# Covers: shai-dispatch — tool execution, truncation, exit codes, path-traversal guarding
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -15,20 +15,26 @@ DEFAULT_MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
   exit 1
 }
 
+# permissive policy for tools that the read-only heuristic doesn't auto-allow (gh is
+# capabilities.read_only:false, same as the write_file/patch_file/etc. tests further down).
+WRITE_HOME=$(mktemp -d)
+_CLEANUP_DIRS+=("$WRITE_HOME")
+printf '{"version":"1.0","default":"allow","rules":[]}' >"$WRITE_HOME/policy.json"
+
 # --- ported from tests/tests.sh:156-201 (no-tool exit 0, gh tool_result + exit 1,
 #     unknown tool is_error, MAX_BYTES truncation, multiple tool_use, backslash path,
-#     gh `--` option-injection guard) ---
+#     gh args passed through as an argv array) ---
 NOTOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn"}}'
 echo "$NOTOOL" | "$DIR/shai-dispatch" >/dev/null
 assert_eq "$?" "0" "dispatch: no-tool exit 0"
 
-TOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t1","name":"gh_pr_view","input":{"number":"123"}}],"stop_reason":"tool_use"}}'
-DOUT=$(echo "$TOOL" | "$DIR/shai-dispatch")
+TOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t1","name":"gh","input":{"args":["pr","view","123"]}}],"stop_reason":"tool_use"}}'
+DOUT=$(echo "$TOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
 DRC=$?
 assert_eq "$DRC" "1" "dispatch: tool exit 1"
 assert_contains "$DOUT" '"type":"tool_result"' "dispatch: emits tool_result"
 assert_contains "$DOUT" '"tool_use_id":"t1"' "dispatch: tool_use_id echoed"
-assert_contains "$DOUT" 'stub gh output' "dispatch: ran stubbed gh"
+assert_contains "$DOUT" 'stub gh output for: pr view 123' "dispatch: ran stubbed gh"
 
 UNK='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t9","name":"nope","input":{}}],"stop_reason":"tool_use"}}'
 # 2>/dev/null: "nope" isn't a built-in read-only tool, so with no policy file check_policy
@@ -71,10 +77,10 @@ SPTOOL=$(jq -nc --arg p "$SPDIR/$BSNAME" '{type:"message",source:"assistant",pay
 SPOUT=$(echo "$SPTOOL" | "$DIR/shai-dispatch")
 assert_contains "$SPOUT" 'PASSTHRU_OK' "dispatch: backslash path survives input passthrough"
 
-# regression: a model-supplied number like --web must be positional, not a gh flag
-INJ='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"inj","name":"gh_pr_view","input":{"number":"--web"}}],"stop_reason":"tool_use"}}'
-IOUT=$(echo "$INJ" | "$DIR/shai-dispatch")
-assert_contains "$IOUT" 'stub gh output for: pr view -- --web' "dispatch: gh number is positional (-- guards option injection)"
+# regression: a model-supplied arg like --web is passed through as-is (argv array, no -- guard)
+INJ='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"inj","name":"gh","input":{"args":["pr","view","--web"]}}],"stop_reason":"tool_use"}}'
+IOUT=$(echo "$INJ" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
+assert_contains "$IOUT" 'stub gh output for: pr view --web' "dispatch: gh args passed as argv array"
 
 # new: successful real tool sets is_error:false (list_directory on a temp dir)
 TMPD="$(mktemp -d)"
@@ -100,8 +106,8 @@ assert_contains "$TROUT" 'Invalid tool name' "dispatch: path traversal tool name
 # new: empty stdin → exit 0
 assert_exit 0 "dispatch: empty stdin → exit 0" -- bash -c 'printf "" | "'"$DIR"'/shai-dispatch"'
 
-# new: tool_result content is fenced with the tool name as source ($DOUT is a gh_pr_view result)
-assert_contains "$DOUT" '<external_data source=\"gh_pr_view\">' "dispatch: tool_result wrapped with source"
+# new: tool_result content is fenced with the tool name as source ($DOUT is a gh result)
+assert_contains "$DOUT" '<external_data source=\"gh\">' "dispatch: tool_result wrapped with source"
 assert_contains "$DOUT" '</external_data>' "dispatch: tool_result has a closing tag"
 
 # new: a tool whose output contains a closing tag has it neutralized (cannot escape the fence)
@@ -118,10 +124,8 @@ EVILTOOL2=$(jq -nc --arg p "$EVILD/evil2" '{type:"message",source:"assistant",pa
 EVIL2=$(echo "$EVILTOOL2" | "$DIR/shai-dispatch" | jq -r '.payload.content')
 assert_contains "$EVIL2" 'x [external_data] y' "dispatch: whitespace-variant closing tag neutralized"
 
-# --- write tool tests (require a permissive policy; not in the read-only allow list) ---
-WRITE_HOME=$(mktemp -d)
-_CLEANUP_DIRS+=("$WRITE_HOME")
-printf '{"version":"1.0","default":"allow","rules":[]}' >"$WRITE_HOME/policy.json"
+# --- write tool tests (require a permissive policy; not in the read-only allow list;
+#     WRITE_HOME was set up above, alongside the gh tests that need the same policy) ---
 
 # write_file: happy path
 WFDIR=$(mktemp -d)

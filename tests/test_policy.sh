@@ -101,8 +101,8 @@ PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"print_file","action":"al
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{}')
 assert_eq "$RES" "allow" "exact tool match, action allow → allow"
 
-PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"gh_pr_view","action":"deny"}]}')
-RES=$(SHAI_HOME="$PDIR" run_check_policy "gh_pr_view" '{}')
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"gh","action":"deny"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy "gh" '{}')
 assert_eq "$RES" "deny" "exact tool match, action deny → deny"
 
 # --- rule with args: exact match ---
@@ -173,8 +173,8 @@ assert_eq "$RES" "deny" "overlay: unmatched tool falls through to base"
 ODIR3=$(empty_home)
 OVERLAY3=$(mktemp)
 _CLEANUP_DIRS+=("$OVERLAY3")
-printf '{"rules":[{"tool":"gh_repo_clone","action":"allow"}]}' >"$OVERLAY3"
-RES=$(SHAI_HOME="$ODIR3" SHAI_POLICY_OVERLAY="$OVERLAY3" run_check_policy "gh_repo_clone" '{}')
+printf '{"rules":[{"tool":"gh","action":"allow"}]}' >"$OVERLAY3"
+RES=$(SHAI_HOME="$ODIR3" SHAI_POLICY_OVERLAY="$OVERLAY3" run_check_policy "gh" '{}')
 assert_eq "$RES" "allow" "overlay: works without base policy file"
 RES=$(SHAI_HOME="$ODIR3" SHAI_POLICY_OVERLAY="$OVERLAY3" run_check_policy "other_tool" '{}')
 assert_eq "$RES" "prompt" "overlay: unmatched tool with no base → prompt"
