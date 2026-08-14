@@ -1,14 +1,14 @@
 #!/bin/bash
 # issue_dispatcher/run.sh — poll GitHub for assigned issues and delegate each to issue_worker
 # Usage: workflows/issue_dispatcher/run.sh
-# Reads: gh auth from environment; searches open issues assigned to @me labeled shai-issue-worker
-# Writes: removes the shai-issue-worker label; dispatches shai-workflow run issue_worker; ephemeral session log (prunable)
+# Reads: gh auth from environment; searches open issues assigned to @me labeled shai-issue-dispatcher
+# Writes: removes the shai-issue-dispatcher label; dispatches shai-workflow run issue_worker; ephemeral session log (prunable)
 # Exit: 0 on success (including idle tick with no matches); 1 on failure
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
 source "$(dirname "$0")/../../lib/workflow.sh"
 
-LABEL="shai-issue-worker"
+LABEL="shai-issue-dispatcher"
 
 # The dispatcher shells out to `shai-workflow run issue_worker`. SHAI_WORKFLOW lets a test
 # substitute a stub for the real binary; production leaves it unset and uses $DIR/shai-workflow.
@@ -22,7 +22,7 @@ if [ -f "$WF_POLICY" ]; then
 fi
 
 # Global search across every repo for open issues assigned to the authenticated user and
-# carrying the shai-issue-worker label. --json emits an array of {repository:{nameWithOwner},number}.
+# carrying the shai-issue-dispatcher label. --json emits an array of {repository:{nameWithOwner},number}.
 SEARCH_JSON=$(gh search issues --assignee @me --label "$LABEL" --state open --limit 100 --json repository,number) ||
   wf_fail "gh search failed"
 

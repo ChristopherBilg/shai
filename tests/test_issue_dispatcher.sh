@@ -97,8 +97,8 @@ OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
 RC=$?
 assert_eq "$RC" "0" "issue_dispatcher: exit 0 on successful dispatch"
 assert_contains "$OUT" "dispatched owner/repo#42" "issue_dispatcher: logs the dispatch"
-assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-worker" \
-  "issue_dispatcher: removes the shai-issue-worker label"
+assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-dispatcher" \
+  "issue_dispatcher: removes the shai-issue-dispatcher label"
 assert_contains "$(cat "$WORKER_LOG")" "owner/repo 42" \
   "issue_dispatcher: delegates to issue_worker with repo and number"
 assert_eq "$(grep -c 'OVERLAY=' "$WORKER_LOG" 2>/dev/null || true)" "0" \
@@ -140,7 +140,7 @@ assert_eq "$RC" "0" "issue_dispatcher: exit 0 when only match is already seen"
 assert_contains "$OUT" "skipped=1" "issue_dispatcher: summary counts the skip"
 assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
   "issue_dispatcher: already-seen issue is not dispatched"
-assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-worker" \
+assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-dispatcher" \
   "issue_dispatcher: already-seen issue still has label removed"
 
 # --- label removal failure: skip and continue, label stays for retry, no dispatch ---
@@ -175,7 +175,7 @@ OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
 RC=$?
 assert_eq "$RC" "1" "issue_dispatcher: exit 1 when all dispatches fail (worker failure)"
 assert_contains "$OUT" "WARNING" "issue_dispatcher: warns when worker fails"
-assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-worker" \
+assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-dispatcher" \
   "issue_dispatcher: label was still removed before the failing worker ran"
 if [ -f "$SHAI_HOME/ledgers/issue_dispatcher.jsonl" ] &&
   grep -q '"issue:owner/repo:77"' "$SHAI_HOME/ledgers/issue_dispatcher.jsonl"; then
