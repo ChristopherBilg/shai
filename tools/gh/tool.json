@@ -1,0 +1,21 @@
+{
+  "name": "gh",
+  "description": "Run a GitHub CLI (gh) command. Pass the subcommand and arguments as an array of strings.",
+  "capabilities": {
+    "read_only": false,
+    "requires": {
+      "tools": ["gh"]
+    }
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Arguments to pass to gh, e.g. [\"pr\", \"view\", \"123\"]."
+      }
+    },
+    "required": ["args"]
+  }
+}
