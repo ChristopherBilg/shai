@@ -9,9 +9,9 @@ input="$1"
 seconds=$(printf '%s' "$input" | jq -r '.seconds')
 
 if ! [[ "$seconds" =~ ^[0-9]+$ ]] || [ "$seconds" -lt 1 ] || [ "$seconds" -gt 300 ]; then
-  echo "error: seconds must be an integer between 1 and 300 (got \"$seconds\")"
+  printf 'error: seconds must be an integer between 1 and 300 (got "%s")\n' "$seconds"
   exit 1
 fi
 
 sleep "$seconds"
-echo "slept ${seconds}s"
+printf 'slept %ss\n' "$seconds"
