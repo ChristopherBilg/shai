@@ -293,6 +293,13 @@ with a canned prompt, checks the reply is an `assistant` message, and prints a t
 PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run periodically via
 `shai-supervise install workflows/heartbeat/run.sh`. Exit 0 on pipeline success, 1 on failure.
 
+**`workflows/issue_worker/run.sh`** takes `<repo> <number>`, fetches the GitHub issue metadata
+(title, body, labels), derives a branch name (`shai/<number>-<slug>`), and calls `wf_llm --tools`
+with a goal-oriented prompt. The LLM clones the repo, explores the codebase, implements the
+changes, commits, pushes, and creates a draft PR with `Closes #<number>` in the body. Uses
+`wf_seen`/`wf_mark` for idempotency. Exit 0 on success (including idempotent skip), 1 on failure,
+2 on usage error.
+
 ## Conventions to preserve
 
 - Every runtime script (`shai-repl`, `shai-*`, and each `tools/*/run.sh`) starts with `#!/bin/bash` +
