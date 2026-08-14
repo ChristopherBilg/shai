@@ -82,6 +82,12 @@ INJ='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_
 IOUT=$(echo "$INJ" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
 assert_contains "$IOUT" 'stub gh output for: pr view --web' "dispatch: gh args passed as argv array"
 
+# new: gh with an empty args array → is_error, exercising the empty-args guard in tools/gh/run.sh
+GHEMPTY=$(jq -nc '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"ge1",name:"gh",input:{args:[]}}],stop_reason:"tool_use"}}')
+GHEMPTYOUT=$(echo "$GHEMPTY" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_contains "$GHEMPTYOUT" '"is_error":true' "dispatch: gh empty args → is_error true"
+assert_contains "$GHEMPTYOUT" 'must not be empty' "dispatch: gh empty args → clear message"
+
 # new: successful real tool sets is_error:false (list_directory on a temp dir)
 TMPD="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMPD")

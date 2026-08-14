@@ -6,9 +6,13 @@
 # Exit: 0 on success, 1 on failure
 set -euo pipefail
 input="$1"
-mapfile -t args < <(printf '%s' "$input" | jq -r '.args[]')
+# NUL-delimited framing: jq -j (no auto-newline) appends a NUL byte after every element
+# (`[0] | implode` builds a one-character NUL string), and `mapfile -d ''` splits on NUL.
+# A plain `jq -r '.args[]'` (newline-delimited) would silently split an argument value
+# that itself contains a newline into two argv entries.
+mapfile -t -d '' args < <(printf '%s' "$input" | jq -j '.args[] | . + ([0] | implode)')
 if [ "${#args[@]}" -eq 0 ]; then
   echo "error: args array must not be empty"
   exit 1
 fi
-timeout 30s gh "${args[@]}" 2>&1
+timeout 120s gh "${args[@]}" 2>&1
