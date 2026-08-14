@@ -35,3 +35,17 @@ Clone {{REPO}}, create branch `{{BRANCH_NAME}}` from the default branch, impleme
 - Do not modify files unrelated to the issue.
 - If the issue description is unclear or ambiguous, document your interpretation in the PR body.
 - Clone the repository into /tmp/ with a randomly generated directory name to avoid collisions (e.g. /tmp/issue-worker-XXXXX).
+
+## Continuous Integration
+
+After creating the draft pull request, verify that CI checks pass on the branch:
+
+1. Poll CI status: `gh pr checks <PR_NUMBER> --repo {{REPO}}`.
+2. If any checks are still pending, use the `sleep` tool to wait 30 seconds, then re-check. Continue polling until all checks resolve or you have polled for roughly 6 minutes total.
+3. If all checks pass, you are done.
+4. If any checks fail:
+   a. Identify the failed workflow run ID from the output.
+   b. Read the failure logs: `gh run view <RUN_ID> --repo {{REPO}} --log-failed`.
+   c. Fix the failing code, commit the fix, and push.
+   d. Return to step 1 to re-check CI.
+5. You may attempt up to 3 fix-and-push cycles. If CI still fails after 3 attempts, update the pull request body to append a "## CI Failures" section listing each failing check, the relevant log output, and what you tried. Then stop.
