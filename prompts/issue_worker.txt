@@ -34,4 +34,4 @@ Clone {{REPO}}, create branch `{{BRANCH_NAME}}` from the default branch, impleme
 - If the repository has tests, run them before committing. If tests fail, either fix them or note the failures in the PR body.
 - Do not modify files unrelated to the issue.
 - If the issue description is unclear or ambiguous, document your interpretation in the PR body.
-- Clone the repository into a temporary directory with a randomly generated name to avoid collisions.
+- Clone the repository into /tmp/ with a randomly generated directory name to avoid collisions (e.g. /tmp/issue-worker-XXXXX).
