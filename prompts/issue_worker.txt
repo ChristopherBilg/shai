@@ -29,6 +29,7 @@ Clone {{REPO}}, create branch `{{BRANCH_NAME}}` from the default branch, impleme
 
 - Use branch name `{{BRANCH_NAME}}` exactly.
 - Create the pull request as a **draft**.
+- Add the label `shai-review-dispatcher` to the pull request so it is automatically queued for review.
 - The PR body must include `Closes #{{NUMBER}}` so the issue auto-closes on merge.
 - Use conventional-commits style for commit messages (`fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, `test:`). Choose the prefix that matches the nature of the change.
 - If the repository has tests, run them before committing. If tests fail, either fix them or note the failures in the PR body.
