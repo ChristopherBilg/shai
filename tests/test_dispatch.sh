@@ -173,6 +173,20 @@ WFOTOOL=$(jq -nc --arg p "$WFDIR/overwrite.txt" '{type:"message",source:"assista
 echo "$WFOTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch" >/dev/null
 assert_eq "$(cat "$WFDIR/overwrite.txt")" "new content" "dispatch: write_file overwrites existing file"
 
+# write_file: trailing newline preserved when content ends with \n
+WFNL="$WFDIR/newline.txt"
+WFNLTOOL=$(jq -nc --arg p "$WFNL" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"wfn1",name:"write_file",input:{path:$p,content:"hello\n"}}],stop_reason:"tool_use"}}')
+echo "$WFNLTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch" >/dev/null
+assert_eq "$(wc -c < "$WFNL" | tr -d ' ')" "6" "dispatch: write_file trailing newline → correct byte count"
+assert_eq "$(tail -c1 "$WFNL" | xxd -p)" "0a" "dispatch: write_file trailing newline → last byte is 0x0a"
+
+# write_file: no trailing newline when content lacks \n
+WFNONL="$WFDIR/no-newline.txt"
+WFNONLTOOL=$(jq -nc --arg p "$WFNONL" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"wfn2",name:"write_file",input:{path:$p,content:"hello"}}],stop_reason:"tool_use"}}')
+echo "$WFNONLTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch" >/dev/null
+assert_eq "$(wc -c < "$WFNONL" | tr -d ' ')" "5" "dispatch: write_file no trailing newline → correct byte count"
+assert_eq "$(tail -c1 "$WFNONL" | xxd -p)" "6f" "dispatch: write_file no trailing newline → last byte is 'o'"
+
 # patch_file: happy path
 PFDIR=$(mktemp -d)
 _CLEANUP_DIRS+=("$PFDIR")
@@ -186,6 +200,14 @@ assert_eq "$(cat "$PFDIR/target.txt")" "line one
 replaced
 line three" "dispatch: patch_file replaces old_string, preserves surrounding content"
 assert_contains "$PFOUT" 'Patched' "dispatch: patch_file reports success"
+
+# patch_file: trailing newline in old_string and new_string preserved
+printf 'hello\nworld\n' >"$PFDIR/nl-target.txt"
+PFNLTOOL=$(jq -nc --arg p "$PFDIR/nl-target.txt" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"pfn1",name:"patch_file",input:{path:$p,old_string:"world\n",new_string:"earth\n"}}],stop_reason:"tool_use"}}')
+PFNLOUT=$(echo "$PFNLTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
+assert_eq "$(printf '%s' "$PFNLOUT" | jq -r '.payload.is_error')" "false" "dispatch: patch_file trailing newline → is_error false"
+assert_eq "$(wc -c < "$PFDIR/nl-target.txt" | tr -d ' ')" "12" "dispatch: patch_file trailing newline → correct byte count"
+assert_eq "$(tail -c1 "$PFDIR/nl-target.txt" | xxd -p)" "0a" "dispatch: patch_file trailing newline → last byte is 0x0a"
 
 # patch_file: empty old_string is rejected before it ever reaches awk (guards an infinite loop:
 # index(s, "") never advances, so the counting loop would spin forever without this check).
