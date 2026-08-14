@@ -4,7 +4,7 @@ You are reviewing pull request #{{NUMBER}} on {{REPO}}.
 
 1. Use gh to view PR #{{NUMBER}} on {{REPO}} — read the title, body, and diff.
 2. Use gh to read any existing review comments on the PR (avoid duplicating them).
-3. Use gh to clone {{REPO}} to a temporary directory. Use a randomly generated name for the directory to avoid collisions.
+3. Use gh to clone {{REPO}} to /tmp/ with a randomly generated directory name to avoid collisions (e.g. /tmp/pr-review-XXXXX).
 4. Use gh to check out PR #{{NUMBER}} in the cloned repo.
 5. Use print_file and list_directory to read source files in the cloned repo — focus on changed files and their surrounding context.
 6. If the PR description or comments reference a Jira ticket (e.g. PROJ-123), call jira_issue_view to fetch context.
