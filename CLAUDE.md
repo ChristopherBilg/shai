@@ -63,13 +63,13 @@ windowing, default `1300000`), `SHAI_UNIT_DIR` (systemd unit directory, default
 **Ambient trace context** — set by `shai-repl`/`shai-retry`, inherited by every child filter, read only
 by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its request dump):
 
-| Variable | Scope | Notes |
-|---|---|---|
-| `SHAI_SCHEMA_VERSION` | constant | defaults to `1.0` |
-| `SHAI_SESSION_ID` | one REPL launch (or one `shai-retry` invocation) | **an inherited value always wins** — an nvim/tmux/cron wrapper owns the session |
-| `SHAI_RUN_ID` | one user turn | minted per turn, not per launch |
-| `SHAI_SPAN_ID` | one eval iteration | plus the tool results that eval requested |
-| `SHAI_PARENT_SPAN_ID` | previous span | forms a linear chain within a run |
+| Variable              | Scope                                            | Notes                                                                           |
+| --------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `SHAI_SCHEMA_VERSION` | constant                                         | defaults to `1.0`                                                               |
+| `SHAI_SESSION_ID`     | one REPL launch (or one `shai-retry` invocation) | **an inherited value always wins** — an nvim/tmux/cron wrapper owns the session |
+| `SHAI_RUN_ID`         | one user turn                                    | minted per turn, not per launch                                                 |
+| `SHAI_SPAN_ID`        | one eval iteration                               | plus the tool results that eval requested                                       |
+| `SHAI_PARENT_SPAN_ID` | previous span                                    | forms a linear chain within a run                                               |
 
 Unset variables become explicit `null`s, so hand-run pipelines work with no ambient context.
 State gains `runs/<run_id>/events.jsonl`, `runs/<run_id>/<span_id>-request.json`, and
@@ -89,13 +89,13 @@ State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-o
 
 **The event schema is the contract between every script.** Records in `sessions/<session_id>.jsonl`:
 
-| type + source | payload | written by |
-|---|---|---|
-| `message` / `user` | `{text}` | `shai-read` |
-| `message` / `system` | `{text}` (the seeded system prompt) | `shai-read --system` |
-| `message` / `assistant` | `{content:[...], stop_reason}` (raw Anthropic content array) | `shai-eval` |
-| `tool_result` / `tool` | `{tool_use_id, content, is_error}` | `shai-dispatch` |
-| `error` / `system` | `{text}` | `shai-eval` |
+| type + source           | payload                                                      | written by           |
+| ----------------------- | ------------------------------------------------------------ | -------------------- |
+| `message` / `user`      | `{text}`                                                     | `shai-read`          |
+| `message` / `system`    | `{text}` (the seeded system prompt)                          | `shai-read --system` |
+| `message` / `assistant` | `{content:[...], stop_reason}` (raw Anthropic content array) | `shai-eval`          |
+| `tool_result` / `tool`  | `{tool_use_id, content, is_error}`                           | `shai-dispatch`      |
+| `error` / `system`      | `{text}`                                                     | `shai-eval`          |
 
 Assistant events additionally carry an **`api` key** (added by `shai-eval`, not by `shai-stamp`):
 `{message_id, model, usage: {input_tokens, output_tokens}, latency_ms}`. This is a top-level
@@ -302,9 +302,9 @@ changes, commits, pushes, and creates a draft PR with `Closes #<number>` in the 
 
 **`workflows/issue_dispatcher/run.sh`** is a pure-bash dispatcher (no LLM calls — the LLM work
 happens inside `issue_worker`). It runs as a `shai-supervise` timer job, globally searching every
-repo via `gh search issues --assignee @me --label shai-issue-worker --state open` for open issues
+repo via `gh search issues --assignee @me --label shai-issue-dispatcher --state open` for open issues
 assigned to the authenticated user. For each match it checks the `wf_seen`/`wf_mark` ledger (safety
-net, key `issue:<repo>:<number>`), **removes the `shai-issue-worker` label before dispatch** (the
+net, key `issue:<repo>:<number>`), **removes the `shai-issue-dispatcher` label before dispatch** (the
 primary dedup — an issue is never reprocessed even if the worker crashes; a human must re-apply the
 label to retry), then delegates to `shai-workflow run issue_worker <repo> <number>` and marks the
 ledger on success. All matching issues are processed sequentially per invocation. `SHAI_WORKFLOW`
@@ -361,4 +361,3 @@ tests that hit the network.
 Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
 `tests/install-lint-tools.sh` and checksum-verified against `tests/lint-tools.sha256`
 (trust-on-first-use).
-
