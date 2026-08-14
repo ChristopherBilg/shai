@@ -41,6 +41,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `jira_issue_view` — view a Jira issue (read-only)
 - `list_directory` — list the files and folders in a local directory (read-only)
 - `print_file` — print the contents of a local file (read-only)
+- `sleep` — pause execution for a specified number of seconds, 1-300 (read-only)
 - `write_file` — create or overwrite a file with given content, creating parent directories as needed (write, requires approval)
 - `patch_file` — replace a unique string in an existing file; the string must appear exactly once (write, requires approval)
 - `delete_file` — delete a file; the file must exist and must not be a directory (write, requires approval)
