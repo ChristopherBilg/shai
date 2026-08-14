@@ -1,6 +1,6 @@
 {
   "rules": [
     { "tool": "gh", "action": "allow" },
-    { "tool": "git_checkout_pr", "action": "allow" }
+    { "tool": "git", "action": "allow" }
   ]
 }

@@ -44,7 +44,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `write_file` — create or overwrite a file with given content, creating parent directories as needed (write, requires approval)
 - `patch_file` — replace a unique string in an existing file; the string must appear exactly once (write, requires approval)
 - `delete_file` — delete a file; the file must exist and must not be a directory (write, requires approval)
-- `git_checkout_pr` — check out a pull request branch in a local repository (write, requires approval)
+- `git` — run any Git command via a pre-tokenized argument array (write, requires approval)
 
 Each tool is a directory under `tools/<name>/` with a `tool.json` (Anthropic schema) and a `run.sh`. Outputs are truncated to 32000 bytes before entering context.
 

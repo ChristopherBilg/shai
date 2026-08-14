@@ -1,0 +1,21 @@
+{
+  "name": "git",
+  "description": "Run a Git command. Pass the subcommand and arguments as an array of strings.",
+  "capabilities": {
+    "read_only": false,
+    "requires": {
+      "tools": ["git"]
+    }
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Arguments to pass to git, e.g. [\"status\"], [\"diff\", \"--stat\"], [\"log\", \"--oneline\", \"-5\"]."
+      }
+    },
+    "required": ["args"]
+  }
+}
