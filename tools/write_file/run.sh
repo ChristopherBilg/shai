@@ -7,7 +7,8 @@
 set -euo pipefail
 input="$1"
 path=$(printf '%s' "$input" | jq -r '.path')
-content=$(printf '%s' "$input" | jq -r '.content')
+content=$(printf '%s' "$input" | jq -rj '.content'; printf x)
+content=${content%x}
 mkdir -p -- "$(dirname "$path")" 2>&1 || {
   printf 'cannot create parent directory for %s' "$path"
   exit 1

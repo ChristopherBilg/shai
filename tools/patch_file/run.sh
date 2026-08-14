@@ -7,12 +7,14 @@
 set -euo pipefail
 input="$1"
 path=$(printf '%s' "$input" | jq -r '.path')
-old_string=$(printf '%s' "$input" | jq -r '.old_string')
+old_string=$(printf '%s' "$input" | jq -rj '.old_string'; printf x)
+old_string=${old_string%x}
 if [ -z "$old_string" ]; then
   printf 'old_string must not be empty'
   exit 1
 fi
-new_string=$(printf '%s' "$input" | jq -r '.new_string')
+new_string=$(printf '%s' "$input" | jq -rj '.new_string'; printf x)
+new_string=${new_string%x}
 if [ ! -f "$path" ]; then
   printf 'file not found: %s' "$path"
   exit 1
