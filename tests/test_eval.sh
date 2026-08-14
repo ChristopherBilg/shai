@@ -45,7 +45,7 @@ assert_eq "$(printf '%s' "$WITHSYS" | jq -r '.system')" "S" "eval: non-empty sys
 make_stub_bin
 
 write_curl_stub 200 <<'STUB'
-{"id":"msg_test123","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"stub reply"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
+{"id":"msg_test123","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"stub reply"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
 STUB
 EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
@@ -134,7 +134,7 @@ assert_eq "$(find "$HCHOME/runs" -name '*-request.json' 2>/dev/null | wc -l | tr
 
 # an unwritable SHAI_HOME must not break the call (best-effort dump)
 make_stub_bin
-printf '%s' '{"id":"msg_uw","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}' | write_curl_stub 200
+printf '%s' '{"id":"msg_uw","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}' | write_curl_stub 200
 UNWRITABLE="$(mktemp)" # a regular file — mkdir -p over it fails
 _CLEANUP_DIRS+=("$UNWRITABLE")
 EVUW=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_HOME="$UNWRITABLE" "$DIR/shai-eval")
@@ -146,7 +146,7 @@ assert_eq "$RC" "0" "eval: unwritable SHAI_HOME still exits 0"
 EVH="$(mktemp -d)"
 _CLEANUP_DIRS+=("$EVH")
 write_curl_stub 200 <<'JSON'
-{"id":"msg_dump","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
+{"id":"msg_dump","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
 JSON
 
 echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
@@ -185,11 +185,11 @@ assert_eq "$(printf '%s' "$OUT4" | jq -r '.source')" "assistant" \
 # --- response metadata: api key + response dump ------------------------------
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_test123","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
+{"id":"msg_test123","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.api.message_id')" "msg_test123" "api.message_id"
-assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "claude-opus-4-8-20250806" "api.model"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "claude-opus-5-20260801" "api.model"
 assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.input_tokens')" "100" "api.usage.input_tokens"
 assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.output_tokens')" "50" "api.usage.output_tokens"
 assert_contains "$(printf '%s' "$OUT" | jq '.api.latency_ms')" "" "api.latency_ms is present"
@@ -219,7 +219,7 @@ EVR1=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR1")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_resp","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}
+{"id":"msg_resp","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR1" SHAI_RUN_ID=run_resp_test SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
@@ -263,7 +263,7 @@ _CLEANUP_DIRS+=("$EVR3")
 touch "$EVR3/runs"
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_x","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
+{"id":"msg_x","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR3" SHAI_RUN_ID=run_unwrite SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
@@ -277,7 +277,7 @@ EVR4=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR4")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_ns","type":"message","role":"assistant","model":"claude-opus-4-8-20250806","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
+{"id":"msg_ns","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
 STUB
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR4" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
