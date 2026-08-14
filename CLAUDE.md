@@ -325,8 +325,8 @@ sequentially per invocation. `SHAI_WORKFLOW` overrides the `shai-workflow` binar
 test suite). Error handling: no matches → exit 0 (idle tick); `gh search` failure →
 `wf_fail`/exit 1 (next tick retries); label removal failure for one PR → warn, skip, continue
 (label stays for retry); worker failure → label already removed (re-label to retry). The
-`issue_worker` prompt instructs the LLM to add the `shai-review-dispatcher` label to draft PRs it
-creates, so PRs from `issue_worker` are automatically queued for review. Install via
+`issue_worker` prompt instructs the LLM to add the `shai-review-dispatcher` label to PRs it
+creates once CI passes, so PRs from `issue_worker` are automatically queued for review. Install via
 `shai-supervise install workflows/review_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
 
