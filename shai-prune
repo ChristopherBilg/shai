@@ -43,6 +43,7 @@ done
 if ! "$do_sessions" && ! "$do_runs" && ! "$do_ledgers"; then
   do_sessions=true
   do_runs=true
+  do_ledgers=true
 fi
 
 FIND_BEFORE=()

@@ -199,8 +199,8 @@ The scripts:
   `retry_of` in the envelope meta. Detects already-committed runs as no-ops.
 - **`shai-prune [--sessions] [--runs] [--ledgers] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
   retention: removes session log files, run directories, and/or workflow ledger files, optionally
-  filtered by date. Ledgers are excluded from the default (no-flags) prune — they must be
-  explicitly requested via `--ledgers`. Interactive prompts for confirmation; non-interactive skips it.
+  filtered by date. Ledgers are included in the default (no-flags) prune alongside sessions
+  and runs; `--ledgers` can still be passed alone to prune only ledgers. Interactive prompts for confirmation; non-interactive skips it.
 - **`shai-sessions [--recent N] [--after DATE] [--before DATE] [--json]`**
   (`shai-sessions:1`) — lists sessions from `$SHAI_HOME/sessions/*.jsonl` with event count,
   distinct run count, and total tokens (from `api.usage`). Human-readable table by default;

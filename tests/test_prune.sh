@@ -99,11 +99,11 @@ assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l
 assert_eq "$(find "$PHOME/runs/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "2" \
   "prune: --ledgers leaves runs untouched"
 
-# default prune (no flags) does NOT remove ledger files
+# default prune (no flags) removes ledger files too
 new_home_with_ledgers
 SHAI_HOME="$PHOME" "$DIR/shai-prune" </dev/null >/dev/null 2>&1
-assert_eq "$(find "$PHOME/ledgers/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "2" \
-  "prune: no flags leaves ledger files untouched"
+assert_eq "$(find "$PHOME/ledgers/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "prune: no flags removes ledger files"
 
 # --ledgers --before filters by mtime
 new_home_with_ledgers
