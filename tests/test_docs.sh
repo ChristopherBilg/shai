@@ -246,7 +246,7 @@ assert_eq "$RC" "1" "library: filename-only purpose fails"
 
 # --- workflow policy: valid .rules array ---
 mkdir -p "$FIX/workflows/good-policy"
-printf '{"rules":[{"tool":"gh_repo_clone","action":"allow"}]}\n' >"$FIX/workflows/good-policy/policy.json"
+printf '{"rules":[{"tool":"gh","action":"allow"}]}\n' >"$FIX/workflows/good-policy/policy.json"
 mkdir -p "$FIX/workflows/bad-policy"
 printf '{"not_rules":true}\n' >"$FIX/workflows/bad-policy/policy.json"
 

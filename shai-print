@@ -14,8 +14,8 @@ case "${1:-}" in
 esac
 
 # --dispatches joins tool args as an unescaped "key: value, ..." string, so a value
-# containing ", " or ")" would read ambiguously. Fine for the current read-only tools,
-# whose inputs are all scalars (number, repo, path).
+# containing ", " or ")" would read ambiguously. Non-scalar values (e.g. arrays) are
+# rendered as their JSON representation.
 jq -r --argjson debug "$DEBUG" --argjson dispatches "$DISPATCHES" '
   if .type == "message" and .source == "assistant" then
     (.payload.content[]? | select(.type=="text") | .text),
