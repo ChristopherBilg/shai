@@ -56,7 +56,7 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ```
 
 Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
-`SHAI_MODEL` (default `claude-opus-4-8`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
+`SHAI_MODEL` (default `claude-opus-5`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`).
 
