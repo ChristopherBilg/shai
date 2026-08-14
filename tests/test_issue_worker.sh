@@ -39,6 +39,16 @@ RC=$?
 assert_eq "$RC" "2" "issue_worker: exit 2 on non-numeric issue number"
 assert_contains "$OUT" "positive integer" "issue_worker: error names the constraint"
 
+# --- usage error: issue number zero ---
+OUT=$("$DIR/workflows/issue_worker/run.sh" owner/repo 0 2>&1)
+RC=$?
+assert_eq "$RC" "2" "issue_worker: exit 2 on issue number zero"
+
+# --- usage error: leading-zero issue number ---
+OUT=$("$DIR/workflows/issue_worker/run.sh" owner/repo 007 2>&1)
+RC=$?
+assert_eq "$RC" "2" "issue_worker: exit 2 on leading-zero issue number"
+
 make_stub_bin
 
 # gh stub that returns issue JSON for `issue view` and echoes args otherwise
@@ -146,8 +156,7 @@ EXPECT_BOUNDARY=$(printf 'shai/203-%s`' "$FORTYNINE_A")
 assert_contains "$REQ" "$EXPECT_BOUNDARY" \
   "issue_worker: trailing hyphen introduced by truncation is stripped"
 
-# empty title: known deferred edge case (docs: sdd progress notes) — empty slug, branch name
-# keeps the trailing hyphen from "shai/<n>-" + "" (still a valid git branch name)
+# empty title: slug defaults to "issue" so branch name is well-formed
 write_issue_worker_gh_stub "" "Body"
 printf '{"type":"message","content":[{"type":"text","text":"done."}],"stop_reason":"end_turn"}' |
   write_curl_stub 200
@@ -156,8 +165,8 @@ OUT=$("$DIR/workflows/issue_worker/run.sh" owner/repo 204 2>&1)
 RC=$?
 assert_eq "$RC" "0" "issue_worker: exit 0 for empty title"
 REQ=$(cat "$SHAI_HOME"/runs/*/span_1-request.json 2>/dev/null)
-assert_contains "$REQ" 'shai/204-`' \
-  "issue_worker: empty title yields empty slug (trailing hyphen retained)"
+assert_contains "$REQ" 'shai/204-issue`' \
+  "issue_worker: empty title defaults slug to issue"
 
 rm -rf "$SHAI_HOME/runs"
 rm -f "$SHAI_HOME/ledgers/issue_worker.jsonl"

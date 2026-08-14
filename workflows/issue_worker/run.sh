@@ -21,7 +21,7 @@ if [[ ! "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
   exit 2
 fi
 
-if [[ ! "$NUMBER" =~ ^[0-9]+$ ]]; then
+if [[ ! "$NUMBER" =~ ^[1-9][0-9]*$ ]]; then
   printf 'error: issue number must be a positive integer (got "%s")\n' "$NUMBER" >&2
   exit 2
 fi
@@ -41,6 +41,7 @@ ISSUE_BODY=$(printf '%s' "$ISSUE_JSON" | jq -r '.body // ""')
 ISSUE_LABELS=$(printf '%s' "$ISSUE_JSON" | jq -r '[.labels[].name] | join(", ")')
 
 SLUG=$(printf '%s' "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//' | cut -c1-50 | sed 's/-$//')
+SLUG="${SLUG:-issue}"
 BRANCH_NAME="shai/${NUMBER}-${SLUG}"
 
 # Issue content is attacker-controlled (anyone who can open an issue) and is spliced
@@ -50,7 +51,7 @@ BRANCH_NAME="shai/${NUMBER}-${SLUG}"
 # in all three fields (same regex shai-dispatch uses to sanitize tool_result content)
 # before they reach prompts/issue_worker.txt's <external_data> fences, so injected content
 # can't forge a closing tag and break out of the fence.
-ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | cut -c1-32000)
+ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | head -c 32000)
 
 ISSUE_TITLE=$(printf '%s' "$ISSUE_TITLE" | jq -Rrs 'gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")')
 ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | jq -Rrs 'gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")')
