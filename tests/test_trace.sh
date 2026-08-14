@@ -19,8 +19,8 @@ make_run_with_dumps() {
   mkdir -p "$SHAI_HOME/runs/$run_id"
   shift
   for event in "$@"; do printf '%s\n' "$event"; done >"$SHAI_HOME/runs/$run_id/events.jsonl"
-  printf '{"model":"claude-opus-4-8","messages":[]}' >"$SHAI_HOME/runs/$run_id/span_1-request.json"
-  printf '{"message_id":"msg_1","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":5},"latency_ms":100}' \
+  printf '{"model":"claude-opus-5","messages":[]}' >"$SHAI_HOME/runs/$run_id/span_1-request.json"
+  printf '{"message_id":"msg_1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":5},"latency_ms":100}' \
     >"$SHAI_HOME/runs/$run_id/span_1-response.json"
 }
 
@@ -31,7 +31,7 @@ make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hello"}' "$RID" "sess_test" "span_1")" \
   "$(fixture_event "message" "assistant" '{"content":[{"type":"text","text":"hi there"}],"stop_reason":"end_turn"}' \
     "$RID" "sess_test" "span_1" \
-    '{"message_id":"msg_1","model":"claude-opus-4-8","usage":{"input_tokens":10,"output_tokens":5},"latency_ms":100}')"
+    '{"message_id":"msg_1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":5},"latency_ms":100}')"
 OUT=$("$TRACE" "$RID")
 assert_contains "$OUT" "span_1" "span id shown"
 assert_contains "$OUT" "hello" "user input shown"
