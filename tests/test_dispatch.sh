@@ -88,6 +88,12 @@ GHEMPTYOUT=$(echo "$GHEMPTY" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || 
 assert_contains "$GHEMPTYOUT" '"is_error":true' "dispatch: gh empty args → is_error true"
 assert_contains "$GHEMPTYOUT" 'must not be empty' "dispatch: gh empty args → clear message"
 
+# new: git with an empty args array → is_error, exercising the empty-args guard in tools/git/run.sh
+GITEMPTY=$(jq -nc '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"gie1",name:"git",input:{args:[]}}],stop_reason:"tool_use"}}')
+GITEMPTYOUT=$(echo "$GITEMPTY" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_contains "$GITEMPTYOUT" '"is_error":true' "dispatch: git empty args → is_error true"
+assert_contains "$GITEMPTYOUT" 'must not be empty' "dispatch: git empty args → clear message"
+
 # new: successful real tool sets is_error:false (list_directory on a temp dir)
 TMPD="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMPD")
