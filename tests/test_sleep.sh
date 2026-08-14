@@ -38,6 +38,9 @@ assert_exit 1 "sleep: exit 1 on decimal" -- "$TOOL" '{"seconds":1.5}'
 # --- invalid: missing key ---
 assert_exit 1 "sleep: exit 1 on missing seconds key" -- "$TOOL" '{}'
 
+# --- invalid: not valid JSON ---
+assert_exit 1 "sleep: exit 1 on invalid JSON" -- "$TOOL" 'not-json'
+
 # --- error message content ---
 desc "error messages"
 OUT=$("$TOOL" '{"seconds":999}' 2>&1) || true
