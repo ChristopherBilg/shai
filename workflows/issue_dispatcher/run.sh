@@ -23,10 +23,11 @@ fi
 
 # Global search across every repo for open issues assigned to the authenticated user and
 # carrying the shai-issue-worker label. --json emits an array of {repository:{nameWithOwner},number}.
-SEARCH_JSON=$(gh search issues --assignee @me --label "$LABEL" --state open --json repository,number) ||
+SEARCH_JSON=$(gh search issues --assignee @me --label "$LABEL" --state open --limit 100 --json repository,number) ||
   wf_fail "gh search failed"
 
-COUNT=$(printf '%s' "$SEARCH_JSON" | jq 'length')
+COUNT=$(printf '%s' "$SEARCH_JSON" | jq 'length') ||
+  wf_fail "failed to parse search results"
 
 if [ "$COUNT" -eq 0 ]; then
   wf_output "no matching issues"
@@ -47,6 +48,7 @@ while IFS=$'\t' read -r REPO NUMBER; do
   # Safety-net dedup: the label removal below is the primary guard, but a ledger hit means
   # this issue was already handed off in a prior tick before its label could be re-added.
   if wf_seen "$KEY"; then
+    gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" >/dev/null 2>&1 || true
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
@@ -59,7 +61,7 @@ while IFS=$'\t' read -r REPO NUMBER; do
     continue
   fi
 
-  if "$SHAI_WORKFLOW" run issue_worker "$REPO" "$NUMBER"; then
+  if env -u SHAI_POLICY_OVERLAY "$SHAI_WORKFLOW" run issue_worker "$REPO" "$NUMBER" </dev/null; then
     wf_mark "$KEY"
     DISPATCHED=$((DISPATCHED + 1))
     wf_output "dispatched $REPO#$NUMBER"
@@ -72,4 +74,7 @@ while IFS=$'\t' read -r REPO NUMBER; do
 done < <(printf '%s' "$SEARCH_JSON" | jq -r '.[] | "\(.repository.nameWithOwner)\t\(.number)"')
 
 wf_output "dispatched=$DISPATCHED skipped=$SKIPPED failed=$FAILED"
+if [ "$FAILED" -gt 0 ] && [ "$DISPATCHED" -eq 0 ]; then
+  exit 1
+fi
 exit 0

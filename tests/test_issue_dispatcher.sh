@@ -24,6 +24,7 @@ cat >"$STUB/shai-workflow" <<WFSTUB
 # args: run issue_worker <repo> <number>
 if [ "\$1" = "run" ] && [ "\$2" = "issue_worker" ]; then
   printf '%s %s\n' "\$3" "\$4" >>"$WORKER_LOG"
+  [ -z "\${SHAI_POLICY_OVERLAY:-}" ] || printf 'OVERLAY=%s\n' "\$SHAI_POLICY_OVERLAY" >>"$WORKER_LOG"
 fi
 exit "\$(cat "$WORKER_RC_FILE")"
 WFSTUB
@@ -100,6 +101,8 @@ assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-worker" \
   "issue_dispatcher: removes the shai-issue-worker label"
 assert_contains "$(cat "$WORKER_LOG")" "owner/repo 42" \
   "issue_dispatcher: delegates to issue_worker with repo and number"
+assert_eq "$(grep -c 'OVERLAY=' "$WORKER_LOG" 2>/dev/null || true)" "0" \
+  "issue_dispatcher: worker does not inherit SHAI_POLICY_OVERLAY"
 LEDGER="$SHAI_HOME/ledgers/issue_dispatcher.jsonl"
 if [ -f "$LEDGER" ] && grep -q '"issue:owner/repo:42"' "$LEDGER"; then
   echo -e "  ${GREEN}✓${NC} issue_dispatcher: wf_mark recorded issue key on success"
@@ -137,8 +140,8 @@ assert_eq "$RC" "0" "issue_dispatcher: exit 0 when only match is already seen"
 assert_contains "$OUT" "skipped=1" "issue_dispatcher: summary counts the skip"
 assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
   "issue_dispatcher: already-seen issue is not dispatched"
-assert_eq "$(test -f "$EDIT_LOG" && echo yes || echo no)" "no" \
-  "issue_dispatcher: already-seen issue has no label removed"
+assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-worker" \
+  "issue_dispatcher: already-seen issue still has label removed"
 
 # --- label removal failure: skip and continue, label stays for retry, no dispatch ---
 desc "label removal failure"
@@ -149,7 +152,7 @@ cat >"$SEARCH_FIXTURE" <<'JSON'
 JSON
 OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
 RC=$?
-assert_eq "$RC" "0" "issue_dispatcher: exit 0 even when a label removal fails"
+assert_eq "$RC" "1" "issue_dispatcher: exit 1 when all dispatches fail (label removal)"
 assert_contains "$OUT" "WARNING" "issue_dispatcher: warns on label removal failure"
 assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
   "issue_dispatcher: no dispatch when label removal fails"
@@ -170,7 +173,7 @@ cat >"$SEARCH_FIXTURE" <<'JSON'
 JSON
 OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
 RC=$?
-assert_eq "$RC" "0" "issue_dispatcher: exit 0 even when a worker fails"
+assert_eq "$RC" "1" "issue_dispatcher: exit 1 when all dispatches fail (worker failure)"
 assert_contains "$OUT" "WARNING" "issue_dispatcher: warns when worker fails"
 assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-worker" \
   "issue_dispatcher: label was still removed before the failing worker ran"
