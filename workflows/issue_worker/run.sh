@@ -32,8 +32,8 @@ if wf_seen "issue:$REPO:$NUMBER"; then
   exit 0
 fi
 
-ISSUE_JSON=$(gh issue view "$NUMBER" --repo "$REPO" --json title,body,labels 2>&1) ||
-  wf_fail "cannot fetch issue #$NUMBER on $REPO: $ISSUE_JSON"
+ISSUE_JSON=$(gh issue view "$NUMBER" --repo "$REPO" --json title,body,labels) ||
+  wf_fail "cannot fetch issue #$NUMBER on $REPO"
 
 ISSUE_TITLE=$(printf '%s' "$ISSUE_JSON" | jq -r '.title // ""')
 ISSUE_BODY=$(printf '%s' "$ISSUE_JSON" | jq -r '.body // ""')
@@ -42,6 +42,19 @@ ISSUE_LABELS=$(printf '%s' "$ISSUE_JSON" | jq -r '[.labels[].name] | join(", ")'
 
 SLUG=$(printf '%s' "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//' | cut -c1-50 | sed 's/-$//')
 BRANCH_NAME="shai/${NUMBER}-${SLUG}"
+
+# Issue content is attacker-controlled (anyone who can open an issue) and is spliced
+# straight into the prompt below rather than fetched by the model via a tool call, so it
+# never gets shai-dispatch's automatic <external_data> truncation/sanitization. Bound the
+# body's size (matching shai-dispatch's MAX_BYTES) and neutralize external_data tag syntax
+# in all three fields (same regex shai-dispatch uses to sanitize tool_result content)
+# before they reach prompts/issue_worker.txt's <external_data> fences, so injected content
+# can't forge a closing tag and break out of the fence.
+ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | cut -c1-32000)
+
+ISSUE_TITLE=$(printf '%s' "$ISSUE_TITLE" | jq -Rrs 'gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")')
+ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | jq -Rrs 'gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")')
+ISSUE_LABELS=$(printf '%s' "$ISSUE_LABELS" | jq -Rrs 'gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")')
 
 WF_POLICY="$(dirname "$0")/policy.json"
 if [ -f "$WF_POLICY" ]; then
