@@ -1,8 +1,8 @@
 #!/bin/bash
-# pr_reviewer/run.sh — review a GitHub pull request via LLM and post a draft review
+# pr_reviewer/run.sh — review a GitHub pull request via LLM and post a comment review
 # Usage: workflows/pr_reviewer/run.sh <repo> <number>
 # Reads: ANTHROPIC_API_KEY from environment; prompts/pr_reviewer.txt for review instructions
-# Writes: pending GitHub review with inline comments; ephemeral session log (prunable)
+# Writes: GitHub comment review with inline comments; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
