@@ -8,7 +8,7 @@ You are reviewing pull request #{{NUMBER}} on {{REPO}}.
 4. Use gh to check out PR #{{NUMBER}} in the cloned repo.
 5. Use print_file and list_directory to read source files in the cloned repo — focus on changed files and their surrounding context.
 6. If the PR description or comments reference a Jira ticket (e.g. PROJ-123), call jira_issue_view to fetch context.
-7. Use gh to create a pending (draft) review on PR #{{NUMBER}} with inline comments.
+7. Use gh to create a comment review on PR #{{NUMBER}} with inline comments.
 
 ## Review criteria
 
