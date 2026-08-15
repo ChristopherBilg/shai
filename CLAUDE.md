@@ -317,16 +317,20 @@ ledger left unmarked (re-label to retry). Install via
 
 **`workflows/review_dispatcher/run.sh`** is a pure-bash dispatcher (no LLM calls — the LLM work
 happens inside `pr_reviewer`). It runs as a `shai-supervise` timer job, searching for open PRs
-via `gh search prs --label shai-review-dispatcher --state open`. For each match it **removes the
-`shai-review-dispatcher` label before dispatch** (the primary and only dedup — unlike
-`issue_dispatcher`, there is no ledger, so re-applying the label triggers a fresh review), then
-delegates to `shai-workflow run pr_reviewer <repo> <number>`. All matching PRs are processed
-sequentially per invocation. `SHAI_WORKFLOW` overrides the `shai-workflow` binary (used by the
-test suite). Error handling: no matches → exit 0 (idle tick); `gh search` failure →
-`wf_fail`/exit 1 (next tick retries); label removal failure for one PR → warn, skip, continue
-(label stays for retry); worker failure → label already removed (re-label to retry). The
-`issue_worker` prompt instructs the LLM to add the `shai-review-dispatcher` label to PRs it
-creates once CI passes, so PRs from `issue_worker` are automatically queued for review. Install via
+involving the authenticated user via
+`gh search prs --involves @me --label shai-review-dispatcher --state open`. For each match it
+checks the `wf_seen`/`wf_mark` ledger (safety net against GitHub search eventual consistency,
+key `pr:<repo>:<number>`), **removes the `shai-review-dispatcher` label before dispatch** (the
+primary dedup), then delegates to `shai-workflow run pr_reviewer <repo> <number>` and marks
+the ledger on success. Validates repo format and PR number before dispatch. Warns when result
+count hits the search limit. All matching PRs are processed sequentially per invocation.
+`SHAI_WORKFLOW` overrides the `shai-workflow` binary (used by the test suite). Error handling:
+no matches → exit 0 (idle tick); `gh search` failure → `wf_fail`/exit 1 (next tick retries);
+label removal failure for one PR → warn, skip, continue (label stays for retry); worker
+failure → label already removed, ledger left unmarked (re-label to retry). The `issue_worker`
+prompt instructs the LLM to add the `shai-review-dispatcher` label to PRs it creates once CI
+passes (creating the label in the repo first if needed), so PRs from `issue_worker` are
+automatically queued for review. Install via
 `shai-supervise install workflows/review_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
 
