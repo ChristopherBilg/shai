@@ -17,8 +17,12 @@ re-review. A human re-applies a label if another round is wanted.
 ## Steps
 
 1. Read the PR metadata:
-   `gh pr view {{NUMBER}} -R {{REPO}} --json title,body,headRefName,baseRefName,state,url`
+   `gh pr view {{NUMBER}} -R {{REPO}} --json title,body,headRefName,baseRefName,headRepositoryOwner,state,url`
    If the PR is closed or merged, post no changes — just report that and stop.
+   If the PR head is from a fork (`headRepositoryOwner.login` differs from `{{OWNER}}`),
+   skip all code fixes — classify those threads as `reply` instead, noting that cross-fork
+   PRs cannot be updated by this workflow. Continue with non-code actions (replies, resolves,
+   follow-ups).
 2. Read the diff: `gh pr diff {{NUMBER}} -R {{REPO}}`.
 3. Fetch all review feedback:
    - inline/diff comments: `gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --paginate`
@@ -31,9 +35,10 @@ re-review. A human re-applies a label if another round is wanted.
    ```
    gh api graphql -f query='
      query {
-       repository(owner: "OWNER", name: "REPO") {
+       repository(owner: "{{OWNER}}", name: "{{REPO_NAME}}") {
          pullRequest(number: {{NUMBER}}) {
            reviewThreads(first: 100) {
+             pageInfo { hasNextPage endCursor }
              nodes { id isResolved isOutdated comments(first: 50) { nodes { databaseId body path } } }
            }
          }
@@ -41,10 +46,15 @@ re-review. A human re-applies a label if another round is wanted.
      }'
    ```
 
+   If `pageInfo.hasNextPage` is true, re-query with `after: "<endCursor>"` to fetch remaining
+   threads. Do the same for `comments` within each thread if a thread has more than 50 comments.
    The `nodes[].id` values are the **thread** node IDs needed to resolve a thread.
-5. Clone the repo into /tmp/ with a randomly generated directory name to avoid collisions
-   (e.g. /tmp/review-resolver-XXXXX) and check out the PR's head branch:
-   `gh pr checkout {{NUMBER}}` (or `git checkout <headRefName>`).
+5. Clone the repo into /tmp/ with a randomly generated directory name to avoid collisions:
+   `git clone -- "https://github.com/{{REPO}}.git" /tmp/review-resolver-XXXXX`
+   Then check out the PR's head branch inside the clone:
+   `git -C /tmp/review-resolver-XXXXX checkout <headRefName>`
+   Use `git -C <clone-dir>` for all subsequent git commands and `gh ... -R {{REPO}}` for all
+   subsequent gh API calls — the tools run in shai's own working directory, not the clone.
 6. Use `print_file` and `list_directory` to read the code around each comment before deciding.
    Never act on a comment you have not read the surrounding code for.
 
@@ -100,7 +110,9 @@ Use the thread node ID from step 4. Never resolve a thread you did not reply to.
 
 ## Push and CI
 
-1. Push all commits to the PR's head branch (`git push origin <headRefName>`).
+1. Push all commits to the PR's head branch:
+   `git -C <clone-dir> push origin <headRefName>`
+   (This only works for same-repo PRs — cross-fork PRs were filtered in step 1.)
 2. Poll CI: `gh pr checks {{NUMBER}} -R {{REPO}}`. "no checks reported" means pending — CI has
    not started yet. Use the `sleep` tool to wait 30 seconds between checks, for up to roughly
    6 minutes total.

@@ -60,6 +60,14 @@ OUT=$("$DIR/workflows/review_resolver/run.sh" "foo|bar" 42 2>&1)
 RC=$?
 assert_eq "$RC" "2" "review_resolver: exit 2 on repo with sed metacharacter"
 
+OUT=$("$DIR/workflows/review_resolver/run.sh" "../.." 42 2>&1)
+RC=$?
+assert_eq "$RC" "2" "review_resolver: exit 2 on path-traversal repo"
+
+OUT=$("$DIR/workflows/review_resolver/run.sh" "a../b.." 42 2>&1)
+RC=$?
+assert_eq "$RC" "2" "review_resolver: exit 2 on repo with dot-dot segments"
+
 # --- usage error: bad PR number ---
 OUT=$("$DIR/workflows/review_resolver/run.sh" owner/repo abc 2>&1)
 RC=$?
@@ -86,7 +94,8 @@ desc "prompt substitution"
 REQ_BODY="$(cat "$REQ" 2>/dev/null)"
 assert_contains "$REQ_BODY" "owner/repo" "review_resolver: {{REPO}} substituted into the prompt"
 assert_contains "$REQ_BODY" "pull request #42" "review_resolver: {{NUMBER}} substituted into the prompt"
-if [[ "$REQ_BODY" == *'{{REPO}}'* ]] || [[ "$REQ_BODY" == *'{{NUMBER}}'* ]]; then
+if [[ "$REQ_BODY" == *'{{REPO}}'* ]] || [[ "$REQ_BODY" == *'{{NUMBER}}'* ]] ||
+  [[ "$REQ_BODY" == *'{{OWNER}}'* ]] || [[ "$REQ_BODY" == *'{{REPO_NAME}}'* ]]; then
   echo -e "  ${RED}✗${NC} review_resolver: unsubstituted placeholder left in the prompt"
   FAILED=1
 else
@@ -131,5 +140,7 @@ RC=$?
 assert_eq "$RC" "0" "review_resolver: shai-prompt loads prompts/review_resolver.txt"
 assert_contains "$OUT" "{{NUMBER}}" "review_resolver: prompt template has a NUMBER placeholder"
 assert_contains "$OUT" "{{REPO}}" "review_resolver: prompt template has a REPO placeholder"
+assert_contains "$OUT" "{{OWNER}}" "review_resolver: prompt template has an OWNER placeholder"
+assert_contains "$OUT" "{{REPO_NAME}}" "review_resolver: prompt template has a REPO_NAME placeholder"
 
 finish

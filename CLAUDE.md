@@ -337,8 +337,8 @@ automatically queued for review. Install via
 **`workflows/review_resolver/run.sh`** takes `<repo> <number>` and is the final stage of the
 autonomous pipeline (`issue_dispatcher → issue_worker → review_dispatcher → pr_reviewer →
 review_resolver`). It validates the repo/number, calls `wf_init`, exports the co-located
-`policy.json` overlay, and hands `prompts/review_resolver.txt` (with `{{REPO}}`/`{{NUMBER}}`
-substituted) to `wf_llm --tools`. The LLM reads the PR's review comments (inline via
+`policy.json` overlay, and hands `prompts/review_resolver.txt` (with `{{REPO}}`/`{{NUMBER}}`/
+`{{OWNER}}`/`{{REPO_NAME}}` substituted) to `wf_llm --tools`. The LLM reads the PR's review comments (inline via
 `pulls/<n>/comments`, top-level via `pulls/<n>/reviews`, conversation via `issues/<n>/comments`,
 plus GraphQL `reviewThreads` for thread node IDs and `isResolved`), clones the repo, checks out
 the head branch, and classifies each unresolved thread as `fix` (edit, commit, push),

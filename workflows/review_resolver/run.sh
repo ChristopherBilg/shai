@@ -16,7 +16,7 @@ fi
 REPO="$1"
 NUMBER="$2"
 
-if [[ ! "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+if [[ ! "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || [[ "$REPO" == *..* ]]; then
   printf 'error: repo must be OWNER/REPO format (got "%s")\n' "$REPO" >&2
   exit 2
 fi
@@ -38,7 +38,10 @@ fi
 
 PROMPT_TEMPLATE=$("$DIR/shai-prompt" review_resolver) || wf_fail "cannot load prompts/review_resolver.txt"
 
-PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g")
+OWNER="${REPO%%/*}"
+REPO_NAME="${REPO##*/}"
+
+PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g; s/{{OWNER}}/$OWNER/g; s/{{REPO_NAME}}/$REPO_NAME/g")
 
 RESULT=$(wf_llm --tools "$PROMPT") || wf_fail "pipeline error resolving reviews on PR #$NUMBER"
 
