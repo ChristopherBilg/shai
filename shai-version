@@ -1,0 +1,17 @@
+#!/bin/bash
+# shai-version — print the installed shai version, resolved from the release VERSION file or git
+# Usage: shai-version   (no arguments; prints the bare version string, e.g. v2026.08.15)
+# Reads: $DIR/VERSION (release installs), else `git describe --tags` in the install dir (dev clones)
+# Writes: the bare version string on stdout, no decoration; "dev" when neither source resolves
+# Exit: 0 always
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
+if [ -f "$DIR/VERSION" ]; then
+  cat "$DIR/VERSION"
+elif command -v git &>/dev/null; then
+  git -C "$DIR" describe --tags 2>/dev/null || echo "dev"
+else
+  echo "dev"
+fi

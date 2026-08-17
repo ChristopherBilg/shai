@@ -13,19 +13,6 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
-case "${1:-}" in
-  --version)
-    if [ -f "$DIR/VERSION" ]; then
-      cat "$DIR/VERSION"
-    elif command -v git &>/dev/null; then
-      git -C "$DIR" describe --tags 2>/dev/null || echo "dev"
-    else
-      echo "dev"
-    fi
-    exit 0
-    ;;
-esac
-
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 # The system prompt is authored content, not code: it lives in prompts/system.txt and is
 # loaded via shai-prompt, which fails loudly (exit 3) if the file is missing or empty. Under
