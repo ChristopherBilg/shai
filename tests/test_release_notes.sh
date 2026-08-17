@@ -85,18 +85,28 @@ write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
 # (the JSON as printf's *argument*, not its format string) writes it byte-for-byte — unlike
 # `printf 'literal-with-\n-in-it'`, which would have bash's printf interpret \n as a real
 # newline and corrupt the JSON (a raw control character inside a JSON string is invalid).
-LLM_RESPONSE='{"type":"message","content":[{"type":"text","text":"## Added\n- Feature X (#1)\n\n## Fixed\n- Bug Y (#2)\n\n## Infrastructure\n- CI config (#3)"}],"stop_reason":"end_turn"}'
+LLM_RESPONSE='{"type":"message","content":[{"type":"text","text":"# Release Notes - v1..v2\n\n## Added\n- Feature X (#1)\n\n## Fixed\n- Bug Y (#2)\n\n## Infrastructure\n- CI config (#3)\n\n## Contributors\n\n@alice, @bob, @carol"}],"stop_reason":"end_turn"}'
 printf '%s' "$LLM_RESPONSE" | write_curl_stub 200
 
 STDOUT=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>/dev/null)
 RC=$?
 assert_eq "$RC" "0" "release_notes: exit 0 on valid response"
+assert_contains "$STDOUT" "# Release Notes - v1..v2" "release_notes: stdout contains top-level header"
 assert_contains "$STDOUT" "Added" "release_notes: stdout contains Added category"
 assert_contains "$STDOUT" "(#1)" "release_notes: stdout contains PR reference"
 assert_contains "$STDOUT" "Fixed" "release_notes: stdout contains Fixed category"
 assert_contains "$STDOUT" "(#2)" "release_notes: stdout contains second PR reference"
 assert_contains "$STDOUT" "Infrastructure" "release_notes: stdout contains Infrastructure category"
 assert_contains "$STDOUT" "(#3)" "release_notes: stdout contains third PR reference"
+assert_contains "$STDOUT" "@alice, @bob, @carol" "release_notes: stdout contains contributor list"
+
+# --- --quiet: shai-loop's stderr copy is suppressed, so notes are printed exactly once ---
+write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
+printf '%s' "$LLM_RESPONSE" | write_curl_stub 200
+
+STDERR=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>&1 >/dev/null)
+if [[ "$STDERR" == *"Feature X"* ]]; then DUPED="yes"; else DUPED="no"; fi
+assert_eq "$DUPED" "no" "release_notes: --quiet keeps the notes off stderr (no duplicate output)"
 
 # --- success case: 2-arg invocation (auto-detect HEAD) ---
 write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
@@ -134,5 +144,10 @@ OUT=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>&1)
 RC=$?
 assert_eq "$RC" "1" "release_notes: exit 1 on gh failure"
 assert_contains "$OUT" "ERROR" "release_notes: prints ERROR on gh failure"
+
+# --- prompt template asks for the top-level header and the contributor list ---
+PROMPT_TEXT=$("$DIR/shai-prompt" release_notes)
+assert_contains "$PROMPT_TEXT" "# Release Notes - {{BASE}}..{{HEAD}}" "release_notes: prompt requests top-level header"
+assert_contains "$PROMPT_TEXT" "## Contributors" "release_notes: prompt requests contributors section"
 
 finish

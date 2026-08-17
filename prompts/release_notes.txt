@@ -5,7 +5,11 @@ Below is a list of merged pull requests in this range. Each line is formatted as
 
 {{PR_DATA}}
 
-Categorize each PR into the appropriate section and write concise release notes in markdown. Use these categories (omit any that have no entries):
+Begin the output with this top-level header, exactly as written:
+
+# Release Notes - {{BASE}}..{{HEAD}}
+
+Then categorize each PR into the appropriate section and write concise release notes in markdown. Use these categories (omit any that have no entries):
 
 ## Added
 ## Changed
@@ -15,5 +19,11 @@ Categorize each PR into the appropriate section and write concise release notes 
 ## Infrastructure
 
 For each PR, write one bullet point with a human-readable summary of the change. Do not copy the PR title verbatim — rephrase it as a concise changelog entry. Include the PR number as a trailing reference, e.g. (#42).
+
+After all categorized sections, end the output with a contributors section:
+
+## Contributors
+
+Followed by a single line listing every distinct PR author from the data above, comma-separated, in alphabetical order, each prefixed with @ (e.g. @alice, @bob, @carol).
 
 Output raw markdown only. No wrapping code fences, no preamble, no commentary.

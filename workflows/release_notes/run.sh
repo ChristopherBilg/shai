@@ -75,7 +75,11 @@ PROMPT="${PROMPT//\{\{BASE\}\}/$BASE}"
 PROMPT="${PROMPT//\{\{HEAD\}\}/$HEAD}"
 PROMPT="${PROMPT//\{\{PR_DATA\}\}/$PR_DATA}"
 
-RESULT=$(wf_llm "$PROMPT") || wf_fail "pipeline error generating release notes"
+# shai-loop echoes a human-readable copy of the reply to stderr, and this workflow prints
+# the notes itself (below) — so without suppression the user sees them twice. --quiet drops
+# the dispatch markers; 2>/dev/null drops the reply echo (same idiom as heartbeat/run.sh).
+# Pipeline failures are still surfaced by the wf_fail below and the type/source check.
+RESULT=$(wf_llm --quiet "$PROMPT" 2>/dev/null) || wf_fail "pipeline error generating release notes"
 
 TYPE=$(printf '%s' "$RESULT" | jq -r '.type // empty' 2>/dev/null) || TYPE=""
 SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE=""
