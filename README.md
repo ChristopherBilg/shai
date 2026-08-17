@@ -60,9 +60,11 @@ Inspect sessions, runs, and aggregate metrics from the terminal:
 ./shai-trace <run_id> --request span_1   # dump the exact API request for a span
 ./shai-stats                             # aggregate metrics across all sessions
 ./shai-stats --after 2026-08-01 --json   # scoped stats as JSON
+./shai-ledgers                           # summarize each workflow's idempotency ledger
+./shai-ledgers --workflow issue_d        # list one workflow's ledger entries
 ```
 
-All four scripts accept `--json` for structured output and ID prefix matching (e.g. `shai-trace run_2026` resolves to the full run ID if unambiguous).
+All five scripts accept `--json` for structured output and prefix matching on their ID/name argument (e.g. `shai-trace run_2026` resolves to the full run ID if unambiguous).
 
 ## Tests
 ```shell

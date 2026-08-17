@@ -225,6 +225,18 @@ The scripts:
   `--session` scopes to a single session (prefix matching). `--after`/`--before` filter by
   session date. `--json` outputs a JSON summary object. Exit 0 on success; 1 on invalid
   arguments or no match.
+- **`shai-ledgers [--workflow NAME] [--recent N] [--after DATE] [--before DATE] [--json]`**
+  (`shai-ledgers:1`) — lists workflow idempotency ledgers from `$SHAI_HOME/ledgers/*.jsonl`
+  (written by `wf_mark`; see **Work ledger** below). Without `--workflow`: one row per ledger
+  with entry count and the oldest/newest `ts` (alphabetical by workflow name; an empty ledger
+  shows `--`/`null`). With `--workflow`: one row per ledger entry (`key`, `marked`, `session_id`),
+  chronological by `ts`, with unambiguous name-prefix matching. `--after`/`--before` filter on the
+  entry `ts` (inclusive `YYYY-MM-DD`); in summary mode the counts and date range reflect only the
+  entries inside the window, and a workflow with no entries in the window is omitted. `--recent N`
+  keeps the last N rows. Read-only — `wf_seen`/`wf_mark` remain the sole write path, and
+  `shai-prune --ledgers` the sole delete path. Gracefully skips malformed ledger files (summary
+  mode) or malformed lines (entry mode) with a warning. Exit 0 on success; 1 on invalid arguments
+  or no match.
 - **`shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]`**
   (`shai-supervise:1`) — generates and manages a `systemd --user` `.service`+`.timer` pair that
   runs any shai workflow script on a timer. `<script>` may be a bare name or a
@@ -281,7 +293,8 @@ below). Sets `DIR` to the shai install directory.
 keys. Each line: `{"key":"...","ts":"...","session_id":"..."}`. Two helpers in `lib/workflow.sh`:
 `wf_seen "key"` (exit 0 if processed, 1 otherwise) and `wf_mark "key"` (append entry,
 idempotent). Keys are opaque, workflow-defined strings (e.g. `pr:owner/repo:123`). Mark after
-success so failures retry on next invocation.
+success so failures retry on next invocation. Inspect ledgers with `shai-ledgers`; delete them
+with `shai-prune --ledgers`.
 
 **Workflows** live in `workflows/`. Each is a standalone bash script (at `workflows/<name>/run.sh`)
 following the same conventions as runtime scripts (shebang, strict mode, doc header). Workflows
