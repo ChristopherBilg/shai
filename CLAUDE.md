@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 handful of single-purpose `bash`/`curl`/`jq` scripts that pipe JSON "events" to each other,
 persist everything to an append-only JSONL log, and call the Anthropic Claude Messages API.
 No language runtime, no dependencies beyond `bash`, `curl`, `jq`, and (for the GitHub tools)
-`gh`. It is an MVP.
+`gh`.
 
 ## Commands
 

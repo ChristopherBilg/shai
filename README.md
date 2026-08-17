@@ -75,6 +75,3 @@ Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (
 ./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
 ```
 CI runs all of the above on every push and pull request.
-
-## Scope
-This is an MVP. Deferred beyond the MVP: streaming, concurrency, and MCP.
