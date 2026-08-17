@@ -334,6 +334,25 @@ automatically queued for review. Install via
 `shai-supervise install workflows/review_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
 
+**`workflows/review_resolver/run.sh`** takes `<repo> <number>` and is the final stage of the
+autonomous pipeline (`issue_dispatcher → issue_worker → review_dispatcher → pr_reviewer →
+review_resolver`). It validates the repo/number, calls `wf_init`, exports the co-located
+`policy.json` overlay, and hands `prompts/review_resolver.txt` (with `{{REPO}}`/`{{NUMBER}}`/
+`{{OWNER}}`/`{{REPO_NAME}}` substituted) to `wf_llm --tools`. The LLM reads the PR's review comments (inline via
+`pulls/<n>/comments`, top-level via `pulls/<n>/reviews`, conversation via `issues/<n>/comments`,
+plus GraphQL `reviewThreads` for thread node IDs and `isResolved`), clones the repo, checks out
+the head branch, and classifies each unresolved thread as `fix` (edit, commit, push),
+`followup` (open a `--assignee @me` issue with **no** `shai-issue-dispatcher` label, so it needs
+manual triage), `reply` (post into the thread), `resolve` (acknowledge then
+`resolveReviewThread` via GraphQL), or `noop`. `pr_reviewer`'s conventionalcomments.org labels
+are hints only — the prompt tells the model to read the content, and to use judgment on comments
+against outdated diff hunks. After pushing it polls CI (up to ~6 minutes, 30s sleeps, at most 3
+fix-and-push cycles) and posts one structured "Review Resolution Summary" comment. **No
+idempotency** (no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to a future dispatcher's
+label-removal pattern. **One-shot** — it never re-labels the PR for another review round, which
+is what keeps `pr_reviewer ↔ review_resolver` from looping. Exit 0 on success, 1 on failure,
+2 on usage error.
+
 ## Conventions to preserve
 
 - Every runtime script (`shai-repl`, `shai-*`, and each `tools/*/run.sh`) starts with `#!/bin/bash` +
