@@ -46,6 +46,7 @@ SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE
 
 if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
   wf_output "reviewed PR #$NUMBER on $REPO"
+  wf_suggest
   exit 0
 else
   wf_fail "unexpected response: type=$TYPE source=$SOURCE"

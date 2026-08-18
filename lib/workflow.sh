@@ -45,6 +45,68 @@ wf_fail() {
   exit 1
 }
 
+# wf_suggest_repo: print the OWNER/REPO that suggestion issues should be filed on.
+# SHAI_SUGGEST_REPO wins when set. Otherwise the `origin` remote of the shai install
+# directory is used, but only when $DIR is itself the top of that work tree: release
+# installs under ~/.local/share/shai/<version>/ have no .git, and git's parent-directory
+# discovery would happily resolve an unrelated ancestor repo (e.g. a dotfiles repo at
+# $HOME), which would file issues on the wrong repo. The result must look like
+# OWNER/REPO. Exit 1 (printing nothing) when no trustworthy repo can be determined.
+wf_suggest_repo() {
+  local repo="" top
+  if [ -n "${SHAI_SUGGEST_REPO:-}" ]; then
+    repo="$SHAI_SUGGEST_REPO"
+  else
+    top=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null) || return 1
+    [ "$top" = "$DIR" ] || return 1
+    repo=$(git -C "$DIR" remote get-url origin 2>/dev/null |
+      sed 's|.*github\.com[:/]||; s|/*$||; s|\.git$||') || return 1
+  fi
+  [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+  # Never end on a bare `test && return` — workflow scripts run under `set -e`, where a
+  # failing AND-list as the last statement would abort the caller instead of falling through.
+  if [[ "$repo" == *..* ]]; then
+    return 1
+  fi
+  printf '%s' "$repo"
+}
+
+# wf_suggest: post-workflow suggestion step. Runs a second LLM call that reviews the
+# session and may create GitHub issues on the shai repo for improvement suggestions.
+# Opt out entirely with SHAI_SUGGEST=0.
+# Requires an existing SHAI_POLICY_OVERLAY: it never fabricates one, because overlay
+# rules supersede base rules (including `deny` — see shai-dispatch), so a synthesized
+# "allow gh" overlay would silently override a user who denied gh and would hand tool
+# access to workflows that deliberately run without tools.
+# Non-fatal: all failures are warnings on **stderr** (stdout belongs to the parent
+# workflow — release_notes writes its markdown there), never crashes the parent.
+wf_suggest() {
+  local shai_repo prompt err_log detail
+  if [ "${SHAI_SUGGEST:-1}" = "0" ]; then
+    return 0
+  fi
+  if [ -z "${SHAI_POLICY_OVERLAY:-}" ]; then
+    wf_output "WARN: no policy overlay in effect, skipping suggestions" >&2
+    return 0
+  fi
+  shai_repo=$(wf_suggest_repo) || {
+    wf_output "WARN: cannot derive shai repo, skipping suggestions" >&2
+    return 0
+  }
+  prompt=$("$DIR/shai-prompt" suggest 2>/dev/null) || {
+    wf_output "WARN: cannot load suggest prompt, skipping suggestions" >&2
+    return 0
+  }
+  prompt="${prompt//\{\{SHAI_REPO\}\}/$shai_repo}"
+  err_log=$(mktemp)
+  if ! wf_llm --tools --quiet "$prompt" >/dev/null 2>"$err_log"; then
+    detail=$(tail -n 3 "$err_log" | tr '\n' ' ')
+    wf_output "WARN: suggestion step failed (non-fatal)${detail:+: $detail}" >&2
+  fi
+  rm -f "$err_log"
+  return 0
+}
+
 # wf_seen KEY: exit 0 if KEY was previously wf_mark'd for this $WF_NAME, exit 1 otherwise.
 # -n/inputs streams the JSONL without loading the whole file; any() short-circuits on first
 # match. Produces exactly one boolean, sidestepping jq -e's exit code 4 ("no output at
