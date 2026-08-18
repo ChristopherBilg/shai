@@ -361,7 +361,9 @@ Reviews use conventionalcomments.org format with severity mapping (critical/impo
 and assess correctness, architecture, testing quality, and production readiness. Posts a
 GitHub review with inline comments plus a separate summary comment containing a verdict
 (Ready to merge / Ready with minor fixes / Needs changes) with finding counts. Handles
-cross-fork PRs (review proceeds but notes the PR cannot be updated). **No idempotency**
+cross-fork PRs (review proceeds but notes the PR cannot be updated). As its last step the
+prompt tells the LLM to add the `shai-resolve-dispatcher` label to the PR (creating the label
+in the repo first if needed), which queues the PR for `resolve_dispatcher`. **No idempotency**
 (no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to the dispatcher's label-removal
 pattern. Exit 0 on success, 1 on failure, 2 on usage error.
 
@@ -379,10 +381,31 @@ manual triage), `reply` (post into the thread), `resolve` (acknowledge then
 are hints only — the prompt tells the model to read the content, and to use judgment on comments
 against outdated diff hunks. After pushing it polls CI (up to ~6 minutes, 30s sleeps, at most 3
 fix-and-push cycles) and posts one structured "Review Resolution Summary" comment. **No
-idempotency** (no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to a future dispatcher's
+idempotency** (no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to `resolve_dispatcher`'s
 label-removal pattern. **One-shot** — it never re-labels the PR for another review round, which
 is what keeps `pr_reviewer ↔ review_resolver` from looping. Exit 0 on success, 1 on failure,
 2 on usage error.
+
+**`workflows/resolve_dispatcher/run.sh`** is a pure-bash dispatcher (no LLM calls — the LLM work
+happens inside `review_resolver`) and the last link in the autonomous pipeline
+(`issue_dispatcher → issue_worker → review_dispatcher → pr_reviewer → resolve_dispatcher →
+review_resolver`). It runs as a `shai-supervise` timer job, searching for open PRs involving the
+authenticated user via
+`gh search prs --involves @me --label shai-resolve-dispatcher --state open`. For each match it
+checks the `wf_seen`/`wf_mark` ledger (safety net against GitHub search eventual consistency,
+key `resolve:<repo>:<number>`), **removes the `shai-resolve-dispatcher` label before dispatch**
+(the primary dedup), then delegates to `shai-workflow run review_resolver <repo> <number>` and
+marks the ledger on success. Validates repo format and PR number before dispatch. Warns when
+result count hits the search limit. All matching PRs are processed sequentially per invocation.
+`SHAI_WORKFLOW` overrides the `shai-workflow` binary (used by the test suite). Error handling:
+no matches → exit 0 (idle tick); `gh search` failure → `wf_fail`/exit 1 (next tick retries);
+label removal failure for one PR → warn, skip, continue (label stays for retry); worker
+failure → label already removed, ledger left unmarked (re-label to retry). The `pr_reviewer`
+prompt instructs the LLM to add the `shai-resolve-dispatcher` label once its review is posted
+(creating the label in the repo first if needed), so reviewed PRs are automatically queued for
+resolution. Install via
+`shai-supervise install workflows/resolve_dispatcher/run.sh --interval 15min`. Exit 0 on success
+(including idle tick), 1 on search failure.
 
 ## Conventions to preserve
 

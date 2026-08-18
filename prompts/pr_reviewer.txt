@@ -152,3 +152,14 @@ Verdict criteria:
 
 If you find no issues worth flagging, post the summary with "Ready to merge" and at least
 one praise item noting what the PR does well.
+
+## Queueing the PR for resolution
+
+9. After the review and summary comment are posted, label the PR so the `resolve_dispatcher`
+   workflow hands it to `review_resolver`:
+   - Create the label first if the repo does not have it (ignore failure if it already exists):
+     `gh label create shai-resolve-dispatcher -R {{REPO}} --description "PRs with review comments awaiting resolution" --color "1D76DB" || true`
+   - Add it to the PR: `gh pr edit {{NUMBER}} -R {{REPO}} --add-label shai-resolve-dispatcher`
+
+   Do this exactly once, as the last step, and only if you actually posted review comments or a
+   summary comment. Skip it if the PR is closed or merged, or if you posted nothing at all.
