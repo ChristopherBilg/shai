@@ -1,0 +1,43 @@
+You have just completed a workflow task. Your session context above shows the full execution trace.
+
+## Your task
+
+Review what happened in this session and identify concrete, actionable improvements to the shai project itself — the tool framework at {{SHAI_REPO}}, not the external repository the workflow operated on.
+
+Categories (use as title prefix):
+- [convention] — coding standards, naming, patterns
+- [bug] — something broken or likely to break
+- [enhancement] — new feature or capability
+- [refactor] — code quality, simplification, dedup
+- [test] — testing gaps or improvements
+- [docs] — documentation improvements
+
+## Steps
+
+1. Check existing open suggestions to avoid duplicates:
+   `gh issue list -R {{SHAI_REPO}} --label shai-suggestion --state open --limit 100 --json title,number`
+
+2. Review the session trace. Look for improvements to shai's own scripts, conventions, error handling, testing, or documentation that you directly observed during this execution.
+
+3. If you have a genuine, actionable suggestion that does not duplicate an existing open issue:
+
+   Create the label (idempotent):
+   `gh label create shai-suggestion -R {{SHAI_REPO}} --description "Automated improvement suggestion from shai workflows" --color 0E8A16 --force`
+
+   Then create the issue:
+   `gh issue create -R {{SHAI_REPO}} --label shai-suggestion --title "[category] Short description" --body "BODY"`
+
+   The body must include:
+   - **What**: What you observed
+   - **Why**: Why it matters
+   - **Suggested fix**: How to address it
+   - **Spotted by**: Which workflow, and what it was working on
+
+## Rules
+
+- Creating zero issues is a valid outcome — do not fabricate suggestions
+- One issue per distinct suggestion
+- Only suggest improvements to shai itself, never to the external repository
+- Do not suggest changes based on a single execution — prefer patterns you can reason about generally
+- Keep suggestions specific and actionable, not vague observations
+- Shell operators (||, &&, |, >, >>) are NOT available inside gh tool arguments

@@ -301,7 +301,18 @@ identical to before.
 (mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
 wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
 `wf_fail "message"` (stderr + exit 1), `wf_seen "key"` / `wf_mark "key"` (work ledger — see
-below). Sets `DIR` to the shai install directory.
+below), `wf_suggest` (post-workflow suggestion step — see below). Sets `DIR` to the shai
+install directory.
+
+**Post-workflow suggestions** — `wf_suggest` runs a second `wf_llm --tools` call after the
+primary task completes, using `prompts/suggest.txt`. The LLM reviews the session trace and
+may create GitHub issues on the shai repo (derived from `git remote get-url origin`) labeled
+`shai-suggestion` for improvement opportunities (conventions, bugs, enhancements, refactoring,
+testing gaps, docs). Dedup is prompt-driven: the LLM checks existing open `shai-suggestion`
+issues before creating new ones. Non-fatal: all failures are logged as warnings, never crash
+the parent workflow. If no `SHAI_POLICY_OVERLAY` is set, `wf_suggest` creates a temporary one
+allowing `gh`. Called by `issue_worker`, `pr_reviewer`, `review_resolver`, and `release_notes`
+after their primary task succeeds.
 
 **Work ledger** — `$SHAI_HOME/ledgers/<workflow_name>.jsonl` stores per-workflow idempotency
 keys. Each line: `{"key":"...","ts":"...","session_id":"..."}`. Two helpers in `lib/workflow.sh`:

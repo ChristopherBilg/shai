@@ -101,6 +101,7 @@ if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
     printf '\n## Contributors\n\n%s\n' "$CONTRIBUTORS"
   fi
   wf_output "generated release notes for $REPO ($BASE...$HEAD)" >&2
+  wf_suggest
   exit 0
 else
   PAYLOAD_TEXT=$(printf '%s' "$RESULT" | jq -r '.payload.text // empty' 2>/dev/null) || PAYLOAD_TEXT=""

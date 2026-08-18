@@ -45,6 +45,34 @@ wf_fail() {
   exit 1
 }
 
+# wf_suggest: post-workflow suggestion step. Runs a second LLM call that reviews the
+# session and may create GitHub issues on the shai repo for improvement suggestions.
+# Non-fatal: all failures are warnings, never crashes the parent workflow.
+wf_suggest() {
+  local shai_repo prompt suggest_policy=""
+  shai_repo=$(git -C "$DIR" remote get-url origin 2>/dev/null |
+    sed 's|.*github\.com[:/]||; s|\.git$||') || shai_repo=""
+  if [ -z "$shai_repo" ]; then
+    wf_output "WARN: cannot derive shai repo, skipping suggestions"
+    return 0
+  fi
+  prompt=$("$DIR/shai-prompt" suggest 2>/dev/null) || {
+    wf_output "WARN: cannot load suggest prompt, skipping suggestions"
+    return 0
+  }
+  prompt="${prompt//\{\{SHAI_REPO\}\}/$shai_repo}"
+  if [ -z "${SHAI_POLICY_OVERLAY:-}" ]; then
+    suggest_policy=$(mktemp)
+    printf '{"rules":[{"tool":"gh","action":"allow"}]}\n' >"$suggest_policy"
+    export SHAI_POLICY_OVERLAY="$suggest_policy"
+  fi
+  if ! wf_llm --tools --quiet "$prompt" >/dev/null 2>&1; then
+    wf_output "WARN: suggestion step failed (non-fatal)"
+  fi
+  [ -n "$suggest_policy" ] && rm -f "$suggest_policy"
+  return 0
+}
+
 # wf_seen KEY: exit 0 if KEY was previously wf_mark'd for this $WF_NAME, exit 1 otherwise.
 # -n/inputs streams the JSONL without loading the whole file; any() short-circuits on first
 # match. Produces exactly one boolean, sidestepping jq -e's exit code 4 ("no output at
