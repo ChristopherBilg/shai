@@ -1,0 +1,12 @@
+{
+  "rules": [
+    { "tool": "gh", "action": "allow" },
+    { "tool": "git", "action": "allow" },
+    { "tool": "sleep", "action": "allow" },
+    { "tool": "write_file", "args": { "path": "/tmp/*" }, "action": "allow" },
+    { "tool": "patch_file", "args": { "path": "/tmp/*" }, "action": "allow" },
+    { "tool": "delete_file", "args": { "path": "/tmp/*" }, "action": "allow" },
+    { "tool": "print_file", "args": { "path": "/tmp/*" }, "action": "allow" },
+    { "tool": "list_directory", "args": { "path": "/tmp/*" }, "action": "allow" }
+  ]
+}
