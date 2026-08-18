@@ -160,6 +160,10 @@ assert_eq "$RC" "0" "issue_dispatcher: exit 0 when an already-seen issue cannot 
 assert_contains "$OUT" "already-seen owner/repo#99" \
   "issue_dispatcher: warns when an already-seen issue's label cannot be removed"
 assert_contains "$OUT" "skipped=1" "issue_dispatcher: still counts the skip"
+assert_contains "$OUT" "failed=0" \
+  "issue_dispatcher: already-seen removal failure is not counted as a failure"
+assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
+  "issue_dispatcher: already-seen issue is not dispatched when its label cannot be removed"
 
 # --- label removal failure: skip and continue, label stays for retry, no dispatch ---
 desc "label removal failure"
