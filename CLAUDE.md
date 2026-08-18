@@ -45,7 +45,7 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./shai-supervise install workflows/heartbeat/run.sh                # install + enable the heartbeat timer
 ./shai-supervise install workflows/heartbeat/run.sh --interval 1h  # custom interval
 ./shai-supervise uninstall|start|stop workflows/heartbeat/run.sh   # lifecycle management
-./shai-supervise status                                            # list all shai-* units
+./shai-supervise status [--json]                                    # list all shai-* units
 ./shai-supervise logs workflows/heartbeat/run.sh                   # tail journal
 ./workflows/heartbeat/run.sh                                       # one-shot pipeline health check
 
@@ -249,7 +249,11 @@ The scripts:
   script to be executable and `ANTHROPIC_API_KEY` to be set, writes the units to
   `$SHAI_UNIT_DIR` (default `~/.config/systemd/user`) embedding `ANTHROPIC_API_KEY`/`SHAI_HOME`
   as `Environment=` lines, then `chmod 600`s the `.service` file (it holds the plaintext key)
-  before `daemon-reload`ing and enabling the timer. The other subcommands delegate to
+  before `daemon-reload`ing and enabling the timer. `status [script] [--json]` discovers
+  installed units by scanning `$SHAI_UNIT_DIR` for `shai-*.timer` files (or queries a single
+  named unit), queries `systemctl --user show` for each, and renders a column-aligned table
+  (UNIT, STATE, LAST, NEXT) matching the format of `shai-sessions`/`shai-runs`/`shai-ledgers`;
+  `--json` outputs a JSON array. The other subcommands delegate to
   `systemctl --user` / `journalctl --user`. Exit 0 on success, 1 on validation/systemctl
   failure, 2 on usage error (unrecognized subcommand).
 

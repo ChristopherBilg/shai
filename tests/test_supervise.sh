@@ -14,6 +14,23 @@ SYSTEMCTL_LOG="$STUB/systemctl.log"
 {
   printf '#!/bin/bash\n'
   printf 'echo "$*" >> "%s"\n' "$SYSTEMCTL_LOG"
+  printf 'case "$*" in\n'
+  printf '  *show*shai-heartbeat.timer*)\n'
+  printf '    printf "ActiveState=active\\n"\n'
+  printf '    printf "LastTriggerUSec=Mon 2026-08-18 14:30:00 EDT\\n"\n'
+  printf '    printf "NextElapseUSecRealtime=Mon 2026-08-18 14:45:00 EDT\\n"\n'
+  printf '    ;;\n'
+  printf '  *show*shai-review-dispatcher.timer*)\n'
+  printf '    printf "ActiveState=inactive\\n"\n'
+  printf '    printf "LastTriggerUSec=n/a\\n"\n'
+  printf '    printf "NextElapseUSecRealtime=n/a\\n"\n'
+  printf '    ;;\n'
+  printf '  *show*)\n'
+  printf '    printf "ActiveState=inactive\\n"\n'
+  printf '    printf "LastTriggerUSec=n/a\\n"\n'
+  printf '    printf "NextElapseUSecRealtime=n/a\\n"\n'
+  printf '    ;;\n'
+  printf 'esac\n'
 } >"$STUB/systemctl"
 chmod +x "$STUB/systemctl"
 
@@ -168,15 +185,19 @@ assert_contains "$(cat "$SYSTEMCTL_LOG")" "shai-heartbeat.timer" "start: uses co
 "$DIR/shai-supervise" stop shai-heartbeat >/dev/null 2>&1
 assert_contains "$(cat "$SYSTEMCTL_LOG")" "stop" "stop: delegates to systemctl"
 
-# --- status with argument ---
+# --- status with argument (queries systemctl show) ---
 : >"$SYSTEMCTL_LOG"
-"$DIR/shai-supervise" status shai-heartbeat >/dev/null 2>&1
-assert_contains "$(cat "$SYSTEMCTL_LOG")" "status" "status: delegates to systemctl"
+OUT=$("$DIR/shai-supervise" status shai-heartbeat 2>&1)
+assert_contains "$(cat "$SYSTEMCTL_LOG")" "show" "status <script>: queries systemctl show"
+assert_contains "$OUT" "shai-heartbeat" "status <script>: output contains unit name"
 
-# --- status without argument ---
+# --- status without argument (discovers timer files, queries each) ---
+touch "$TMP/shai-heartbeat.timer"
 : >"$SYSTEMCTL_LOG"
-"$DIR/shai-supervise" status >/dev/null 2>&1
-assert_contains "$(cat "$SYSTEMCTL_LOG")" "list-units" "status (no arg): lists shai-* units"
+OUT=$("$DIR/shai-supervise" status 2>&1)
+assert_contains "$(cat "$SYSTEMCTL_LOG")" "show" "status (no arg): queries systemctl show for discovered units"
+assert_contains "$OUT" "UNIT" "status (no arg): output has table header"
+rm -f "$TMP/shai-heartbeat.timer"
 
 # --- logs delegates to journalctl ---
 LOG_OUTPUT=$("$DIR/shai-supervise" logs shai-heartbeat 2>&1)
@@ -191,5 +212,75 @@ assert_exit 1 "validate: logs missing script" -- "$DIR/shai-supervise" logs
 
 # --- validation: --interval missing value ---
 assert_exit 1 "validate: --interval missing value" -- "$DIR/shai-supervise" install shai-heartbeat --interval
+
+# --- status: formatted table output ---
+
+touch "$TMP/shai-heartbeat.timer"
+touch "$TMP/shai-review-dispatcher.timer"
+
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status 2>&1)
+assert_contains "$OUT" "UNIT" "status table: header has UNIT"
+assert_contains "$OUT" "STATE" "status table: header has STATE"
+assert_contains "$OUT" "LAST" "status table: header has LAST"
+assert_contains "$OUT" "NEXT" "status table: header has NEXT"
+
+assert_contains "$OUT" "shai-heartbeat" "status table: lists shai-heartbeat"
+assert_contains "$OUT" "shai-review-dispatcher" "status table: lists shai-review-dispatcher"
+
+assert_contains "$OUT" "active" "status table: shows active state"
+assert_contains "$OUT" "inactive" "status table: shows inactive state"
+
+assert_contains "$OUT" "2026-08-18 14:30" "status table: shows parsed last trigger time"
+assert_contains "$OUT" "2026-08-18 14:45" "status table: shows parsed next trigger time"
+
+assert_contains "$OUT" "--" "status table: n/a timing rendered as --"
+
+HB_NUM=$(echo "$OUT" | grep -n "shai-heartbeat" | head -1 | cut -d: -f1)
+RD_NUM=$(echo "$OUT" | grep -n "shai-review-dispatcher" | head -1 | cut -d: -f1)
+if [ "$HB_NUM" -lt "$RD_NUM" ]; then ORDERED="yes"; else ORDERED="no"; fi
+assert_eq "$ORDERED" "yes" "status table: units in alphabetical order"
+
+# --- status: script arg filters to one unit ---
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status heartbeat 2>&1)
+assert_contains "$OUT" "shai-heartbeat" "status <script>: shows named unit"
+if echo "$OUT" | grep -q "review-dispatcher"; then FILTERED="no"; else FILTERED="yes"; fi
+assert_eq "$FILTERED" "yes" "status <script>: filters to named unit only"
+
+# --- status --json ---
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status --json 2>&1)
+echo "$OUT" | jq empty 2>/dev/null
+assert_eq "$?" "0" "status --json: valid JSON"
+
+UNITS=$(echo "$OUT" | jq -r '.[].unit' 2>/dev/null | sort)
+assert_contains "$UNITS" "shai-heartbeat" "status --json: contains shai-heartbeat"
+assert_contains "$UNITS" "shai-review-dispatcher" "status --json: contains shai-review-dispatcher"
+
+FIRST_KEYS=$(echo "$OUT" | jq -r '.[0] | keys[]' 2>/dev/null | sort | tr '\n' ',')
+assert_contains "$FIRST_KEYS" "unit," "status --json: has unit field"
+assert_contains "$FIRST_KEYS" "state," "status --json: has state field"
+assert_contains "$FIRST_KEYS" "last," "status --json: has last field"
+assert_contains "$FIRST_KEYS" "next," "status --json: has next field"
+
+# --- status: script + --json ---
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status heartbeat --json 2>&1)
+COUNT=$(echo "$OUT" | jq 'length' 2>/dev/null)
+assert_eq "$COUNT" "1" "status <script> --json: one element"
+UNIT_NAME=$(echo "$OUT" | jq -r '.[0].unit' 2>/dev/null)
+assert_eq "$UNIT_NAME" "shai-heartbeat" "status <script> --json: correct unit"
+
+# --- status: empty UNIT_DIR ---
+rm -f "$TMP"/shai-*.timer "$TMP"/shai-*.service
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status 2>&1)
+if [ -z "$OUT" ]; then EMPTY="yes"; else EMPTY="no"; fi
+assert_eq "$EMPTY" "yes" "status: empty produces no output"
+
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status --json 2>&1)
+assert_eq "$OUT" "[]" "status --json: empty produces []"
 
 finish
