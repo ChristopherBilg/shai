@@ -36,9 +36,8 @@ fi
 PROMPT_TEMPLATE=$("$DIR/shai-prompt" pr_reviewer) || wf_fail "cannot load prompts/pr_reviewer.txt"
 
 OWNER="${REPO%%/*}"
-REPO_NAME="${REPO##*/}"
 
-PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g; s/{{OWNER}}/$OWNER/g; s/{{REPO_NAME}}/$REPO_NAME/g")
+PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g; s/{{OWNER}}/$OWNER/g")
 
 RESULT=$(wf_llm --tools "$PROMPT") || wf_fail "pipeline error reviewing PR #$NUMBER"
 

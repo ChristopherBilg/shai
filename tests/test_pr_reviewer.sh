@@ -92,7 +92,7 @@ printf '{"type":"message","content":[{"type":"text","text":"Review complete."}],
 OUT=$("$DIR/workflows/pr_reviewer/run.sh" owner/repo 42 2>&1)
 RC=$?
 assert_eq "$RC" "0" "pr_reviewer: exit 0 on valid assistant response"
-assert_contains "$OUT" "PR #42" "pr_reviewer: output includes PR number"
+assert_contains "$OUT" "reviewed PR #42" "pr_reviewer: output includes PR number"
 assert_contains "$OUT" "owner/repo" "pr_reviewer: output includes repo"
 
 # --- prompt substitution: placeholders replaced in the request sent to the API ---
@@ -101,7 +101,7 @@ REQ_BODY="$(cat "$REQ" 2>/dev/null)"
 assert_contains "$REQ_BODY" "owner/repo" "pr_reviewer: {{REPO}} substituted into the prompt"
 assert_contains "$REQ_BODY" "pull request #42" "pr_reviewer: {{NUMBER}} substituted into the prompt"
 if [[ "$REQ_BODY" == *'{{REPO}}'* ]] || [[ "$REQ_BODY" == *'{{NUMBER}}'* ]] ||
-  [[ "$REQ_BODY" == *'{{OWNER}}'* ]] || [[ "$REQ_BODY" == *'{{REPO_NAME}}'* ]]; then
+  [[ "$REQ_BODY" == *'{{OWNER}}'* ]]; then
   echo -e "  ${RED}✗${NC} pr_reviewer: unsubstituted placeholder left in the prompt"
   FAILED=1
 else
@@ -125,7 +125,7 @@ desc "non-idempotent by design"
 OUT=$("$DIR/workflows/pr_reviewer/run.sh" owner/repo 42 2>&1)
 RC=$?
 assert_eq "$RC" "0" "pr_reviewer: exit 0 on a repeat run for the same PR"
-assert_contains "$OUT" "PR #42" "pr_reviewer: repeat run still does the work"
+assert_contains "$OUT" "reviewed PR #42" "pr_reviewer: repeat run still does the work"
 assert_eq "$(test -e "$SHAI_HOME/ledgers/pr_reviewer.jsonl" && echo yes || echo no)" "no" \
   "pr_reviewer: writes no idempotency ledger"
 

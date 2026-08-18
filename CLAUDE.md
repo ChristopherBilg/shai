@@ -338,7 +338,7 @@ automatically queued for review. Install via
 review for a GitHub pull request. It validates the repo/number (with path-traversal and
 leading-zero guards matching `review_resolver`), calls `wf_init`, exports the co-located
 `policy.json` overlay, and hands `prompts/pr_reviewer.txt` (with `{{REPO}}`/`{{NUMBER}}`/
-`{{OWNER}}`/`{{REPO_NAME}}` substituted) to `wf_llm --tools`. The LLM reads the PR metadata,
+`{{OWNER}}` substituted) to `wf_llm --tools`. The LLM reads the PR metadata,
 diff, and existing comments (all with `--paginate`), clones the repo via `git clone`, checks
 out the head branch, and reads source files around each changed area before commenting.
 Reviews use conventionalcomments.org format with severity mapping (critical/important/minor)
