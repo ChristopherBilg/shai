@@ -238,8 +238,7 @@ The scripts:
   entry `ts` (inclusive `YYYY-MM-DD`); in summary mode the counts and date range reflect only the
   entries inside the window, and a workflow with no entries in the window is omitted. `--recent N`
   keeps the last N rows. Read-only — `wf_seen`/`wf_mark` remain the sole write path, and
-  `shai-prune --ledgers` the sole delete path. Gracefully skips malformed ledger files (summary
-  mode) or malformed lines (entry mode) with a warning. Exit 0 on success; 1 on invalid arguments
+  `shai-prune --ledgers` the sole delete path. Gracefully drops malformed lines with a warning in both summary and entry modes. Exit 0 on success; 1 on invalid arguments
   or no match.
 - **`shai-supervise install|uninstall|start|stop|status|logs <script> [--interval <timespan>]`**
   (`shai-supervise:1`) — generates and manages a `systemd --user` `.service`+`.timer` pair that

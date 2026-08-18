@@ -20,6 +20,10 @@ while [ $# -gt 0 ]; do
         printf 'error: --workflow requires a name or prefix\n' >&2
         exit 1
       fi
+      if [[ "$WORKFLOW" =~ [/] ]] || [[ "$WORKFLOW" == *..* ]]; then
+        printf 'error: --workflow must not contain / or .. (got "%s")\n' "$WORKFLOW" >&2
+        exit 1
+      fi
       ;;
     --recent)
       shift
@@ -103,8 +107,8 @@ ledger_metrics() {
     [.[] | select(((.ts // "")[:10]) >= $after and ((.ts // "")[:10]) <= $before)] |
     {
       entries: length,
-      oldest: (if length == 0 then null else (map(.ts) | sort | first) end),
-      latest: (if length == 0 then null else (map(.ts) | sort | last) end)
+      oldest: (if length == 0 then null else (map(.ts // "") | sort | first) end),
+      latest: (if length == 0 then null else (map(.ts // "") | sort | last) end)
     }'
 }
 
@@ -127,36 +131,45 @@ entries=()
 
 if [ -n "$WORKFLOW" ]; then
   ledger_file=$(resolve_prefix "$WORKFLOW" "$LEDGERS_DIR" ".jsonl") || exit 1
-  # Entry mode validates line by line instead of handing the raw file to `jq -s`:
-  # a ledger is an append-only log with no locking, so a crash mid-append leaves a
-  # truncated trailing line, and a single `jq -s` pass would fail outright and hide
-  # every good entry with it. Bad lines are dropped (one warning), good ones stay.
-  valid=()
-  bad=0
-  line=""
-  # `|| [ -n "$line" ]` catches a final line with no trailing newline -- exactly the
-  # shape a crash mid-append leaves behind, and the case worth warning about.
-  while IFS= read -r line || [ -n "$line" ]; do
-    [ -n "$line" ] || continue
-    if printf '%s\n' "$line" | jq -e 'type == "object"' >/dev/null 2>&1; then
-      valid+=("$line")
-    else
-      bad=$((bad + 1))
-    fi
-  done <"$ledger_file"
-  if [ "$bad" -gt 0 ]; then
-    printf 'warning: skipping %s (parse error)\n' "$ledger_file" >&2
+  # Single jq -R pass validates and parses in one process (scales to unbounded
+  # ledgers). fromjson? silently drops truncated trailing lines from crash
+  # mid-append; the count of dropped lines is reported as a warning.
+  total_lines=$(grep -c '.' "$ledger_file" 2>/dev/null) || total_lines=0
+  valid_json=$(jq -Rc 'fromjson? // empty | select(type == "object")' <"$ledger_file" 2>/dev/null) || true
+  if [ -n "$valid_json" ]; then
+    valid_count=$(printf '%s\n' "$valid_json" | grep -c '.' 2>/dev/null) || valid_count=0
+  else
+    valid_count=0
   fi
-  if [ "${#valid[@]}" -gt 0 ]; then
-    mapfile -t entries < <(printf '%s\n' "${valid[@]}" | ledger_entries)
+  bad=$((total_lines - valid_count))
+  if [ "$bad" -gt 0 ]; then
+    printf 'warning: %s: dropped %d malformed line(s)\n' "$ledger_file" "$bad" >&2
+  fi
+  if [ "$valid_count" -gt 0 ]; then
+    if entry_json=$(printf '%s\n' "$valid_json" | ledger_entries 2>/dev/null); then
+      [ -n "$entry_json" ] && mapfile -t entries <<<"$entry_json"
+    else
+      printf 'warning: %s: entry extraction failed\n' "$ledger_file" >&2
+    fi
   fi
 else
   for f in "$LEDGERS_DIR"/*.jsonl; do
     [ -e "$f" ] || continue
     name=$(basename "$f" .jsonl)
-    # Summary mode reads each ledger whole (one jq pass per file); a corrupted
-    # ledger is skipped with a warning so the rest of the listing still renders.
-    if ! metrics=$(ledger_metrics <"$f" 2>/dev/null); then
+    # Pre-filter: parse valid JSON objects so a truncated trailing line no longer
+    # drops the entire workflow row from the summary.
+    filtered=$(jq -Rc 'fromjson? // empty | select(type == "object")' <"$f" 2>/dev/null) || true
+    total_lines=$(grep -c '.' "$f" 2>/dev/null) || total_lines=0
+    if [ -n "$filtered" ]; then
+      valid_lines=$(printf '%s\n' "$filtered" | grep -c '.' 2>/dev/null) || valid_lines=0
+    else
+      valid_lines=0
+    fi
+    bad_lines=$((total_lines - valid_lines))
+    if [ "$bad_lines" -gt 0 ]; then
+      printf 'warning: %s: dropped %d malformed line(s)\n' "$f" "$bad_lines" >&2
+    fi
+    if ! metrics=$(printf '%s' "$filtered" | ledger_metrics 2>/dev/null); then
       printf 'warning: skipping %s (parse error)\n' "$f" >&2
       continue
     fi

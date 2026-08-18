@@ -144,7 +144,7 @@ OUT=$("$LEDGERS")
 assert_contains "$OUT" "empty_workflow" "empty ledger still listed"
 assert_contains "$OUT" "--" "human output shows -- for missing dates"
 
-desc "malformed ledger file: skipped with a warning, other ledgers unaffected"
+desc "malformed ledger file: bad lines dropped, workflow row preserved"
 setup_ledgers
 make_ledger "good_workflow" "$(ledger_entry "k:1" "2026-08-01T09:00:00Z")"
 # Simulate a crash mid-append: a truncated, unparseable line with no closing braces.
@@ -152,10 +152,11 @@ printf '{"key":"k:2","ts":"2026-08-02T09:00:00Z","session_id":"sess_' >"$SHAI_HO
 OUT=$("$LEDGERS" --json 2>/dev/null)
 ERR=$("$LEDGERS" 2>&1 >/dev/null)
 assert_eq "$?" "0" "malformed ledger does not abort the run (exit 0)"
-assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "malformed ledger excluded, good ledger still listed"
-assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].workflow')" "good_workflow" "good workflow name still correct"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "2" "both ledgers listed (bad lines dropped, not whole file)"
+assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.workflow == "good_workflow")][0].entries')" "1" "good workflow entries correct"
+assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.workflow == "bad_workflow")][0].entries')" "0" "malformed ledger shows zero valid entries"
 assert_contains "$ERR" "warning" "warning printed to stderr for the malformed ledger"
-assert_contains "$ERR" "bad_workflow" "warning names the malformed ledger"
+assert_contains "$ERR" "dropped" "warning reports dropped lines"
 
 # --- Entry mode ---
 desc "--workflow: lists the ledger's entries"
@@ -254,7 +255,7 @@ assert_contains "$OUT" "MARKED" "MARKED header present"
 assert_contains "$OUT" "SESSION" "SESSION header present"
 assert_contains "$OUT" "issue:owner/repo:42" "key in output"
 
-desc "--workflow: malformed entry skipped, good entries survive"
+desc "--workflow: malformed entry dropped, good entries survive"
 setup_ledgers
 make_ledger "issue_dispatcher" "$(ledger_entry "k:good" "2026-08-01T09:00:00Z")"
 # Simulate a crash mid-append: a truncated trailing line with no closing braces.
@@ -265,8 +266,21 @@ assert_eq "$?" "0" "malformed entry does not abort the run (exit 0)"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "malformed entry excluded"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].key')" "k:good" "good entry still listed"
 assert_contains "$ERR" "warning" "warning printed to stderr for the malformed entry"
+assert_contains "$ERR" "dropped" "warning reports dropped line count"
 
 # --- Error handling ---
+desc "--workflow path traversal: / rejected"
+setup_ledgers
+assert_exit 1 "slash in workflow name" -- "$LEDGERS" --workflow "../sessions/foo"
+ERR=$("$LEDGERS" --workflow "../sessions/foo" 2>&1 >/dev/null || true)
+assert_contains "$ERR" "must not contain" "error message for path traversal"
+
+desc "--workflow path traversal: .. rejected"
+setup_ledgers
+assert_exit 1 "dotdot in workflow name" -- "$LEDGERS" --workflow "..ledger"
+ERR=$("$LEDGERS" --workflow "..ledger" 2>&1 >/dev/null || true)
+assert_contains "$ERR" "must not contain" "error message for dotdot"
+
 desc "invalid args: exit 1"
 setup_ledgers
 assert_exit 1 "unknown flag" -- "$LEDGERS" --bogus
