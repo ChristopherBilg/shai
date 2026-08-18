@@ -16,19 +16,53 @@ SYSTEMCTL_LOG="$STUB/systemctl.log"
   printf 'echo "$*" >> "%s"\n' "$SYSTEMCTL_LOG"
   printf 'case "$*" in\n'
   printf '  *show*shai-heartbeat.timer*)\n'
+  printf '    printf "LoadState=loaded\\n"\n'
   printf '    printf "ActiveState=active\\n"\n'
   printf '    printf "LastTriggerUSec=Mon 2026-08-18 14:30:00 EDT\\n"\n'
   printf '    printf "NextElapseUSecRealtime=Mon 2026-08-18 14:45:00 EDT\\n"\n'
+  printf '    printf "NextElapseUSecMonotonic=0\\n"\n'
   printf '    ;;\n'
   printf '  *show*shai-review-dispatcher.timer*)\n'
+  printf '    printf "LoadState=loaded\\n"\n'
+  printf '    printf "ActiveState=inactive\\n"\n'
+  printf '    printf "LastTriggerUSec=n/a\\n"\n'
+  printf '    printf "NextElapseUSecRealtime=n/a\\n"\n'
+  printf '    printf "NextElapseUSecMonotonic=0\\n"\n'
+  printf '    ;;\n'
+  # monotonic timer (what `install` writes): realtime elapse is unset, only the
+  # monotonic one is reported
+  printf '  *show*shai-monotonic.timer*)\n'
+  printf '    printf "LoadState=loaded\\n"\n'
+  printf '    printf "ActiveState=active\\n"\n'
+  printf '    printf "LastTriggerUSec=Mon 2026-08-18 14:30:00 EDT\\n"\n'
+  printf '    printf "NextElapseUSecRealtime=n/a\\n"\n'
+  printf '    printf "NextElapseUSecMonotonic=Mon 2026-08-18 15:15:00 EDT\\n"\n'
+  printf '    ;;\n'
+  # a garbage timestamp must not be passed through half-truncated
+  printf '  *show*shai-badstamp.timer*)\n'
+  printf '    printf "LoadState=loaded\\n"\n'
+  printf '    printf "ActiveState=active\\n"\n'
+  printf '    printf "LastTriggerUSec=0\\n"\n'
+  printf '    printf "NextElapseUSecRealtime=whenever soon:ish\\n"\n'
+  printf '    printf "NextElapseUSecMonotonic=n/a\\n"\n'
+  printf '    ;;\n'
+  printf '  *show*shai-missing.timer*)\n'
+  printf '    printf "LoadState=not-found\\n"\n'
   printf '    printf "ActiveState=inactive\\n"\n'
   printf '    printf "LastTriggerUSec=n/a\\n"\n'
   printf '    printf "NextElapseUSecRealtime=n/a\\n"\n'
   printf '    ;;\n'
+  # simulates a failing `systemctl show` (e.g. no user bus available)
+  printf '  *show*shai-nobus.timer*)\n'
+  printf '    echo "Failed to connect to bus" >&2\n'
+  printf '    exit 1\n'
+  printf '    ;;\n'
   printf '  *show*)\n'
+  printf '    printf "LoadState=loaded\\n"\n'
   printf '    printf "ActiveState=inactive\\n"\n'
   printf '    printf "LastTriggerUSec=n/a\\n"\n'
   printf '    printf "NextElapseUSecRealtime=n/a\\n"\n'
+  printf '    printf "NextElapseUSecMonotonic=0\\n"\n'
   printf '    ;;\n'
   printf 'esac\n'
 } >"$STUB/systemctl"
@@ -282,5 +316,43 @@ assert_eq "$EMPTY" "yes" "status: empty produces no output"
 : >"$SYSTEMCTL_LOG"
 OUT=$("$DIR/shai-supervise" status --json 2>&1)
 assert_eq "$OUT" "[]" "status --json: empty produces []"
+
+# --- status: argument validation ---
+assert_exit 1 "status: unknown option rejected" -- "$DIR/shai-supervise" status --jsn
+ERR=$("$DIR/shai-supervise" status --jsn 2>&1)
+assert_contains "$ERR" "unknown option: --jsn" "status: unknown option error message"
+
+assert_exit 1 "status: extra positional argument rejected" -- "$DIR/shai-supervise" status heartbeat extra
+ERR=$("$DIR/shai-supervise" status heartbeat extra 2>&1)
+assert_contains "$ERR" "unexpected argument: extra" "status: extra argument error message"
+
+# --- status: monotonic timers (what install writes) still report NEXT ---
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status monotonic 2>&1)
+assert_contains "$(cat "$SYSTEMCTL_LOG")" "NextElapseUSecMonotonic" "status: queries NextElapseUSecMonotonic too"
+assert_contains "$OUT" "2026-08-18 15:15" "status: falls back to monotonic next-elapse when realtime is n/a"
+
+OUT=$("$DIR/shai-supervise" status monotonic --json 2>&1)
+NEXT=$(echo "$OUT" | jq -r '.[0].next' 2>/dev/null)
+assert_eq "$NEXT" "2026-08-18 15:15" "status --json: monotonic fallback shared with table renderer"
+
+# --- status: unparseable timestamps render as -- rather than being truncated ---
+OUT=$("$DIR/shai-supervise" status badstamp 2>&1)
+if echo "$OUT" | grep -q "whenever"; then LEAKED="yes"; else LEAKED="no"; fi
+assert_eq "$LEAKED" "no" "status: unrecognized timestamp format is not passed through"
+NEXT=$("$DIR/shai-supervise" status badstamp --json 2>&1 | jq -r '.[0].next' 2>/dev/null)
+assert_eq "$NEXT" "--" "status --json: unrecognized timestamp renders as --"
+LAST=$("$DIR/shai-supervise" status badstamp --json 2>&1 | jq -r '.[0].last' 2>/dev/null)
+assert_eq "$LAST" "--" "status --json: bare 0 timestamp renders as --"
+
+# --- status: named unit unknown to systemd is an error ---
+assert_exit 1 "status <unknown unit>: exits 1" -- "$DIR/shai-supervise" status missing
+ERR=$("$DIR/shai-supervise" status missing 2>&1)
+assert_contains "$ERR" "shai-missing.timer not found" "status <unknown unit>: reports not-found"
+
+# --- status: a failing systemctl show warns and exits non-zero ---
+assert_exit 1 "status: systemctl failure exits 1" -- "$DIR/shai-supervise" status nobus
+ERR=$("$DIR/shai-supervise" status nobus 2>&1 >/dev/null)
+assert_contains "$ERR" "warning: systemctl show failed" "status: systemctl failure warns on stderr"
 
 finish

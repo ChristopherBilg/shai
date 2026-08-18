@@ -101,6 +101,17 @@ cmd_stop() {
   systemctl --user stop "$name.timer"
 }
 
+# Rows are joined with a real tab: neither systemd unit names nor the rendered
+# columns can contain one, so it is an unambiguous separator between the fields
+# that `status_query` collected and the renderers consume.
+TAB=$'\t'
+
+# Set by status_query for the unit it was called with; a failing `systemctl show`
+# flips STATUS_FAILED so cmd_status can exit non-zero after rendering.
+STATUS_FAILED=0
+STATUS_LOAD="" STATUS_STATE="" STATUS_LAST="" STATUS_NEXT=""
+
+# status_prop <props> <key>: the value of `key=` in `systemctl show` output ("" if absent)
 status_prop() {
   local props="$1" key="$2"
   printf '%s\n' "$props" | while IFS='=' read -r k v; do
@@ -111,12 +122,58 @@ status_prop() {
   done
 }
 
+# status_timestamp <value>: "YYYY-MM-DD HH:MM" from a systemd timestamp such as
+# "Www YYYY-MM-DD HH:MM:SS TZ". The shape is verified before anything is stripped,
+# so "n/a", "0", a raw usec count, or a different `--timestamp=` style yields ""
+# (rendered as "--") instead of a silently mistruncated string.
 status_timestamp() {
-  local val="$1"
-  if [ -z "$val" ] || [ "$val" = "n/a" ]; then return; fi
-  val="${val#* }"
-  val="${val%:*}"
-  printf '%s' "$val"
+  local val="${1:-}"
+  if [[ "$val" =~ ^[A-Za-z]+[[:space:]]+(.*)$ ]]; then val="${BASH_REMATCH[1]}"; fi
+  if [[ "$val" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}) ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+}
+
+# status_next <realtime> <monotonic>: next elapse as "YYYY-MM-DD HH:MM".
+# NextElapseUSecRealtime is only populated for calendar (OnCalendar=) timers; the
+# monotonic timers `install` writes (OnBootSec=/OnUnitActiveSec=) populate
+# NextElapseUSecMonotonic instead, which systemd reports either as a timestamp or
+# as raw microseconds since boot -- the latter is converted with /proc/stat's
+# btime. Unrecognized/absent values yield "".
+status_next() {
+  local realtime="${1:-}" monotonic="${2:-}" ts boot epoch
+  ts=$(status_timestamp "$realtime")
+  if [ -z "$ts" ]; then ts=$(status_timestamp "$monotonic"); fi
+  if [ -n "$ts" ]; then
+    printf '%s' "$ts"
+    return
+  fi
+  # Bounded to 15 digits (~31 years of uptime) so USEC_INFINITY (20 digits, used
+  # for "never") never reaches the arithmetic below.
+  if [[ "$monotonic" =~ ^[0-9]{1,15}$ ]] && [ "$monotonic" != "0" ]; then
+    boot=$(awk '/^btime /{print $2; exit}' /proc/stat 2>/dev/null) || boot=""
+    if [ -n "$boot" ]; then
+      epoch=$((boot + monotonic / 1000000))
+      date -d "@$epoch" '+%Y-%m-%d %H:%M' 2>/dev/null || true
+    fi
+  fi
+}
+
+# status_query <unit>: fill STATUS_LOAD/STATUS_STATE/STATUS_LAST/STATUS_NEXT from a
+# single `systemctl show` call. Both renderers go through this so the table and the
+# JSON output cannot drift apart.
+status_query() {
+  local unit="$1" props
+  if ! props=$(systemctl --user show -p LoadState,ActiveState,LastTriggerUSec,NextElapseUSecRealtime,NextElapseUSecMonotonic "$unit.timer" 2>/dev/null); then
+    printf 'warning: systemctl show failed for %s.timer\n' "$unit" >&2
+    STATUS_FAILED=1
+    props=""
+  fi
+  STATUS_LOAD=$(status_prop "$props" "LoadState")
+  STATUS_STATE=$(status_prop "$props" "ActiveState")
+  STATUS_LAST=$(status_timestamp "$(status_prop "$props" "LastTriggerUSec")")
+  STATUS_NEXT=$(status_next "$(status_prop "$props" "NextElapseUSecRealtime")" "$(status_prop "$props" "NextElapseUSecMonotonic")")
+  if [ "$STATUS_LOAD" = "not-found" ]; then STATUS_STATE="not-found"; fi
 }
 
 cmd_status() {
@@ -124,14 +181,23 @@ cmd_status() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --json) json=true ;;
-      *) script="$1" ;;
+      -*)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        exit 1
+        ;;
+      *)
+        if [ -n "$script" ]; then
+          printf 'error: unexpected argument: %s\n' "$1" >&2
+          exit 1
+        fi
+        script="$1"
+        ;;
     esac
     shift
   done
 
-  local units=()
+  local units=() name f
   if [ -n "$script" ]; then
-    local name
     name="$(unit_name "$script")"
     units+=("$name")
   else
@@ -149,36 +215,39 @@ cmd_status() {
     return
   fi
 
+  local rows=() unit
+  for unit in "${units[@]}"; do
+    status_query "$unit"
+    # An explicitly named unit that systemd does not know about is an error, as it
+    # was when this delegated to `systemctl status` (which exits non-zero there).
+    if [ -n "$script" ] && [ "$STATUS_LOAD" = "not-found" ]; then
+      printf 'error: %s.timer not found (not installed?)\n' "$unit" >&2
+      exit 1
+    fi
+    rows+=("$unit$TAB${STATUS_STATE:---}$TAB${STATUS_LAST:---}$TAB${STATUS_NEXT:---}")
+  done
+
+  local row u s l n
   if [ "$json" = true ]; then
     printf '['
     local first=true
-    for unit in "${units[@]}"; do
-      local props state last_raw next_raw last next
-      props=$(systemctl --user show -p ActiveState,LastTriggerUSec,NextElapseUSecRealtime "$unit.timer" 2>/dev/null) || props=""
-      state=$(status_prop "$props" "ActiveState")
-      last_raw=$(status_prop "$props" "LastTriggerUSec")
-      next_raw=$(status_prop "$props" "NextElapseUSecRealtime")
-      last=$(status_timestamp "$last_raw")
-      next=$(status_timestamp "$next_raw")
+    for row in "${rows[@]}"; do
+      IFS="$TAB" read -r u s l n <<<"$row"
       "$first" || printf ','
       first=false
-      jq -nc --arg u "$unit" --arg s "${state:---}" --arg l "${last:---}" --arg n "${next:---}" \
+      jq -nc --arg u "$u" --arg s "$s" --arg l "$l" --arg n "$n" \
         '{unit:$u, state:$s, last:$l, next:$n}'
     done
     printf ']\n'
   else
     printf '%-30s %-10s  %-22s  %s\n' "UNIT" "STATE" "LAST" "NEXT"
-    for unit in "${units[@]}"; do
-      local props state last_raw next_raw last next
-      props=$(systemctl --user show -p ActiveState,LastTriggerUSec,NextElapseUSecRealtime "$unit.timer" 2>/dev/null) || props=""
-      state=$(status_prop "$props" "ActiveState")
-      last_raw=$(status_prop "$props" "LastTriggerUSec")
-      next_raw=$(status_prop "$props" "NextElapseUSecRealtime")
-      last=$(status_timestamp "$last_raw")
-      next=$(status_timestamp "$next_raw")
-      printf '%-30s %-10s  %-22s  %s\n' "$unit" "${state:---}" "${last:---}" "${next:---}"
+    for row in "${rows[@]}"; do
+      IFS="$TAB" read -r u s l n <<<"$row"
+      printf '%-30s %-10s  %-22s  %s\n' "$u" "$s" "$l" "$n"
     done
   fi
+
+  if [ "$STATUS_FAILED" -ne 0 ]; then exit 1; fi
 }
 
 cmd_logs() {
