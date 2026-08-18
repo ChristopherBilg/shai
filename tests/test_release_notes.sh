@@ -85,7 +85,7 @@ write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
 # (the JSON as printf's *argument*, not its format string) writes it byte-for-byte — unlike
 # `printf 'literal-with-\n-in-it'`, which would have bash's printf interpret \n as a real
 # newline and corrupt the JSON (a raw control character inside a JSON string is invalid).
-LLM_RESPONSE='{"type":"message","content":[{"type":"text","text":"# Release Notes - v1..v2\n\n## Added\n- Feature X (#1)\n\n## Fixed\n- Bug Y (#2)\n\n## Infrastructure\n- CI config (#3)\n\n## Contributors\n\n@alice, @bob, @carol"}],"stop_reason":"end_turn"}'
+LLM_RESPONSE='{"type":"message","content":[{"type":"text","text":"## Added\n- Feature X (#1)\n\n## Fixed\n- Bug Y (#2)\n\n## Infrastructure\n- CI config (#3)"}],"stop_reason":"end_turn"}'
 printf '%s' "$LLM_RESPONSE" | write_curl_stub 200
 
 STDOUT=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>/dev/null)
@@ -104,8 +104,12 @@ assert_contains "$STDOUT" "@alice, @bob, @carol" "release_notes: stdout contains
 write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
 printf '%s' "$LLM_RESPONSE" | write_curl_stub 200
 
-STDERR=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>&1 >/dev/null)
-if [[ "$STDERR" == *"Feature X"* ]]; then DUPED="yes"; else DUPED="no"; fi
+QUIET_STDERR_FILE="$TMP/dedupe_stderr"
+QUIET_STDOUT=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>"$QUIET_STDERR_FILE")
+QUIET_RC=$?
+assert_eq "$QUIET_RC" "0" "release_notes: dedupe run exits 0"
+assert_contains "$QUIET_STDOUT" "Feature X" "release_notes: dedupe run produces notes on stdout"
+if grep -q "Feature X" "$QUIET_STDERR_FILE" 2>/dev/null; then DUPED="yes"; else DUPED="no"; fi
 assert_eq "$DUPED" "no" "release_notes: --quiet keeps the notes off stderr (no duplicate output)"
 
 # --- success case: 2-arg invocation (auto-detect HEAD) ---
@@ -145,9 +149,9 @@ RC=$?
 assert_eq "$RC" "1" "release_notes: exit 1 on gh failure"
 assert_contains "$OUT" "ERROR" "release_notes: prints ERROR on gh failure"
 
-# --- prompt template asks for the top-level header and the contributor list ---
+# --- prompt template delegates deterministic sections to run.sh ---
 PROMPT_TEXT=$("$DIR/shai-prompt" release_notes)
-assert_contains "$PROMPT_TEXT" "# Release Notes - {{BASE}}..{{HEAD}}" "release_notes: prompt requests top-level header"
-assert_contains "$PROMPT_TEXT" "## Contributors" "release_notes: prompt requests contributors section"
+assert_contains "$PROMPT_TEXT" "top-level header" "release_notes: prompt mentions header is mechanical"
+assert_contains "$PROMPT_TEXT" "contributors section" "release_notes: prompt mentions contributors are mechanical"
 
 finish
