@@ -42,6 +42,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `list_directory` — list the files and folders in a local directory (read-only)
 - `print_file` — print the contents of a local file (read-only)
 - `sleep` — pause execution for a specified number of seconds, 1-300 (read-only)
+- `ci` — run a configured CI check for the current repository; checks are defined in `$SHAI_HOME/ci.json` keyed by git remote URL (write, requires approval)
 - `write_file` — create or overwrite a file with given content, creating parent directories as needed (write, requires approval)
 - `patch_file` — replace a unique string in an existing file; the string must appear exactly once (write, requires approval)
 - `delete_file` — delete a file; the file must exist and must not be a directory (write, requires approval)
