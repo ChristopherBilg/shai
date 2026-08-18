@@ -16,7 +16,7 @@ No language runtime, no dependencies beyond `bash`, `curl`, `jq`, and (for the G
 export ANTHROPIC_API_KEY=sk-ant-...   # required at runtime
 ./shai-repl                            # interactive REPL
 ./shai-doctor                          # check environment prerequisites
-./shai-repl --version                  # print installed version
+./shai-version                         # print installed version
 
 # Install from a release (requires gh CLI, authenticated):
 gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
@@ -125,6 +125,10 @@ The scripts:
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
   Used by `shai-repl` at startup to load `prompts/system.txt`.
+- **`shai-version`** (`shai-version:1`) — prints the installed version to stdout as a bare string,
+  resolved in order: the `VERSION` file next to the script (written by release tarballs), then
+  `git describe --tags` in the install directory (dev clones), then the literal `dev`. Single
+  purpose and pipeable: it has no REPL dependency and needs no `ANTHROPIC_API_KEY`. Exit 0 always.
 - **`shai-tools [tools-dir]`** (`shai-tools:1`) — scans `tools/*/tool.json` (default:
   `$DIR/tools`) and validates each plugin: `tool.json` is valid JSON with `name`, `description`,
   and `input_schema`; `name` matches its directory name; `run.sh` exists and is executable; and
@@ -333,6 +337,21 @@ passes (creating the label in the repo first if needed), so PRs from `issue_work
 automatically queued for review. Install via
 `shai-supervise install workflows/review_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
+
+**`workflows/pr_reviewer/run.sh`** takes `<repo> <number>` and produces a structured code
+review for a GitHub pull request. It validates the repo/number (with path-traversal and
+leading-zero guards matching `review_resolver`), calls `wf_init`, exports the co-located
+`policy.json` overlay, and hands `prompts/pr_reviewer.txt` (with `{{REPO}}`/`{{NUMBER}}`/
+`{{OWNER}}` substituted) to `wf_llm --tools`. The LLM reads the PR metadata,
+diff, and existing comments (all with `--paginate`), clones the repo via `git clone`, checks
+out the head branch, and reads source files around each changed area before commenting.
+Reviews use conventionalcomments.org format with severity mapping (critical/important/minor)
+and assess correctness, architecture, testing quality, and production readiness. Posts a
+GitHub review with inline comments plus a separate summary comment containing a verdict
+(Ready to merge / Ready with minor fixes / Needs changes) with finding counts. Handles
+cross-fork PRs (review proceeds but notes the PR cannot be updated). **No idempotency**
+(no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to the dispatcher's label-removal
+pattern. Exit 0 on success, 1 on failure, 2 on usage error.
 
 **`workflows/review_resolver/run.sh`** takes `<repo> <number>` and is the final stage of the
 autonomous pipeline (`issue_dispatcher → issue_worker → review_dispatcher → pr_reviewer →
