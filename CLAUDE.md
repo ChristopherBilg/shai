@@ -16,7 +16,7 @@ No language runtime, no dependencies beyond `bash`, `curl`, `jq`, and (for the G
 export ANTHROPIC_API_KEY=sk-ant-...   # required at runtime
 ./shai-repl                            # interactive REPL
 ./shai-doctor                          # check environment prerequisites
-./shai-repl --version                  # print installed version
+./shai-version                         # print installed version
 
 # Install from a release (requires gh CLI, authenticated):
 gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
@@ -125,6 +125,10 @@ The scripts:
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
   Used by `shai-repl` at startup to load `prompts/system.txt`.
+- **`shai-version`** (`shai-version:1`) — prints the installed version to stdout as a bare string,
+  resolved in order: the `VERSION` file next to the script (written by release tarballs), then
+  `git describe --tags` in the install directory (dev clones), then the literal `dev`. Single
+  purpose and pipeable: it has no REPL dependency and needs no `ANTHROPIC_API_KEY`. Exit 0 always.
 - **`shai-tools [tools-dir]`** (`shai-tools:1`) — scans `tools/*/tool.json` (default:
   `$DIR/tools`) and validates each plugin: `tool.json` is valid JSON with `name`, `description`,
   and `input_schema`; `name` matches its directory name; `run.sh` exists and is executable; and
