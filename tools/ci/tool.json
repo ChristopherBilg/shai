@@ -1,0 +1,22 @@
+{
+  "name": "ci",
+  "description": "Run a configured CI check for the current repository. Use action 'list' to see available checks, then 'run' with a check name to execute one. Only checks explicitly configured in $SHAI_HOME/ci.json can be run.",
+  "capabilities": {
+    "read_only": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list", "run"],
+        "description": "Action to perform: 'list' shows available checks for the current repo, 'run' executes a specific check."
+      },
+      "check": {
+        "type": "string",
+        "description": "Name of the check to run (required when action is 'run'). Must match a key in the repo's checks config."
+      }
+    },
+    "required": ["action"]
+  }
+}
