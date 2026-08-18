@@ -16,4 +16,4 @@ Categorize each PR into the appropriate section and write concise release notes 
 
 For each PR, write one bullet point with a human-readable summary of the change. Do not copy the PR title verbatim — rephrase it as a concise changelog entry. Include the PR number as a trailing reference, e.g. (#42).
 
-Output raw markdown only. No wrapping code fences, no preamble, no commentary.
+Output the categorized sections only — raw markdown, no wrapping code fences, no preamble, no commentary. Do not include a top-level header or a contributors section; those are added mechanically.
