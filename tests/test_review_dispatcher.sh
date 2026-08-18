@@ -2,8 +2,8 @@
 # test_review_dispatcher.sh — unit tests for workflows/review_dispatcher/run.sh
 # Covers: workflows/review_dispatcher/run.sh — idle tick, gh search failure, scoped search,
 #   label removal before dispatch, sequential processing, ledger safety-net dedup, worker
-#   failure leaving ledger unmarked, label-removal-failure skip-and-continue, input validation,
-#   and truncation warning
+#   failure leaving ledger unmarked, label-removal-failure skip-and-continue (including the
+#   already-seen path), input validation, and truncation warning
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -149,6 +149,23 @@ assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
   "review_dispatcher: already-seen PR is not dispatched"
 assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-review-dispatcher" \
   "review_dispatcher: already-seen PR still has label removed"
+
+# --- already-seen PR whose label cannot be removed is reported, not silently skipped ---
+desc "already-seen label removal failure"
+reset_state
+mkdir -p "$SHAI_HOME/ledgers"
+printf '{"key":"pr:owner/repo:99","ts":"2026-08-14T00:00:00Z","session_id":"s1"}\n' \
+  >"$SHAI_HOME/ledgers/review_dispatcher.jsonl"
+echo 1 >"$EDIT_RC_FILE"
+cat >"$SEARCH_FIXTURE" <<'JSON'
+[{"repository":{"nameWithOwner":"owner/repo"},"number":99}]
+JSON
+OUT=$("$DIR/workflows/review_dispatcher/run.sh" 2>&1)
+RC=$?
+assert_eq "$RC" "0" "review_dispatcher: exit 0 when an already-seen PR cannot be de-labeled"
+assert_contains "$OUT" "already-seen owner/repo#99" \
+  "review_dispatcher: warns when an already-seen PR's label cannot be removed"
+assert_contains "$OUT" "skipped=1" "review_dispatcher: still counts the skip"
 
 # --- label removal failure: skip and continue, label stays for retry, no dispatch ---
 desc "label removal failure"

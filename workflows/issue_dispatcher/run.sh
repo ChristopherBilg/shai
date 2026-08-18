@@ -48,7 +48,11 @@ while IFS=$'\t' read -r REPO NUMBER; do
   # Safety-net dedup: the label removal below is the primary guard, but a ledger hit means
   # this issue was already handed off in a prior tick before its label could be re-added.
   if wf_seen "$KEY"; then
-    gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" >/dev/null 2>&1 || true
+    # A permanent removal failure here (e.g. lost triage permission) would otherwise make the
+    # issue silently re-appear as skipped=1 on every tick, so surface it.
+    if ! gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" >/dev/null 2>&1; then
+      wf_output "WARNING: could not remove label from already-seen $REPO#$NUMBER, it will re-appear next tick"
+    fi
     SKIPPED=$((SKIPPED + 1))
     continue
   fi
