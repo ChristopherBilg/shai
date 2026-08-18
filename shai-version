@@ -8,8 +8,8 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
-if [ -f "$DIR/VERSION" ]; then
-  cat "$DIR/VERSION"
+if [ -s "$DIR/VERSION" ] && version=$(cat "$DIR/VERSION" 2>/dev/null); then
+  printf '%s\n' "$version"
 elif command -v git &>/dev/null; then
   git -C "$DIR" describe --tags 2>/dev/null || echo "dev"
 else

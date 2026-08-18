@@ -29,13 +29,30 @@ out=$(ANTHROPIC_API_KEY="" "$DIR/shai-version" 2>/dev/null)
 rm -f "$DIR/VERSION"
 assert_eq "$out" "v1.0.0" "shai-version: works without ANTHROPIC_API_KEY"
 
-# Case 5: shai-repl no longer answers --version (version querying lives in shai-version)
-REPL_HOME="$(mktemp -d)"
-_CLEANUP_DIRS+=("$REPL_HOME")
-echo "v1.0.0" >"$DIR/VERSION"
-out=$(SHAI_HOME="$REPL_HOME" SHAI_SESSION_ID=test "$DIR/shai-repl" --version </dev/null 2>/dev/null || true)
+# Case 5: empty VERSION file falls through to the dev fallback
+make_stub_bin
+printf '#!/bin/bash\nexit 1\n' >"$STUB/git"
+chmod +x "$STUB/git"
+printf '' >"$DIR/VERSION"
+out=$("$DIR/shai-version" 2>/dev/null)
 rm -f "$DIR/VERSION"
-assert_eq "$(printf '%s' "$out" | grep -c 'v1\.0\.0' || true)" "0" \
-  "shai-repl: --version no longer prints the version"
+assert_eq "$out" "dev" "shai-version: empty VERSION falls through to dev"
+
+# Case 6: unreadable VERSION file falls through gracefully (exit 0)
+if [ "$(id -u)" != "0" ]; then
+  echo "v1.0.0" >"$DIR/VERSION"
+  chmod 000 "$DIR/VERSION"
+  rc=0
+  out=$("$DIR/shai-version" 2>/dev/null) || rc=$?
+  rm -f "$DIR/VERSION"
+  assert_eq "$rc" "0" "shai-version: unreadable VERSION still exits 0"
+  assert_eq "$out" "dev" "shai-version: unreadable VERSION falls through to dev"
+fi
+
+# Case 7: shai-repl rejects --version with a usage error (version querying lives in shai-version)
+rc=0
+err=$("$DIR/shai-repl" --version 2>&1) || rc=$?
+assert_eq "$rc" "2" "shai-repl: --version exits 2 (unknown option)"
+assert_contains "$err" "unknown option" "shai-repl: --version prints unknown-option error"
 
 finish

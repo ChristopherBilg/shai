@@ -8,10 +8,20 @@
 #         events in $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits finalized
 #         events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes directly if
 #         the run dir is unavailable)
-# Exit: 0 on clean exit; 1 if ANTHROPIC_API_KEY is missing (health check); 3 if the system prompt is missing or empty (shai-prompt)
+# Exit: 0 on clean exit; 1 if ANTHROPIC_API_KEY is missing (health check); 2 on unknown option; 3 if the system prompt is missing or empty (shai-prompt)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
+LOOP_QUIET_FLAG=""
+case "${1:-}" in
+  -q | --quiet) LOOP_QUIET_FLAG="--quiet" ;;
+  -*)
+    printf 'shai-repl: unknown option: %s\n' "$1" >&2
+    printf 'Usage: shai-repl [-q|--quiet]\n' >&2
+    exit 2
+    ;;
+esac
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 # The system prompt is authored content, not code: it lives in prompts/system.txt and is
@@ -23,12 +33,6 @@ TOOLS_FILE=$(mktemp)
 chmod u+w "$TOOLS_FILE"
 trap 'rm -f "$TOOLS_FILE"' EXIT
 "$DIR/shai-tools" >"$TOOLS_FILE"
-
-# --quiet is forwarded to shai-loop verbatim; shai-loop maps it to its own PRINT_OPTS
-LOOP_QUIET_FLAG=""
-case "${1:-}" in
-  -q | --quiet) LOOP_QUIET_FLAG="--quiet" ;;
-esac
 
 # mint_id <prefix> — UTC-sortable id with 4 urandom bytes for collision resistance
 mint_id() {
