@@ -132,6 +132,16 @@ OUT=$("$TOOL" '{"action":"list"}' 2>&1) || true
 assert_contains "$OUT" "ci.json" "missing config: mentions ci.json"
 assert_exit 1 "missing config: exit 1" -- "$TOOL" '{"action":"list"}'
 
+# ===== malformed ci.json =====
+desc "malformed ci.json"
+write_ci_config <<'JSON'
+{ "version": "1.0", "repos": { this is not valid json
+JSON
+write_remote_stub "https://github.com/owner/repo.git"
+OUT=$("$TOOL" '{"action":"list"}' 2>&1) || true
+assert_contains "$OUT" "not valid JSON" "malformed config: mentions not valid JSON"
+assert_exit 1 "malformed config: exit 1" -- "$TOOL" '{"action":"list"}'
+
 # restore for remaining tests
 write_ci_config <<'JSON'
 {

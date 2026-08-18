@@ -28,6 +28,11 @@ if [ ! -f "$config_file" ]; then
   exit 1
 fi
 
+if ! jq empty "$config_file" 2>/dev/null; then
+  echo "error: $config_file is not valid JSON"
+  exit 1
+fi
+
 remote=$(git remote get-url origin 2>/dev/null) || {
   echo "error: not in a git repository or no 'origin' remote"
   exit 1
