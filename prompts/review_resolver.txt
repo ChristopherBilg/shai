@@ -70,8 +70,9 @@ Classify every unresolved comment thread as exactly one of:
 | `resolve` | Post a short acknowledging reply, then resolve the thread. |
 | `noop` | Purely informational (e.g. praise); no response needed. |
 
-`pr_reviewer` posts comments in conventionalcomments.org format (`suggestion:`, `nitpick:`,
-`issue:`, `question:`, `praise:`). Use those labels only as a hint — read the actual content and
+`pr_reviewer` posts comments in conventionalcomments.org format with severity suffixes
+(`issue (critical):`, `issue (important):`, `suggestion (important):`, `suggestion (minor):`,
+`nitpick (minor):`, `question:`, `thought:`, `praise:`). Use those labels only as a hint — read the actual content and
 decide from it, do not mechanically map a label to an action. A `nitpick:` that is trivially
 correct is worth a `fix`; an `issue:` that is wrong deserves a `reply` that explains why.
 
