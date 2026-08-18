@@ -16,12 +16,12 @@ fi
 REPO="$1"
 NUMBER="$2"
 
-if [[ ! "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+if [[ ! "$REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || [[ "$REPO" == *..* ]]; then
   printf 'error: repo must be OWNER/REPO format (got "%s")\n' "$REPO" >&2
   exit 2
 fi
 
-if [[ ! "$NUMBER" =~ ^[0-9]+$ ]]; then
+if [[ ! "$NUMBER" =~ ^[1-9][0-9]*$ ]]; then
   printf 'error: PR number must be a positive integer (got "%s")\n' "$NUMBER" >&2
   exit 2
 fi
@@ -35,7 +35,9 @@ fi
 
 PROMPT_TEMPLATE=$("$DIR/shai-prompt" pr_reviewer) || wf_fail "cannot load prompts/pr_reviewer.txt"
 
-PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g")
+OWNER="${REPO%%/*}"
+
+PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" | sed "s/{{NUMBER}}/$NUMBER/g; s|{{REPO}}|$REPO|g; s/{{OWNER}}/$OWNER/g")
 
 RESULT=$(wf_llm --tools "$PROMPT") || wf_fail "pipeline error reviewing PR #$NUMBER"
 

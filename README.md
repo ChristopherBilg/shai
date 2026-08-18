@@ -17,7 +17,7 @@ gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -
 
 Requires `gh` CLI, authenticated (`gh auth login`). Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback: `export SHAI_VERSION=v2026.08.10 && gh api ... | base64 -d | bash`.
 
-Check your version: `shai-repl --version`
+Check your version: `shai-version`
 
 ## Quick start
 ```shell
