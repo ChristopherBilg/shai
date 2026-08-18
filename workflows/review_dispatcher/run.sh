@@ -56,7 +56,11 @@ while IFS=$'\t' read -r REPO NUMBER; do
   KEY="pr:$REPO:$NUMBER"
 
   if wf_seen "$KEY"; then
-    gh pr edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" >/dev/null 2>&1 || true
+    # A permanent removal failure here (e.g. lost triage permission) would otherwise make the
+    # PR silently re-appear as skipped=1 on every tick, so surface it.
+    if ! gh pr edit "$NUMBER" --repo "$REPO" --remove-label "$LABEL" >/dev/null 2>&1; then
+      wf_output "WARNING: could not remove label from already-seen $REPO#$NUMBER, it will re-appear next tick"
+    fi
     SKIPPED=$((SKIPPED + 1))
     continue
   fi

@@ -2,7 +2,8 @@
 # test_issue_dispatcher.sh — unit tests for workflows/issue_dispatcher/run.sh
 # Covers: workflows/issue_dispatcher/run.sh — idle tick, gh search failure, label removal
 #   before dispatch, sequential processing, dual idempotency (label + ledger), worker
-#   failure leaving ledger unmarked, and label-removal-failure skip-and-continue
+#   failure leaving ledger unmarked, and label-removal-failure skip-and-continue (including
+#   the already-seen path)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -142,6 +143,27 @@ assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
   "issue_dispatcher: already-seen issue is not dispatched"
 assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-dispatcher" \
   "issue_dispatcher: already-seen issue still has label removed"
+
+# --- already-seen issue whose label cannot be removed is reported, not silently skipped ---
+desc "already-seen label removal failure"
+reset_state
+mkdir -p "$SHAI_HOME/ledgers"
+printf '{"key":"issue:owner/repo:99","ts":"2026-08-13T00:00:00Z","session_id":"s1"}\n' \
+  >"$SHAI_HOME/ledgers/issue_dispatcher.jsonl"
+echo 1 >"$EDIT_RC_FILE"
+cat >"$SEARCH_FIXTURE" <<'JSON'
+[{"repository":{"nameWithOwner":"owner/repo"},"number":99}]
+JSON
+OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
+RC=$?
+assert_eq "$RC" "0" "issue_dispatcher: exit 0 when an already-seen issue cannot be de-labeled"
+assert_contains "$OUT" "already-seen owner/repo#99" \
+  "issue_dispatcher: warns when an already-seen issue's label cannot be removed"
+assert_contains "$OUT" "skipped=1" "issue_dispatcher: still counts the skip"
+assert_contains "$OUT" "failed=0" \
+  "issue_dispatcher: already-seen removal failure is not counted as a failure"
+assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
+  "issue_dispatcher: already-seen issue is not dispatched when its label cannot be removed"
 
 # --- label removal failure: skip and continue, label stays for retry, no dispatch ---
 desc "label removal failure"
