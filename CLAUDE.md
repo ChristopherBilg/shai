@@ -58,7 +58,9 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
 `SHAI_MODEL` (default `claude-opus-5`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_UNIT_DIR` (systemd unit directory, default
-`~/.config/systemd/user`).
+`~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
+step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; overrides
+remote detection).
 
 **Ambient trace context** — set by `shai-repl`/`shai-retry`, inherited by every child filter, read only
 by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its request dump):
@@ -306,13 +308,24 @@ install directory.
 
 **Post-workflow suggestions** — `wf_suggest` runs a second `wf_llm --tools` call after the
 primary task completes, using `prompts/suggest.txt`. The LLM reviews the session trace and
-may create GitHub issues on the shai repo (derived from `git remote get-url origin`) labeled
-`shai-suggestion` for improvement opportunities (conventions, bugs, enhancements, refactoring,
-testing gaps, docs). Dedup is prompt-driven: the LLM checks existing open `shai-suggestion`
-issues before creating new ones. Non-fatal: all failures are logged as warnings, never crash
-the parent workflow. If no `SHAI_POLICY_OVERLAY` is set, `wf_suggest` creates a temporary one
-allowing `gh`. Called by `issue_worker`, `pr_reviewer`, `review_resolver`, and `release_notes`
-after their primary task succeeds.
+may create GitHub issues on the shai repo labeled `shai-suggestion` for improvement
+opportunities (conventions, bugs, enhancements, refactoring, testing gaps, docs), at most two
+per run. Dedup is prompt-driven: the LLM checks existing open `shai-suggestion` issues before
+creating new ones. Called by `issue_worker`, `pr_reviewer`, and `review_resolver` after their
+primary task succeeds. Deliberately **not** called by `release_notes`: its primary call runs
+tool-less over a session containing untrusted external data, and its stdout is the generated
+markdown.
+
+The target repo comes from `SHAI_SUGGEST_REPO` when set, else from the `origin` remote of the
+install directory — but only when that directory is itself the top of the work tree, since
+release installs have no `.git` and git's parent-directory discovery would otherwise resolve
+an unrelated ancestor repo. Either way the value must match `OWNER/REPO`; anything else skips
+the step. `wf_suggest` **requires** an existing `SHAI_POLICY_OVERLAY` (the co-located
+`<name>/policy.json`) and never synthesizes one — overlay rules supersede base rules including
+`deny`, so a fabricated "allow gh" overlay would override an explicit user denial. Set
+`SHAI_SUGGEST=0` to disable the step (and its extra LLM call) everywhere. Non-fatal by design:
+every failure path is a warning on **stderr** and returns 0, so it can never break or
+contaminate the parent workflow.
 
 **Work ledger** — `$SHAI_HOME/ledgers/<workflow_name>.jsonl` stores per-workflow idempotency
 keys. Each line: `{"key":"...","ts":"...","session_id":"..."}`. Two helpers in `lib/workflow.sh`:
