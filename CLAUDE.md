@@ -363,7 +363,9 @@ GitHub review with inline comments plus a separate summary comment containing a 
 (Ready to merge / Ready with minor fixes / Needs changes) with finding counts. Handles
 cross-fork PRs (review proceeds but notes the PR cannot be updated). As its last step the
 prompt tells the LLM to add the `shai-resolve-dispatcher` label to the PR (creating the label
-in the repo first if needed), which queues the PR for `resolve_dispatcher`. **No idempotency**
+in the repo first if needed) — but only when the review posted at least one actionable inline
+comment, so a clean praise-only "Ready to merge" review does not queue a no-op
+`review_resolver` run. That label queues the PR for `resolve_dispatcher`. **No idempotency**
 (no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to the dispatcher's label-removal
 pattern. Exit 0 on success, 1 on failure, 2 on usage error.
 
@@ -399,11 +401,13 @@ marks the ledger on success. Validates repo format and PR number before dispatch
 result count hits the search limit. All matching PRs are processed sequentially per invocation.
 `SHAI_WORKFLOW` overrides the `shai-workflow` binary (used by the test suite). Error handling:
 no matches → exit 0 (idle tick); `gh search` failure → `wf_fail`/exit 1 (next tick retries);
-label removal failure for one PR → warn, skip, continue (label stays for retry); worker
-failure → label already removed, ledger left unmarked (re-label to retry). The `pr_reviewer`
-prompt instructs the LLM to add the `shai-resolve-dispatcher` label once its review is posted
-(creating the label in the repo first if needed), so reviewed PRs are automatically queued for
-resolution. Install via
+label removal failure for one PR → warn, skip, continue (label stays for retry) — the
+already-seen ledger path warns too, so a PR that can never be de-labeled does not silently
+re-appear as a skip on every tick; worker failure → label already removed, ledger left
+unmarked (re-label to retry). The `pr_reviewer` prompt instructs the LLM to add the
+`shai-resolve-dispatcher` label once its review is posted with at least one actionable inline
+comment (creating the label in the repo first if needed), so reviewed PRs that have findings
+are automatically queued for resolution. Install via
 `shai-supervise install workflows/resolve_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
 
