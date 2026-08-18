@@ -68,6 +68,16 @@ if [ -z "$PR_DATA" ]; then
   exit 0
 fi
 
+# shellcheck disable=SC2016
+CONTRIBUTORS=$(printf '%s' "$PR_JSON" | jq -r --arg shas "$COMMIT_SHAS" '
+  ($shas | split("\n")) as $sha_list |
+  [ .[] | select(.mergeCommit.oid as $oid | $sha_list | index($oid)) | .author.login ] |
+  unique |
+  map(select(test("\\[bot\\]$") | not)) |
+  map("@" + .) |
+  join(", ")
+')
+
 PROMPT_TEMPLATE=$("$DIR/shai-prompt" release_notes) || wf_fail "cannot load prompts/release_notes.txt"
 
 PROMPT="${PROMPT_TEMPLATE//\{\{REPO\}\}/$REPO}"
@@ -75,15 +85,24 @@ PROMPT="${PROMPT//\{\{BASE\}\}/$BASE}"
 PROMPT="${PROMPT//\{\{HEAD\}\}/$HEAD}"
 PROMPT="${PROMPT//\{\{PR_DATA\}\}/$PR_DATA}"
 
-RESULT=$(wf_llm "$PROMPT") || wf_fail "pipeline error generating release notes"
+# shai-loop echoes a human-readable copy of the reply to stderr, and this workflow prints
+# the notes itself (below) — so without suppression the user sees them twice. --quiet drops
+# the dispatch markers; 2>/dev/null drops the reply echo (same idiom as heartbeat/run.sh).
+# Pipeline failures are still surfaced by the wf_fail below and the type/source check.
+RESULT=$(wf_llm --quiet "$PROMPT" 2>/dev/null) || wf_fail "pipeline error generating release notes"
 
 TYPE=$(printf '%s' "$RESULT" | jq -r '.type // empty' 2>/dev/null) || TYPE=""
 SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE=""
 
 if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
+  printf '# Release Notes - %s..%s\n\n' "$BASE" "$HEAD"
   printf '%s' "$RESULT" | jq -r '.payload.content[] | select(.type == "text") | .text'
+  if [ -n "$CONTRIBUTORS" ]; then
+    printf '\n## Contributors\n\n%s\n' "$CONTRIBUTORS"
+  fi
   wf_output "generated release notes for $REPO ($BASE...$HEAD)" >&2
   exit 0
 else
-  wf_fail "unexpected response: type=$TYPE source=$SOURCE"
+  PAYLOAD_TEXT=$(printf '%s' "$RESULT" | jq -r '.payload.text // empty' 2>/dev/null) || PAYLOAD_TEXT=""
+  wf_fail "unexpected response: type=$TYPE source=$SOURCE${PAYLOAD_TEXT:+ ($PAYLOAD_TEXT)}"
 fi

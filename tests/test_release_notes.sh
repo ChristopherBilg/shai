@@ -91,12 +91,26 @@ printf '%s' "$LLM_RESPONSE" | write_curl_stub 200
 STDOUT=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>/dev/null)
 RC=$?
 assert_eq "$RC" "0" "release_notes: exit 0 on valid response"
+assert_contains "$STDOUT" "# Release Notes - v1..v2" "release_notes: stdout contains top-level header"
 assert_contains "$STDOUT" "Added" "release_notes: stdout contains Added category"
 assert_contains "$STDOUT" "(#1)" "release_notes: stdout contains PR reference"
 assert_contains "$STDOUT" "Fixed" "release_notes: stdout contains Fixed category"
 assert_contains "$STDOUT" "(#2)" "release_notes: stdout contains second PR reference"
 assert_contains "$STDOUT" "Infrastructure" "release_notes: stdout contains Infrastructure category"
 assert_contains "$STDOUT" "(#3)" "release_notes: stdout contains third PR reference"
+assert_contains "$STDOUT" "@alice, @bob, @carol" "release_notes: stdout contains contributor list"
+
+# --- --quiet: shai-loop's stderr copy is suppressed, so notes are printed exactly once ---
+write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
+printf '%s' "$LLM_RESPONSE" | write_curl_stub 200
+
+QUIET_STDERR_FILE="$TMP/dedupe_stderr"
+QUIET_STDOUT=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>"$QUIET_STDERR_FILE")
+QUIET_RC=$?
+assert_eq "$QUIET_RC" "0" "release_notes: dedupe run exits 0"
+assert_contains "$QUIET_STDOUT" "Feature X" "release_notes: dedupe run produces notes on stdout"
+if grep -q "Feature X" "$QUIET_STDERR_FILE" 2>/dev/null; then DUPED="yes"; else DUPED="no"; fi
+assert_eq "$DUPED" "no" "release_notes: --quiet keeps the notes off stderr (no duplicate output)"
 
 # --- success case: 2-arg invocation (auto-detect HEAD) ---
 write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
@@ -134,5 +148,10 @@ OUT=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>&1)
 RC=$?
 assert_eq "$RC" "1" "release_notes: exit 1 on gh failure"
 assert_contains "$OUT" "ERROR" "release_notes: prints ERROR on gh failure"
+
+# --- prompt template delegates deterministic sections to run.sh ---
+PROMPT_TEXT=$("$DIR/shai-prompt" release_notes)
+assert_contains "$PROMPT_TEXT" "top-level header" "release_notes: prompt mentions header is mechanical"
+assert_contains "$PROMPT_TEXT" "contributors section" "release_notes: prompt mentions contributors are mechanical"
 
 finish
