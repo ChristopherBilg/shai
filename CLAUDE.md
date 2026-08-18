@@ -338,6 +338,21 @@ automatically queued for review. Install via
 `shai-supervise install workflows/review_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
 
+**`workflows/pr_reviewer/run.sh`** takes `<repo> <number>` and produces a structured code
+review for a GitHub pull request. It validates the repo/number (with path-traversal and
+leading-zero guards matching `review_resolver`), calls `wf_init`, exports the co-located
+`policy.json` overlay, and hands `prompts/pr_reviewer.txt` (with `{{REPO}}`/`{{NUMBER}}`/
+`{{OWNER}}` substituted) to `wf_llm --tools`. The LLM reads the PR metadata,
+diff, and existing comments (all with `--paginate`), clones the repo via `git clone`, checks
+out the head branch, and reads source files around each changed area before commenting.
+Reviews use conventionalcomments.org format with severity mapping (critical/important/minor)
+and assess correctness, architecture, testing quality, and production readiness. Posts a
+GitHub review with inline comments plus a separate summary comment containing a verdict
+(Ready to merge / Ready with minor fixes / Needs changes) with finding counts. Handles
+cross-fork PRs (review proceeds but notes the PR cannot be updated). **No idempotency**
+(no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to the dispatcher's label-removal
+pattern. Exit 0 on success, 1 on failure, 2 on usage error.
+
 **`workflows/review_resolver/run.sh`** takes `<repo> <number>` and is the final stage of the
 autonomous pipeline (`issue_dispatcher → issue_worker → review_dispatcher → pr_reviewer →
 review_resolver`). It validates the repo/number, calls `wf_init`, exports the co-located
