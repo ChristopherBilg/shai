@@ -21,6 +21,11 @@ new_string=$(printf '%s' "$input" | jq -rj '.new_string' && printf x) || {
   exit 1
 }
 new_string=${new_string%x}
+# file_mode <path> — echo a file's octal permission bits, or nothing if unavailable.
+# GNU coreutils and BSD/macOS stat disagree on flags, so try both (the repo targets both).
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || printf ''
+}
 if [ ! -f "$path" ]; then
   printf 'file not found: %s' "$path"
   exit 1
@@ -60,6 +65,14 @@ OLD_STR="$old_string" NEW_STR="$new_string" awk '
   printf 'patch failed for %s' "$path"
   exit 1
 }
+# mktemp creates the temp file 0600 and `mv` carries the source mode to the
+# destination, so without this the rename would silently drop the target's
+# permission bits (executable scripts become non-executable). Copy the mode
+# before the rename so the write stays atomic.
+mode=$(file_mode "$path")
+if [ -n "$mode" ]; then
+  chmod "$mode" "$tmpfile" 2>/dev/null || true
+fi
 mv -- "$tmpfile" "$path" 2>&1 || {
   rm -f "$tmpfile"
   printf 'cannot write to %s' "$path"
