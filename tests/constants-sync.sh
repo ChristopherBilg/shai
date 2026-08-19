@@ -17,6 +17,12 @@ ok() { echo -e "  ${GREEN}✓${NC} $1"; }
 
 DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' shai-eval)
 MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' shai-dispatch)
+HEAD_BYTES=$(sed -n 's/^HEAD_BYTES=\([0-9]*\)/\1/p' shai-dispatch)
+# TAIL_BYTES is derived in shai-dispatch (MAX_BYTES - HEAD_BYTES), so derive it here too instead
+# of grepping a literal: that keeps the documented head/tail split honest without adding a
+# second source of truth.
+TAIL_BYTES=""
+if [ -n "$MAX_BYTES" ] && [ -n "$HEAD_BYTES" ]; then TAIL_BYTES=$((MAX_BYTES - HEAD_BYTES)); fi
 CONTEXT_BUDGET=$(sed -n 's/.*SHAI_MAX_CONTEXT_BYTES:-\([0-9]*\)}.*/\1/p' shai-context)
 SHELLCHECK_VER=$(sed -n 's/^SHELLCHECK_VERSION="\(.*\)"/\1/p' tests/install-lint-tools.sh)
 SHFMT_VER=$(sed -n 's/^SHFMT_VERSION="\(.*\)"/\1/p' tests/install-lint-tools.sh)
@@ -41,6 +47,10 @@ check() {
 check "$DEFAULT_MODEL" CLAUDE.md "default model"
 check "$MAX_BYTES" CLAUDE.md "truncation limit"
 check "$MAX_BYTES" README.md "truncation limit"
+check "$HEAD_BYTES" CLAUDE.md "truncation head window"
+check "$HEAD_BYTES" README.md "truncation head window"
+check "$TAIL_BYTES" CLAUDE.md "truncation tail window"
+check "$TAIL_BYTES" README.md "truncation tail window"
 check "$CONTEXT_BUDGET" CLAUDE.md "context budget"
 check "$SHELLCHECK_VER" CLAUDE.md "shellcheck version"
 check "$SHFMT_VER" CLAUDE.md "shfmt version"

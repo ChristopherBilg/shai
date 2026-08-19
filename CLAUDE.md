@@ -167,7 +167,14 @@ The scripts:
   no `$SHAI_HOME/policy.json` rule matches the tool, and it's what the retry guard checks — when
   `SHAI_RETRY_ACTIVE` is set, non-read-only tools are skipped with an error instead of re-running
   a write. **Exit 1 if any tool ran** (signals `shai-repl` to re-evaluate), exit 0 otherwise. Tool
-  output is truncated to `MAX_BYTES=32000` and fenced in
+  output is capped at `MAX_BYTES=32000` bytes: under the cap it passes through byte-identical,
+  and over the cap it is replaced by its first `HEAD_BYTES=24000` plus its last
+  `TAIL_BYTES=8000` bytes (derived as `MAX_BYTES - HEAD_BYTES`, so the two windows can never
+  overlap) with an explicit `[truncated: N bytes total; …]` marker between them that reports the
+  byte counts actually retained — the cut is never silent, and trailing exit codes, test
+  summaries and error tails survive (`head` alone dropped exactly the part that usually carries
+  the verdict). The marker is part of the fenced content, so it is sanitized like the rest of
+  it. Output is fenced in
   `<external_data source="<tool>">…</external_data>` (source sanitized; injected closing tags
   neutralized).
 - **`shai-loop [--tools|--tools-file <path>|--model|--max-tokens|--quiet]`** (`shai-loop:1`) —
@@ -273,7 +280,8 @@ workflows drive it once per `wf_llm` call.
 
 **Tools** are plugins, one directory per tool under `tools/<name>/`: a `tool.json` (Anthropic
 tool-definition shape — `name`, `description`, `input_schema` — plus an optional `capabilities`
-object, currently just `read_only`) and an executable `run.sh` that takes the tool's JSON input
+object holding `read_only` plus a `requires` block — see **Tool-declared prerequisites** below)
+and an executable `run.sh` that takes the tool's JSON input
 as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CLI, write),
 `git` (generic Git CLI, write), `ci` (local CI checks, write), `jira_issue_view`,
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
@@ -287,6 +295,21 @@ share the same tool plugins — `wf_llm --tools` generates the tool array via `s
 internally, and any resulting `tool_use` is dispatched through the identical `shai-dispatch`
 path, so the permission gate below applies to workflow tool calls exactly as it does to the
 interactive REPL.
+
+**Tool-declared prerequisites** — `capabilities.requires` in a `tool.json` is the source of truth
+for what a tool needs from its environment, and `shai-doctor` reports on all of it: `tools`
+(executables on `$PATH`), `env` (`[{name, level}]`, level `core`|`conditional`), and `files`
+(`[{path, level}]` plus optional `format` — only `"json"`, which is also the default, so the
+file is always checked to parse — `keys`, the top-level object whose key names get listed, and
+`hint`, the fix advice shown when it is missing). Only `$SHAI_HOME`, `$HOME`, and a leading `~`
+are expanded in `path`; `tool.json` is data and is never eval'd. `core` failures are errors, `conditional` ones warnings (the same
+degraded-but-usable treatment the Jira env vars get), and `tests/doctor-sync.sh` fails CI if any
+declared dependency goes unreported by `shai-doctor`. The only declared file today is the `ci`
+tool's `$SHAI_HOME/ci.json`, which nothing creates: copy the repo-root `ci.json.example` (already
+wired to shai's own checks) to `$SHAI_HOME/ci.json`, or the `ci` tool has no check it is allowed
+to run. That config deliberately stays user-owned under `$SHAI_HOME` and is never read from a
+cloned repo — `command` runs through `bash -c`, so checkout-local config would be arbitrary code
+execution from repo content.
 
 **Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
 Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:

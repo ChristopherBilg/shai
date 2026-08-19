@@ -42,13 +42,23 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `list_directory` — list the files and folders in a local directory (read-only)
 - `print_file` — print the contents of a local file, with optional `line_numbers` prefixes and an inclusive `start_line`/`end_line` range so `file:line` anchors need no hand counting and files larger than the output cap can be paged (read-only)
 - `sleep` — pause execution for a specified number of seconds, 1-300 (read-only)
-- `ci` — run a configured CI check for a repository; checks are defined in `$SHAI_HOME/ci.json` keyed by normalized git remote URL, with an optional `cwd` input to target a checkout other than the current directory (write, requires approval)
+- `ci` — run a configured CI check for a repository; checks are defined in `$SHAI_HOME/ci.json` (start from [`ci.json.example`](ci.json.example) — see [Configuring `ci`](#configuring-ci)) keyed by normalized git remote URL, with an optional `cwd` input to target a checkout other than the current directory (write, requires approval)
 - `write_file` — create or overwrite a file with given content, creating parent directories as needed (write, requires approval)
 - `patch_file` — replace a unique string in an existing file; the string must appear exactly once (write, requires approval)
 - `delete_file` — delete a file; the file must exist and must not be a directory (write, requires approval)
 - `git` — run any Git command via a pre-tokenized argument array (write, requires approval)
 
-Each tool is a directory under `tools/<name>/` with a `tool.json` (Anthropic schema) and a `run.sh`. Outputs are truncated to 32000 bytes before entering context.
+Each tool is a directory under `tools/<name>/` with a `tool.json` (Anthropic schema) and a `run.sh`. Outputs are capped at 32000 bytes before entering context: over-cap output keeps its first 24000 and last 8000 bytes with an explicit `[truncated: …]` marker in between that reports the exact byte counts retained and elided, so a clipped result is never mistaken for a complete one and trailing exit codes or error tails survive.
+
+### Configuring `ci`
+
+Nothing creates `$SHAI_HOME/ci.json` for you, and `ci` refuses to run anything that is not listed in it, so copy the shipped [`ci.json.example`](ci.json.example) — it already covers this repo's own checks:
+
+```shell
+mkdir -p ~/.shai && cp ci.json.example ~/.shai/ci.json
+```
+
+Then edit the `repos` map, keyed by normalized git remote URL (no scheme, no credentials, no trailing `.git`), with a `command` (and optional `timeout` in seconds, default 120) per check. The config stays user-owned under `$SHAI_HOME` on purpose: it is never read from a cloned repo, since `command` runs through `bash -c` and repo-local config would be arbitrary code execution. `shai-doctor` reports whether the file exists, parses, and which repo keys it covers — as a warning, never fatal.
 
 ## Observability
 Inspect sessions, runs, and aggregate metrics from the terminal:
