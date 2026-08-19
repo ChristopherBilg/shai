@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_install.sh — hermetic tests for the shai installer
-# Covers: install.sh — tarball extraction, exec-wrapper installation, download failure cleanup, gh prereqs
+# Covers: install.sh — tarball extraction, exec-wrapper installation, download failure cleanup,
+#   gh prereqs, the post-install ci.json.example note
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -22,6 +23,7 @@ build_fake_tarball() {
   chmod +x "$staging/shai-doctor"
   echo "$version" >"$staging/VERSION"
   echo "not executable" >"$staging/README.md"
+  printf '{"_comment":"example ci config","version":"1.0","repos":{}}\n' >"$staging/ci.json.example"
   (cd "$WORK" && tar czf "shai-${version}.tar.gz" "shai-${version}")
 }
 
@@ -168,5 +170,32 @@ assert_eq "$([ -d "$FAKE_HOME6/.local/share/shai/v2026.03.20" ] && echo y)" "y" 
   "install: resolves latest version via gh release view"
 assert_eq "$(cat "$FAKE_HOME6/.local/share/shai/v2026.03.20/VERSION")" "v2026.03.20" \
   "install: latest resolution installs correct version"
+
+# --- Test: post-install message points at ci.json.example when no config exists ---
+FAKE_HOME7="$WORK/home7"
+mkdir -p "$FAKE_HOME7"
+build_fake_tarball "v2026.04.10"
+make_install_gh_stub "v2026.04.10"
+
+OUT=$(HOME="$FAKE_HOME7" SHAI_HOME="$FAKE_HOME7/.shai" SHAI_VERSION="v2026.04.10" \
+  PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1)
+
+assert_eq "$([ -f "$FAKE_HOME7/.local/share/shai/v2026.04.10/ci.json.example" ] && echo y)" "y" \
+  "install: ci.json.example extracted"
+assert_contains "$OUT" "ci.json.example" \
+  "install: post-install note names ci.json.example"
+assert_contains "$OUT" "$FAKE_HOME7/.shai/ci.json" \
+  "install: post-install note names the target config path"
+
+# --- Test: no ci note once a config already exists ---
+mkdir -p "$FAKE_HOME7/.shai"
+printf '{"version":"1.0","repos":{}}\n' >"$FAKE_HOME7/.shai/ci.json"
+OUT=$(HOME="$FAKE_HOME7" SHAI_HOME="$FAKE_HOME7/.shai" SHAI_VERSION="v2026.04.10" \
+  PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1)
+if [[ "$OUT" == *"ci.json.example"* ]]; then
+  assert_eq "note-shown" "note-hidden" "install: no ci note when a config already exists"
+else
+  assert_eq "0" "0" "install: no ci note when a config already exists"
+fi
 
 finish

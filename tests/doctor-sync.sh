@@ -1,5 +1,5 @@
 #!/bin/bash
-# doctor-sync.sh — verify shai-doctor covers all tool-declared dependencies
+# doctor-sync.sh — verify shai-doctor covers all tool-declared dependencies and config files
 # Usage: ./tests/doctor-sync.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
@@ -39,6 +39,21 @@ for tj in "$ROOT"/tools/*/tool.json; do
       note "$tname requires env '$env_name' — NOT found in shai-doctor output"
     fi
   done < <(jq -r '.capabilities.requires.env // [] | .[].name' "$tj" 2>/dev/null)
+
+  # Check declared config files. shai-doctor prints the *declared* path (with $SHAI_HOME left
+  # unexpanded), so stripping the status marker and comparing the rest of the line as a fixed
+  # string keeps '$' and '/' out of the regex while staying as strict as the tool/env loops
+  # above: -x anchors the match, so a line for '<path>.bak' does not count as coverage.
+  while IFS= read -r file_path; do
+    [ -n "$file_path" ] || continue
+    if printf '%s\n' "$DOCTOR_OUT" |
+      sed -nE 's/^[[:space:]]*\[(OK|WARN|FAIL)\][[:space:]]+(.*)$/\2/p' |
+      grep -qxF -- "$file_path"; then
+      ok "$tname requires file '$file_path' — covered by shai-doctor"
+    else
+      note "$tname requires file '$file_path' — NOT found in shai-doctor output"
+    fi
+  done < <(jq -r '.capabilities.requires.files // [] | .[].path' "$tj" 2>/dev/null)
 done
 
 echo

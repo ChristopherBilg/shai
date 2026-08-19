@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_doctor.sh — unit tests for shai-doctor
-# Covers: shai-doctor — CLI tool detection, env var checks, output format, exit codes
+# Covers: shai-doctor — CLI tool detection, env var checks, tool-declared config files,
+#   output format, exit codes
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -32,6 +33,22 @@ run_doctor() {
     source "$DIR/shai-doctor" 2>&1
   )
 }
+
+# shai-doctor also checks the config files tools declare via capabilities.requires.files
+# (today: the ci tool's $SHAI_HOME/ci.json), so pin SHAI_HOME to a fixture holding a valid
+# config — otherwise the host's real ~/.shai would leak into the exact warning counts below.
+FIX="$(mktemp -d)"
+_CLEANUP_DIRS+=("$FIX")
+export SHAI_HOME="$FIX/home"
+mkdir -p "$SHAI_HOME"
+cat >"$SHAI_HOME/ci.json" <<'JSON'
+{
+  "version": "1.0",
+  "repos": {
+    "github.com/owner/repo": { "checks": { "test": { "command": "true" } } }
+  }
+}
+JSON
 
 # --- Test 1: all checks pass ---
 export ANTHROPIC_API_KEY="test-key"
@@ -110,5 +127,50 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   fi
   exit "$FAILED"
 ) || FAILED=1
+
+# --- Test 8: tool-declared config file present and valid → OK + covered repo keys ---
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: valid ci.json → exit 0"
+assert_contains "$OUT" "Tool-declared files:" "doctor: prints the Tool-declared files section"
+assert_contains "$OUT" '[OK]   $SHAI_HOME/ci.json' "doctor: valid ci.json reported OK"
+assert_contains "$OUT" "$SHAI_HOME/ci.json" "doctor: resolves the declared path"
+assert_contains "$OUT" "repos: github.com/owner/repo" "doctor: lists the covered repo keys"
+
+# Tests 9-11 vary $SHAI_HOME rather than the environment, so they reassign the already-exported
+# variable in place instead of wrapping in a subshell like tests 4-7 (an exported assignment
+# inside a subshell only trips SC2030/SC2031 for no benefit). SHAI_HOME is restored at the end.
+
+# --- Test 9: config file missing → WARN (degraded, not fatal) with a fix hint ---
+SHAI_HOME="$FIX/empty"
+mkdir -p "$SHAI_HOME"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: missing ci.json → exit 0 (degraded, not fatal)"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/ci.json' "doctor: missing ci.json shows WARN"
+assert_contains "$OUT" "not found: $SHAI_HOME/ci.json" "doctor: names the resolved path"
+assert_contains "$OUT" "ci.json.example" "doctor: missing ci.json points at the example file"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: missing ci.json is the only warning"
+
+# --- Test 10: config file present but malformed → WARN naming the parse failure ---
+SHAI_HOME="$FIX/broken"
+mkdir -p "$SHAI_HOME"
+printf '{ "repos": { this is not valid json\n' >"$SHAI_HOME/ci.json"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: malformed ci.json → exit 0"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/ci.json' "doctor: malformed ci.json shows WARN"
+assert_contains "$OUT" "not valid JSON" "doctor: malformed ci.json names the parse failure"
+
+# --- Test 11: config file present but covering no repos ---
+SHAI_HOME="$FIX/norepos"
+mkdir -p "$SHAI_HOME"
+printf '{ "version": "1.0", "repos": {} }\n' >"$SHAI_HOME/ci.json"
+OUT=$(run_doctor)
+assert_contains "$OUT" '[OK]   $SHAI_HOME/ci.json' "doctor: empty repos map still parses → OK"
+assert_contains "$OUT" "no repos entries" "doctor: reports an empty repos map"
+
+SHAI_HOME="$FIX/home"
 
 finish
