@@ -348,7 +348,8 @@ PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run 
 **`workflows/issue_worker/run.sh`** takes `<repo> <number>`, fetches the GitHub issue metadata
 (title, body, labels), derives a branch name (`shai/<number>-<slug>`), and calls `wf_llm --tools`
 with a goal-oriented prompt. The LLM clones the repo, explores the codebase, implements the
-changes, commits, pushes, and creates a draft PR with `Closes #<number>` in the body. Uses
+changes, verifies them locally with the `ci` tool (or records in the PR body that the repo has no
+checks configured), commits, pushes, and creates a draft PR with `Closes #<number>` in the body. Uses
 `wf_seen`/`wf_mark` for idempotency. Exit 0 on success (including idempotent skip), 1 on failure,
 2 on usage error.
 
@@ -417,7 +418,11 @@ the head branch, and classifies each unresolved thread as `fix` (edit, commit, p
 manual triage), `reply` (post into the thread), `resolve` (acknowledge then
 `resolveReviewThread` via GraphQL), or `noop`. `pr_reviewer`'s conventionalcomments.org labels
 are hints only — the prompt tells the model to read the content, and to use judgment on comments
-against outdated diff hunks. After pushing it polls CI (up to ~6 minutes, 30s sleeps, at most 3
+against outdated diff hunks. Before committing a `fix` the prompt requires local verification via
+the `ci` tool (`action: list`, then `action: run`, with `cwd` pointed at the clone), and an explicit
+"no checks configured for this repo" note in the summary when the repo has none — the tool is the
+workflow's only way to execute anything, so an unverifiable claim is never the expected output.
+After pushing it polls CI (up to ~6 minutes, 30s sleeps, at most 3
 fix-and-push cycles) and posts one structured "Review Resolution Summary" comment. **No
 idempotency** (no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to `resolve_dispatcher`'s
 label-removal pattern. **One-shot** — it never re-labels the PR for another review round, which
