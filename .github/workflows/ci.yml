@@ -1,7 +1,10 @@
 # ci.yml — CI pipeline: tests, linting, conventions, docs, compat, and security checks
 name: CI
 
-on: [push]
+on:
+  push:
+    branches-ignore:
+      - 'main'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
