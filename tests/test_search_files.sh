@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_search_files.sh — unit tests for the search_files tool
-# Covers: tools/search_files/run.sh — match, no-match, ignore_case, glob, max_results cap, binary skip, missing path, default path
+# Covers: tools/search_files/run.sh — match, no-match, ignore_case, glob, max_results cap and
+# truncation marker, binary skip, missing path, default path, single-file path, grep failure modes
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -60,15 +61,26 @@ else
   echo -e "  ${GREEN}✓${NC} glob: excludes .txt files"
 fi
 
-# --- max_results cap ---
+# --- max_results cap + truncation marker ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,max_results:2}')" 2>&1)
 assert_eq "$?" "0" "max_results: exits 0"
-LINES=$(printf '%s\n' "$OUT" | grep -c '.')
+LINES=$(printf '%s\n' "$OUT" | grep -c ':[0-9][0-9]*:' || true)
 if [ "$LINES" -le 2 ]; then
-  echo -e "  ${GREEN}✓${NC} max_results: output capped at 2 lines"
+  echo -e "  ${GREEN}✓${NC} max_results: match rows capped at 2"
 else
-  echo -e "  ${RED}✗${NC} max_results: expected at most 2 lines, got $LINES"
+  echo -e "  ${RED}✗${NC} max_results: expected at most 2 match rows, got $LINES"
   FAILED=1
+fi
+assert_contains "$OUT" "[truncated: showing first 2 matches]" "max_results: emits truncation marker"
+
+# --- no truncation marker when the cap is not reached ---
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello world",path:$p}')" 2>&1)
+assert_eq "$?" "0" "untruncated: exits 0"
+if [[ "$OUT" == *"truncated"* ]]; then
+  echo -e "  ${RED}✗${NC} untruncated: should not emit a truncation marker"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} untruncated: no truncation marker"
 fi
 
 # --- binary files skipped (grep -I) ---
@@ -124,6 +136,27 @@ if [[ "$OUT" =~ src/main\.sh:[0-9]+: ]]; then
 else
   echo -e "  ${RED}✗${NC} output format: expected path:line_number: pattern, got: $OUT"
   FAILED=1
+fi
+
+# --- ignore_case must be a boolean (JSON string "true" is rejected, like print_file) ---
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,ignore_case:"true"}')" 2>&1)
+assert_eq "$?" "1" "non-boolean ignore_case: exits 1"
+assert_contains "$OUT" "ignore_case must be a boolean" "non-boolean ignore_case: explains why"
+
+# --- grep failure surfaces as exit 1, not as a successful empty result ---
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"[",path:$p}')" 2>&1)
+assert_eq "$?" "1" "invalid regex: exits 1"
+assert_contains "$OUT" "error:" "invalid regex: reports an error"
+
+# --- path may be a single file, and rows are still prefixed with the path ---
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR/src/main.sh" '{pattern:"hello",path:$p}')" 2>&1)
+assert_eq "$?" "0" "single file: exits 0"
+assert_contains "$OUT" "main.sh:1:hello world" "single file: prefixes path and line number"
+if [[ "$OUT" == *"upper.sh"* ]]; then
+  echo -e "  ${RED}✗${NC} single file: should not search sibling files"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} single file: only the named file is searched"
 fi
 
 finish
