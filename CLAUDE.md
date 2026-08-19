@@ -287,7 +287,9 @@ as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CL
 `git` (generic Git CLI, write), `ci` (local CI checks, write), `jira_issue_view`,
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
-than the 32000-byte output cap can be read a window at a time), `sleep` (read-only),
+than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;
+grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`),
+`sleep` (read-only),
 `write_file`, `patch_file`, `delete_file` (write). `shai-tools`
 aggregates every `tools/*/tool.json` into the Anthropic tool array at startup, and
 `shai-dispatch` resolves a `tool_use` call straight to `tools/<name>/run.sh`. There is no central
@@ -421,10 +423,17 @@ leading-zero guards matching `review_resolver`), calls `wf_init`, exports the co
 diff, and existing comments (all with `--paginate`), clones the repo via `git clone`, checks
 out the head branch, and reads source files around each changed area before commenting.
 Reviews use conventionalcomments.org format with severity mapping (critical/important/minor)
-and assess correctness, architecture, testing quality, and production readiness. Posts a
-GitHub review with inline comments plus a separate summary comment containing a verdict
-(Ready to merge / Ready with minor fixes / Needs changes) with finding counts. Handles
-cross-fork PRs (review proceeds but notes the PR cannot be updated). As its last step the
+and assess correctness, architecture, testing quality, and production readiness. For same-repo
+PRs, the LLM verifies test- and behaviour-related findings locally with the `ci` tool before
+posting them (with `cwd` pointed at the clone), and must re-run a failing check on the base
+branch before reporting it so pre-existing failures are not blamed on the PR; for fork PRs,
+checks are skipped because a check command runs project code the fork author controls (and the
+base-repo clone does not even contain the fork head); when no checks are configured, or a `ci`
+call errors or is denied by policy, the summary says so rather than claiming a check that never
+ran. Posts a GitHub review with inline comments plus a separate summary comment containing a
+verdict (Ready to merge / Ready with minor fixes / Needs changes) with finding counts and a
+local verification status line. Handles cross-fork PRs (review proceeds but notes the PR cannot
+be updated). As its last step the
 prompt tells the LLM to add the `shai-resolve-dispatcher` label to the PR (creating the label
 in the repo first if needed) — but only when the review posted at least one actionable inline
 comment, so a clean praise-only "Ready to merge" review does not queue a no-op
