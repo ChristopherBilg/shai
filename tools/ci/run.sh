@@ -160,8 +160,9 @@ if [ "$rc" -eq 124 ] && [ "$elapsed" -ge $((check_timeout - 1)) ]; then
   exit 1
 fi
 
-# exit_code goes first: shai-dispatch truncates tool output to the first 32000 bytes, so a
-# trailing status line would be lost for verbose checks.
+# exit_code goes first: shai-dispatch caps tool output at 32000 bytes, keeping the head and
+# the tail with an explicit truncation marker in between. Leading with the status line keeps
+# it inside the head window no matter how verbose the check is.
 printf 'exit_code: %d\n' "$rc"
 if [ -n "$output" ]; then printf '%s\n' "$output"; fi
 exit 0

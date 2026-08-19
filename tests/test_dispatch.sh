@@ -15,6 +15,12 @@ DEFAULT_MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
   echo "FATAL: could not extract DEFAULT_MAX_BYTES from shai-dispatch" >&2
   exit 1
 }
+DEFAULT_HEAD_BYTES=$(sed -n 's/^HEAD_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
+DEFAULT_TAIL_BYTES=$(sed -n 's/^TAIL_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
+if [ -z "$DEFAULT_HEAD_BYTES" ] || [ -z "$DEFAULT_TAIL_BYTES" ]; then
+  echo "FATAL: could not extract HEAD_BYTES/TAIL_BYTES from shai-dispatch" >&2
+  exit 1
+fi
 
 # permissive policy for tools that the read-only heuristic doesn't auto-allow (gh is
 # capabilities.read_only:false, same as the write_file/patch_file/etc. tests further down).
@@ -46,17 +52,54 @@ UNK='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_
 UOUT=$(echo "$UNK" | "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$UOUT" '"is_error":true' "dispatch: unknown tool → is_error"
 
-# truncation path: output > MAX_BYTES must still emit a tool_result (SIGPIPE-safe)
+# truncation path: output > MAX_BYTES must still emit a tool_result (SIGPIPE-safe), and the
+# cut must be visible: over-cap output keeps a head+tail window with an explicit marker
+# between the two. Regression for #72 — `head -c $MAX_BYTES` alone silently dropped the tail,
+# so a trailing `ci` exit_code line, test summary or error tail could vanish with no signal
+# and the model would reason from a clipped result as if it were complete.
+desc "truncation"
 BIGFILE=$(mktemp)
 _CLEANUP_DIRS+=("$BIGFILE")
-head -c 200000 /dev/zero | tr '\0' 'x' >"$BIGFILE"
+{
+  printf 'HEAD_SENTINEL'
+  head -c 200000 /dev/zero | tr '\0' 'x'
+  printf 'TAIL_SENTINEL exit_code: 7'
+} >"$BIGFILE"
+BIG_TOTAL=$(wc -c <"$BIGFILE" | tr -d ' ')
+BMARKER="[truncated: $BIG_TOTAL bytes total; showing the first $DEFAULT_HEAD_BYTES and last $DEFAULT_TAIL_BYTES bytes, $((BIG_TOTAL - DEFAULT_HEAD_BYTES - DEFAULT_TAIL_BYTES)) bytes elided from the middle]"
 BIGTOOL=$(jq -nc --arg p "$BIGFILE" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"tb",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
 BOUT=$(echo "$BIGTOOL" | "$DIR/shai-dispatch")
 BRC=$?
 assert_eq "$BRC" "1" "dispatch: large output still exits 1 (no SIGPIPE crash)"
 assert_contains "$BOUT" '"type":"tool_result"' "dispatch: large output emits tool_result"
 assert_contains "$BOUT" '<external_data source=\"print_file\">' "dispatch: large output wrapped in external_data"
-assert_eq "$(printf '%s' "$BOUT" | jq -r '.payload.content | ltrimstr("<external_data source=\"print_file\">\n") | rtrimstr("\n</external_data>") | length')" "$DEFAULT_MAX_BYTES" "dispatch: tool output truncated to $DEFAULT_MAX_BYTES bytes (inside the fence)"
+assert_eq "$(printf '%s' "$BOUT" | jq -r '.payload.content | ltrimstr("<external_data source=\"print_file\">\n") | rtrimstr("\n</external_data>") | length')" "$((DEFAULT_MAX_BYTES + ${#BMARKER} + 2))" "dispatch: over-cap payload is $DEFAULT_MAX_BYTES bytes of content plus the marker (inside the fence)"
+
+# unfence: strip the opening (first) and closing (last) fence line off a tool_result content
+unfence() { jq -r '.payload.content | split("\n") | .[1:-1] | join("\n")'; }
+
+BODY=$(printf '%s' "$BOUT" | unfence)
+assert_contains "$BODY" "$BMARKER" "dispatch: over-cap output carries an explicit truncation marker"
+assert_eq "${BODY:0:13}" "HEAD_SENTINEL" "dispatch: over-cap output keeps the head"
+assert_eq "${BODY: -26}" "TAIL_SENTINEL exit_code: 7" "dispatch: over-cap output keeps the tail (a trailing exit code survives)"
+assert_eq "$(printf '%s' "$BODY" | grep -c 'truncated:')" "1" "dispatch: exactly one truncation marker"
+
+# under-cap output passes through byte-identical, with no marker
+SMALLD=$(mktemp -d)
+_CLEANUP_DIRS+=("$SMALLD")
+printf 'line one\nline two\nexit_code: 0' >"$SMALLD/small"
+SMALLTOOL=$(jq -nc --arg p "$SMALLD/small" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"ts1",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
+SBODY=$(echo "$SMALLTOOL" | "$DIR/shai-dispatch" | unfence)
+assert_eq "$SBODY" "$(cat "$SMALLD/small")" "dispatch: under-cap output is byte-identical"
+assert_eq "$(printf '%s' "$SBODY" | grep -c 'truncated:')" "0" "dispatch: under-cap output carries no truncation marker"
+
+# exactly at the cap: the comparison is inclusive, so nothing is dropped or marked
+ATCAP="$SMALLD/atcap"
+head -c "$DEFAULT_MAX_BYTES" /dev/zero | tr '\0' 'y' >"$ATCAP"
+ATTOOL=$(jq -nc --arg p "$ATCAP" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"tc1",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
+ATBODY=$(echo "$ATTOOL" | "$DIR/shai-dispatch" | unfence)
+assert_eq "$(printf '%s' "$ATBODY" | wc -c | tr -d ' ')" "$DEFAULT_MAX_BYTES" "dispatch: output exactly at the cap is passed through whole"
+assert_eq "$(printf '%s' "$ATBODY" | grep -c 'truncated:')" "0" "dispatch: output exactly at the cap carries no marker"
 
 NTOUT=$(echo "$NOTOOL" | "$DIR/shai-dispatch")
 assert_eq "$NTOUT" "" "dispatch: no-tool produces no output"
