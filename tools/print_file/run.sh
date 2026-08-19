@@ -7,19 +7,23 @@
 set -euo pipefail
 input="$1"
 path=$(printf '%s' "$input" | jq -r '.path')
-line_numbers=$(printf '%s' "$input" | jq -r '.line_numbers // false' 2>/dev/null) || line_numbers="false"
-start_line=$(printf '%s' "$input" | jq -r '.start_line // empty' 2>/dev/null) || start_line=""
-end_line=$(printf '%s' "$input" | jq -r '.end_line // empty' 2>/dev/null) || end_line=""
+# These use `jq -c`, not `jq -r`, so JSON types survive the read: the string "true" arrives as
+# `"true"` (quoted) and is rejected below, whereas -r would stringify it into a value that passes
+# the boolean check. Same for the line bounds — the string "3" is not an integer. No `|| fallback`
+# is needed: malformed JSON already aborts the `path=` read above under `set -euo pipefail`.
+line_numbers=$(printf '%s' "$input" | jq -c '.line_numbers // false')
+start_line=$(printf '%s' "$input" | jq -c '.start_line // empty')
+end_line=$(printf '%s' "$input" | jq -c '.end_line // empty')
 
 if [ "$line_numbers" != "true" ] && [ "$line_numbers" != "false" ]; then
-  printf 'error: line_numbers must be a boolean (got "%s")\n' "$line_numbers"
+  printf 'error: line_numbers must be a boolean (got %s)\n' "$line_numbers"
   exit 1
 fi
 
 # require_line_number <field> <value>: reject anything that is not a 1-based line number.
 require_line_number() {
   if ! [[ "$2" =~ ^[0-9]+$ ]] || [ "$2" -lt 1 ]; then
-    printf 'error: %s must be a positive integer (got "%s")\n' "$1" "$2"
+    printf 'error: %s must be a positive integer (got %s)\n' "$1" "$2"
     exit 1
   fi
 }
@@ -61,6 +65,10 @@ fi
 #   - a start_line past EOF prints nothing and exits 0 — an empty window, not an error.
 # The file is fed on stdin because an awk file operand containing '=' would be parsed as a
 # variable assignment rather than a filename.
+# One deliberate divergence from the default cat path: awk terminates every record it prints, so
+# a file whose last line has no trailing newline gains one here. This mode is line-oriented (its
+# output carries line numbers and window boundaries, not bytes), so byte fidelity belongs to the
+# default path; both behaviours are asserted in tests/test_print_file.sh.
 timeout 30s awk \
   -v start="${start_line:-1}" \
   -v end="${end_line:-0}" \

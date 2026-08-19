@@ -113,6 +113,17 @@ OUT=$("$RUN" "$(jq -nc --arg p "$FIXTURE" '{path:$p,line_numbers:"yes"}')" 2>&1)
 assert_eq "$?" "1" "invalid: non-boolean line_numbers exits 1"
 assert_contains "$OUT" "line_numbers must be a boolean" "invalid: non-boolean line_numbers message"
 
+# The contract is a JSON boolean / JSON integers, so the *strings* "true" and "3" are rejected
+# too — they only look valid once stringified.
+OUT=$("$RUN" "$(jq -nc --arg p "$FIXTURE" '{path:$p,line_numbers:"true"}')" 2>&1)
+assert_eq "$?" "1" "invalid: JSON string \"true\" is not a boolean"
+assert_contains "$OUT" "line_numbers must be a boolean" "invalid: JSON string \"true\" error message"
+
+OUT=$("$RUN" "$(jq -nc --arg p "$FIXTURE" '{path:$p,start_line:"3"}')" 2>&1)
+assert_eq "$?" "1" "invalid: JSON string start_line is not an integer"
+assert_contains "$OUT" "start_line must be a positive integer" \
+  "invalid: JSON string start_line error message"
+
 # --- path errors on the range path get explicit diagnostics ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR/no_such_file" '{path:$p,start_line:1,end_line:2}')" 2>&1)
 assert_eq "$?" "1" "range: missing file exits 1"
@@ -128,5 +139,33 @@ assert_contains "$OUT" "cannot print a directory" "line_numbers: directory error
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR/empty.txt" '{path:$p,line_numbers:true,start_line:1}')")
 assert_eq "$?" "0" "empty file: exits 0"
 assert_eq "$OUT" "" "empty file: prints nothing"
+
+# --- a path containing '=' is a filename, not an awk variable assignment ---
+EQ_FILE="$TDIR/name=with=equals.txt"
+printf 'one\ntwo\nthree\n' >"$EQ_FILE"
+OUT=$("$RUN" "$(jq -nc --arg p "$EQ_FILE" '{path:$p,start_line:2,line_numbers:true}')" 2>&1)
+assert_eq "$?" "0" "path with '=': exits 0"
+assert_eq "$OUT" "$(printf '%s\n%s' "$(numbered 2 two)" "$(numbered 3 three)")" \
+  "path with '=': read as a filename, not an awk assignment"
+
+# --- a file with no trailing newline: byte-exact on the default path, terminated on the awk path ---
+NONL="$TDIR/no_final_newline.txt"
+printf 'first\nsecond' >"$NONL"
+"$RUN" "$(jq -nc --arg p "$NONL" '{path:$p}')" >"$TDIR/nonl_default.out" 2>&1
+assert_eq "$?" "0" "no final newline: default exits 0"
+if cmp -s "$NONL" "$TDIR/nonl_default.out"; then
+  echo -e "  ${GREEN}✓${NC} no final newline: default output stays byte-identical"
+else
+  echo -e "  ${RED}✗${NC} no final newline: default output diverged from the file"
+  FAILED=1
+fi
+# Documented divergence: awk terminates every record, so the numbering/range mode adds the
+# newline the file lacks (see the comment in tools/print_file/run.sh).
+"$RUN" "$(jq -nc --arg p "$NONL" '{path:$p,line_numbers:true}')" >"$TDIR/nonl_numbered.out" 2>&1
+assert_eq "$?" "0" "no final newline: line_numbers exits 0"
+assert_eq "$(wc -l <"$TDIR/nonl_default.out" | tr -d ' ')" "1" \
+  "no final newline: default path leaves the last line unterminated"
+assert_eq "$(wc -l <"$TDIR/nonl_numbered.out" | tr -d ' ')" "2" \
+  "no final newline: numbered path terminates the last line (documented divergence)"
 
 finish
