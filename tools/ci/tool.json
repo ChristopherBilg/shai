@@ -4,7 +4,16 @@
   "capabilities": {
     "read_only": false,
     "requires": {
-      "tools": ["git", "timeout"]
+      "tools": ["git", "timeout"],
+      "files": [
+        {
+          "path": "$SHAI_HOME/ci.json",
+          "level": "conditional",
+          "format": "json",
+          "keys": "repos",
+          "hint": "copy ci.json.example to it (default ~/.shai/ci.json), then edit the repos map"
+        }
+      ]
     }
   },
   "input_schema": {

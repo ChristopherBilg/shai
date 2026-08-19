@@ -1,7 +1,7 @@
 #!/bin/bash
 # test_ci.sh — unit tests for tools/ci/run.sh
 # Covers: tools/ci/run.sh — list/run actions, URL normalization, config lookup, cwd targeting,
-#   timeout validation, malformed config shapes, error paths
+#   timeout validation, malformed config shapes, error paths, the shipped ci.json.example
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -304,5 +304,28 @@ chmod +x "$STUB/git"
 OUT=$("$TOOL" '{"action":"list"}' 2>&1) || true
 assert_contains "$OUT" "not in a git repository" "no remote: error message"
 assert_exit 1 "no remote: exit 1" -- "$TOOL" '{"action":"list"}'
+
+# ===== the shipped ci.json.example is usable as-is =====
+# A new install is meant to copy this one file and have the tool work on this repo, so the
+# example must parse and cover shai's own remote — not just look plausible.
+desc "shipped ci.json.example"
+EXAMPLE="$DIR/ci.json.example"
+assert_eq "$([ -f "$EXAMPLE" ] && echo y)" "y" "example: ci.json.example exists at the repo root"
+assert_exit 0 "example: is valid JSON" -- jq empty "$EXAMPLE"
+cp "$EXAMPLE" "$SHAI_HOME/ci.json"
+write_remote_stub "git@github.com:ChristopherBilg/shai.git"
+OUT=$("$TOOL" '{"action":"list"}' 2>&1) || true
+assert_contains "$OUT" "Available CI checks for github.com/ChristopherBilg/shai:" \
+  "example: covers shai's own remote"
+assert_contains "$OUT" "tests: ./tests/run.sh" "example: wires the test suite as a check"
+assert_contains "$OUT" "conventions:" "example: wires the conventions check"
+assert_contains "$OUT" "docs:" "example: wires the docs check"
+# Every check must carry a runnable command, or `run` would fail on it.
+assert_exit 0 "example: every check has a non-empty command string" -- jq -e '
+  .repos | to_entries | length > 0 and all(.[];
+    .value.checks | to_entries | length > 0 and all(.[];
+      (.value.command | type == "string" and length > 0)
+      and ((.value.timeout // 1) | type == "number" and . > 0 and floor == .)))
+' "$EXAMPLE"
 
 finish

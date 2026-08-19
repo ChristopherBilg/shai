@@ -72,6 +72,10 @@ printf '# Title Here\n\nbody\n' >"$FIX/doc.md"
 printf '## Subheading only\n\nx\n' >"$FIX/bad.md"
 printf '[{"name":"t","description":"a tool","input_schema":{"properties":{"p":{"description":"a param"}}}}]\n' >"$FIX/tools.json"
 printf '[{"name":"t","description":"","input_schema":{"properties":{}}}]\n' >"$FIX/bad.json"
+printf '{"_comment":"copy me to $SHAI_HOME/thing.json and edit","repos":{}}\n' >"$FIX/good.json.example"
+printf '{"repos":{}}\n' >"$FIX/bad.json.example"
+printf '{"_comment":"short","repos":{}}\n' >"$FIX/terse.json.example"
+printf 'not json at all\n' >"$FIX/broken.json.example"
 printf 'just some notes\n' >"$FIX/notes.txt"
 printf 'deadbeef  shellcheck\n' >"$FIX/tests/lint-tools.sha256"
 
@@ -149,6 +153,17 @@ run_docs tools.json
 assert_eq "$RC" "0" "json: all descriptions present passes"
 run_docs bad.json
 assert_eq "$RC" "1" "json: empty description fails"
+
+run_docs good.json.example
+assert_eq "$RC" "0" "json example: _comment present passes"
+assert_contains "$OUT" "json example:" "json example: prints its own classification"
+run_docs bad.json.example
+assert_eq "$RC" "1" "json example: missing _comment fails"
+assert_contains "$OUT" "_comment" "json example: names the missing key"
+run_docs terse.json.example
+assert_eq "$RC" "1" "json example: trivial _comment fails"
+run_docs broken.json.example
+assert_eq "$RC" "1" "json example: invalid JSON fails"
 
 run_docs notes.txt
 assert_eq "$RC" "1" "unknown type fails"
