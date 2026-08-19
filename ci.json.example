@@ -1,0 +1,25 @@
+{
+  "_comment": "Example config for the ci tool. Copy this file to $SHAI_HOME/ci.json (default ~/.shai/ci.json) and edit the repos map; nothing installs it for you, and the ci tool refuses to run anything that is not listed here. Keys under repos are normalized git remote URLs of the checkout: no scheme, no credentials, no trailing .git (e.g. github.com/owner/repo). Each check needs a command (run through bash -c in the repo, or in the cwd the tool was given) and may set timeout in whole seconds (default 120). Config stays user-owned under $SHAI_HOME on purpose: it is never read from a cloned repo, since that would be arbitrary code execution from repo content. shai-doctor reports whether this file exists, parses, and which repo keys it covers.",
+  "version": "1.0",
+  "repos": {
+    "github.com/ChristopherBilg/shai": {
+      "checks": {
+        "tests": { "command": "./tests/run.sh", "timeout": 900 },
+        "conventions": { "command": "./tests/conventions.sh", "timeout": 120 },
+        "docs": { "command": "./tests/docs.sh", "timeout": 120 },
+        "tools-sync": { "command": "./tests/tools-sync.sh", "timeout": 120 },
+        "constants-sync": { "command": "./tests/constants-sync.sh", "timeout": 120 },
+        "doctor-sync": { "command": "./tests/doctor-sync.sh", "timeout": 120 },
+        "tool-schema": { "command": "./tests/validate-tool-schema.sh", "timeout": 120 },
+        "lint": {
+          "command": "./tests/install-lint-tools.sh >/dev/null && ./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh && ./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh",
+          "timeout": 300
+        },
+        "all": {
+          "command": "./tests/conventions.sh && ./tests/docs.sh && ./tests/tools-sync.sh && ./tests/constants-sync.sh && ./tests/doctor-sync.sh && ./tests/validate-tool-schema.sh && ./tests/run.sh",
+          "timeout": 1200
+        }
+      }
+    }
+  }
+}

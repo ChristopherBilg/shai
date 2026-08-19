@@ -79,6 +79,11 @@ json_ok() { # valid array; every tool and every input property has a non-empty d
   ' "$1" >/dev/null 2>&1
 }
 
+json_example_ok() { # valid JSON with a non-empty top-level "_comment" (JSON has no comments)
+  jq -e 'type == "object" and ((._comment // "") | type == "string" and length >= 12)' \
+    "$1" >/dev/null 2>&1
+}
+
 tool_json_ok() { # single tool object; tool + every input property has a non-empty description
   jq -e '
     type == "object"
@@ -162,6 +167,14 @@ check_file() {
         ok "policy: $f"
       else
         note "policy file missing .rules array: $f"
+      fi
+      return
+      ;;
+    *.json.example)
+      if json_example_ok "$f"; then
+        ok "json example: $f"
+      else
+        note "json example must be valid JSON with a '_comment' string explaining it: $f"
       fi
       return
       ;;

@@ -1,7 +1,7 @@
 #!/bin/bash
 # shai-doctor — validate environment prerequisites for shai
 # Usage: shai-doctor
-# Reads: $PATH (CLI tool availability), environment variables
+# Reads: $PATH (CLI tool availability), environment variables, tool-declared config files
 # Writes: diagnostic report to stderr
 # Exit: 0 if all core checks pass; 1 if any core check fails
 set -euo pipefail
@@ -38,6 +38,62 @@ check_env() {
     printf '  [WARN] %s\n' "$name" >&2
     WARNINGS=$((WARNINGS + 1))
   fi
+}
+
+# expand_path <declared>: expand the $SHAI_HOME / $HOME / ~ prefixes a tool.json may use in a
+# declared path. Only those three are substituted — tool.json is data, never eval'd.
+expand_path() {
+  local p="$1"
+  p="${p//\$\{SHAI_HOME\}/${SHAI_HOME:-$HOME/.shai}}"
+  p="${p//\$SHAI_HOME/${SHAI_HOME:-$HOME/.shai}}"
+  p="${p//\$\{HOME\}/$HOME}"
+  p="${p//\$HOME/$HOME}"
+  p="${p/#\~/$HOME}"
+  printf '%s' "$p"
+}
+
+# check_config_file <declared-path> <level> [format] [keys-of] [hint]
+# A missing or malformed file is an error at level 'core' and a warning at 'conditional' —
+# the same degraded-but-usable treatment the conditional env vars get.
+# The status line ends with the *declared* path (with $SHAI_HOME still unexpanded) so
+# tests/doctor-sync.sh can match it against tool.json without re-expanding anything;
+# the resolved path and any detail go on an indented continuation line.
+check_config_file() {
+  local declared="$1" level="$2" format="${3:-}" keys_of="${4:-}" hint="${5:-}"
+  local path detail="" marker keys
+  path="$(expand_path "$declared")"
+  if [ ! -f "$path" ]; then
+    marker=bad
+    detail="not found: $path"
+    [ -n "$hint" ] && detail="$detail — $hint"
+  elif [ "$format" = "json" ] && ! jq empty "$path" >/dev/null 2>&1; then
+    marker=bad
+    detail="not valid JSON: $path"
+  else
+    marker=ok
+    detail="$path"
+    if [ -n "$keys_of" ] && [ "$format" = "json" ]; then
+      keys=$(jq -r --arg k "$keys_of" '
+        (.[$k] // {}) | if type == "object" then (keys_unsorted | join(", ")) else "" end
+      ' "$path" 2>/dev/null) || keys=""
+      if [ -n "$keys" ]; then
+        detail="$path ($keys_of: $keys)"
+      else
+        detail="$path (no $keys_of entries)"
+      fi
+    fi
+  fi
+
+  if [ "$marker" = "ok" ]; then
+    printf '  [OK]   %s\n' "$declared" >&2
+  elif [ "$level" = "core" ]; then
+    printf '  [FAIL] %s\n' "$declared" >&2
+    ERRORS=$((ERRORS + 1))
+  else
+    printf '  [WARN] %s\n' "$declared" >&2
+    WARNINGS=$((WARNINGS + 1))
+  fi
+  printf '         %s\n' "$detail" >&2
 }
 
 printf '=== shai-doctor ===\n\n' >&2
@@ -80,6 +136,26 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
       local_level=$(printf '%s' "$line" | jq -r '.level')
       check_env "$local_name" "$local_level"
     done < <(jq -c '.capabilities.requires.env // [] | .[]' "$tj" 2>/dev/null)
+  done
+
+  # Config files a tool needs but nothing installs for it (e.g. the ci tool's ci.json).
+  # The section header prints unconditionally so an empty section is itself a signal.
+  printf '\nTool-declared files:\n' >&2
+  SEEN_FILES=""
+  for tj in "$DIR"/tools/*/tool.json; do
+    [ -f "$tj" ] || continue
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      file_path=$(printf '%s' "$line" | jq -r '.path // empty')
+      [ -n "$file_path" ] || continue
+      case "$SEEN_FILES" in *"|$file_path|"*) continue ;; esac
+      SEEN_FILES="$SEEN_FILES|$file_path|"
+      file_level=$(printf '%s' "$line" | jq -r '.level // "conditional"')
+      file_format=$(printf '%s' "$line" | jq -r '.format // empty')
+      file_keys=$(printf '%s' "$line" | jq -r '.keys // empty')
+      file_hint=$(printf '%s' "$line" | jq -r '.hint // empty')
+      check_config_file "$file_path" "$file_level" "$file_format" "$file_keys" "$file_hint"
+    done < <(jq -c '.capabilities.requires.files // [] | .[]' "$tj" 2>/dev/null)
   done
 fi
 

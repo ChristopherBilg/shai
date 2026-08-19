@@ -145,6 +145,27 @@ for tool_dir in "$ROOT"/tools/*/; do
       ok "$tname: requires.env valid"
     fi
   fi
+
+  # requires.files: must be array of {path, level: core|conditional} with optional
+  # format ("json"), keys (top-level object whose keys shai-doctor lists), hint (fix advice)
+  req_files_type=$(jq -r '.capabilities.requires.files | type' "$tj" 2>/dev/null) || req_files_type="null"
+  if [ "$req_files_type" != "null" ]; then
+    if [ "$req_files_type" != "array" ]; then
+      note "$tname: capabilities.requires.files must be an array (got $req_files_type)"
+    elif ! jq -e '
+      .capabilities.requires.files | all(
+        (.path | type == "string" and length > 0)
+        and (.level == "core" or .level == "conditional")
+        and ((.format // "json") == "json")
+        and ((.keys // "unset") | type == "string" and length > 0)
+        and ((.hint // "unset") | type == "string" and length > 0)
+      )
+    ' "$tj" >/dev/null 2>&1; then
+      note "$tname: capabilities.requires.files entries must have path (non-empty string) and level (core|conditional), with optional format (\"json\"), keys, hint non-empty strings"
+    else
+      ok "$tname: requires.files valid"
+    fi
+  fi
 done
 
 echo

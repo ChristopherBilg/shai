@@ -2,7 +2,8 @@
 # install.sh — download and install shai from a GitHub Release
 # Usage: gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
 #        export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base64 -d | bash
-# Reads: SHAI_VERSION (env, optional — defaults to latest GitHub Release)
+# Reads: SHAI_VERSION (env, optional — defaults to latest GitHub Release), SHAI_HOME (env,
+#        optional — only to report where the ci tool's ci.json would live)
 # Writes: ~/.local/share/shai/<version>/ (extraction), ~/.local/bin/shai* (exec wrappers)
 # Exit: 0 on success, 1 on download/extract failure, 2 if gh CLI is missing or unauthenticated
 set -euo pipefail
@@ -75,3 +76,13 @@ case ":${PATH}:" in
   *":${BIN_DIR}:"*) ;;
   *) printf '  Note: %s is not in your PATH. Add it with: export PATH="%s:$PATH"\n' "$BIN_DIR" "$BIN_DIR" ;;
 esac
+
+# The ci tool only runs checks listed in $SHAI_HOME/ci.json, and nothing creates that file —
+# point at the shipped example instead of silently leaving the tool inert. shai-doctor reports
+# the same gap as a warning.
+CI_EXAMPLE="${DEST}/ci.json.example"
+CI_CONFIG="${SHAI_HOME:-$HOME/.shai}/ci.json"
+if [ -f "$CI_EXAMPLE" ] && [ ! -f "$CI_CONFIG" ]; then
+  printf '  Note: the ci tool has no config at %s. Seed it from the shipped example:\n' "$CI_CONFIG"
+  printf '        mkdir -p %s && cp %s %s\n' "$(dirname "$CI_CONFIG")" "$CI_EXAMPLE" "$CI_CONFIG"
+fi

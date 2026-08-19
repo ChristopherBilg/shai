@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_doctor_sync.sh — tests the doctor dependency sync checker
-# Covers: tests/doctor-sync.sh — detection of missing deps, pass on full coverage
+# Covers: tests/doctor-sync.sh — detection of missing tool/env/file deps, pass on full coverage
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -66,6 +66,34 @@ OUT="$(bash "$FIX/tests/doctor-sync.sh" 2>&1)"
 assert_eq "$?" "1" "fixture: missing env dep → exit 1"
 assert_contains "$OUT" "DOCTOR SYNC FAILED" "fixture: missing env dep → FAILED banner"
 assert_contains "$OUT" "WIDGET_TOKEN" "fixture: missing env dep → names the env var"
+
+# --- fixture: declared config file covered → pass ---
+cat >"$FIX/tools/widget/tool.json" <<'EOF'
+{
+  "name": "widget",
+  "description": "a fixture tool that needs a config file",
+  "input_schema": { "type": "object", "properties": {} },
+  "capabilities": {
+    "read_only": true,
+    "requires": {
+      "files": [{ "path": "$SHAI_HOME/widget.json", "level": "conditional", "format": "json" }]
+    }
+  }
+}
+EOF
+
+stub_doctor '$SHAI_HOME/widget.json'
+OUT="$(bash "$FIX/tests/doctor-sync.sh" 2>&1)"
+assert_eq "$?" "0" "fixture: declared file covered → exit 0"
+assert_contains "$OUT" "DOCTOR SYNC OK" "fixture: declared file covered → OK banner"
+assert_contains "$OUT" "requires file" "fixture: declared file covered → names the file check"
+
+# --- fixture: declared config file not reported → fail ---
+stub_doctor widgetcli
+OUT="$(bash "$FIX/tests/doctor-sync.sh" 2>&1)"
+assert_eq "$?" "1" "fixture: unreported file dep → exit 1"
+assert_contains "$OUT" "DOCTOR SYNC FAILED" "fixture: unreported file dep → FAILED banner"
+assert_contains "$OUT" 'widget.json' "fixture: unreported file dep → names the path"
 
 # --- fixture: no deps declared → pass ---
 cat >"$FIX/tools/widget/tool.json" <<'EOF'
