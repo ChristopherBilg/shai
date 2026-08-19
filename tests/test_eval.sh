@@ -35,31 +35,25 @@ assert_contains "$DRY" '"gh"' "eval: tools included with --tools-file"
 NOTOOLS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
 assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tools without --tools-file"
 
-NOSYS=$(echo '{"system":"","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
-assert_eq "$(printf '%s' "$NOSYS" | jq 'has("system")')" "false" "eval: empty system omitted from payload"
-
-WITHSYS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
-assert_eq "$(printf '%s' "$WITHSYS" | jq -r '.system')" "S" "eval: non-empty system included"
-
 # --- stubbed 200 assistant event (curl-using tests start here) ---
 make_stub_bin
 
 write_curl_stub 200 <<'STUB'
-{"id":"msg_test123","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"stub reply"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
+{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
 STUB
 EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
-assert_contains "$EV" '"stop_reason":"end_turn"' "eval: stop_reason parsed"
+assert_contains "$EV" '"finish_reason":"stop"' "eval: finish_reason parsed"
 assert_contains "$EV" 'stub reply' "eval: content passed through"
 
-env -u ANTHROPIC_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
+env -u DEEPSEEK_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
 assert_eq "$?" "1" "eval: health-check fails without key"
 
 "$DIR/shai-eval" --health-check
 assert_eq "$?" "0" "eval: health-check ok with key"
 
 # --- error-path coverage: reuse the stub curl with different bodies/codes ---
-printf '%s' '{"type":"error","error":{"message":"overloaded"}}' | write_curl_stub 529
+printf '%s' '{"error":{"message":"overloaded"}}' | write_curl_stub 529
 EVERR=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_contains "$EVERR" '"type":"error"' "eval: non-200 JSON body → error event"
 assert_contains "$EVERR" 'overloaded' "eval: error message extracted"
@@ -69,9 +63,9 @@ EVHTML=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$D
 assert_contains "$EVHTML" '"type":"error"' "eval: non-200 non-JSON body → error event (no crash)"
 assert_contains "$EVHTML" 'HTTP 502' "eval: non-JSON error falls back to HTTP code"
 
-printf '%s' '{"type":"error","error":{"message":"bad-200-body"}}' | write_curl_stub 200
+printf '%s' '{"error":{"message":"bad-200-body"}}' | write_curl_stub 200
 EV200=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
-assert_contains "$EV200" '"type":"error"' "eval: 200 body with type=error → error event"
+assert_contains "$EV200" '"type":"error"' "eval: 200 body with error → error event"
 
 printf '%s' 'totally not json' | write_curl_stub 200
 EV200BAD=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
@@ -134,7 +128,7 @@ assert_eq "$(find "$HCHOME/runs" -name '*-request.json' 2>/dev/null | wc -l | tr
 
 # an unwritable SHAI_HOME must not break the call (best-effort dump)
 make_stub_bin
-printf '%s' '{"id":"msg_uw","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}' | write_curl_stub 200
+printf '%s' '{"id":"msg_uw","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}' | write_curl_stub 200
 UNWRITABLE="$(mktemp)" # a regular file — mkdir -p over it fails
 _CLEANUP_DIRS+=("$UNWRITABLE")
 EVUW=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_HOME="$UNWRITABLE" "$DIR/shai-eval")
@@ -146,7 +140,7 @@ assert_eq "$RC" "0" "eval: unwritable SHAI_HOME still exits 0"
 EVH="$(mktemp -d)"
 _CLEANUP_DIRS+=("$EVH")
 write_curl_stub 200 <<'JSON'
-{"id":"msg_dump","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
+{"id":"msg_dump","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 
 echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
@@ -185,13 +179,13 @@ assert_eq "$(printf '%s' "$OUT4" | jq -r '.source')" "assistant" \
 # --- response metadata: api key + response dump ------------------------------
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_test123","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"Hello"}],"stop_reason":"end_turn","usage":{"input_tokens":100,"output_tokens":50}}
+{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"model":"deepseek-v4-pro-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.api.message_id')" "msg_test123" "api.message_id"
-assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "claude-opus-5-20260801" "api.model"
-assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.input_tokens')" "100" "api.usage.input_tokens"
-assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.output_tokens')" "50" "api.usage.output_tokens"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "deepseek-v4-pro-20260801" "api.model"
+assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.prompt_tokens')" "100" "api.usage.prompt_tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.completion_tokens')" "50" "api.usage.completion_tokens"
 assert_contains "$(printf '%s' "$OUT" | jq '.api.latency_ms')" "" "api.latency_ms is present"
 # latency_ms should be a non-negative integer
 LATENCY=$(printf '%s' "$OUT" | jq '.api.latency_ms')
@@ -209,7 +203,7 @@ assert_eq "$(printf '%s' "$OUT" | jq '.api // "absent"')" '"absent"' "api key: a
 
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"type":"error","error":{"message":"rate limited"}}
+{"error":{"message":"rate limited"}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_eq "$(printf '%s' "$OUT" | jq '.api // "absent"')" '"absent"' "api key: absent on API-level error (HTTP 200)"
@@ -219,7 +213,7 @@ EVR1=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR1")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_resp","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}
+{"id":"msg_resp","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR1" SHAI_RUN_ID=run_resp_test SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
@@ -227,8 +221,8 @@ assert_eq "$([ -f "$EVR1/runs/run_resp_test/span_1-response.json" ] && echo "exi
   "response dump: written alongside request dump"
 assert_eq "$(jq -r '.message_id' "$EVR1/runs/run_resp_test/span_1-response.json")" "msg_resp" \
   "response dump: message_id"
-assert_eq "$(jq '.usage.input_tokens' "$EVR1/runs/run_resp_test/span_1-response.json")" "10" \
-  "response dump: usage.input_tokens"
+assert_eq "$(jq '.usage.prompt_tokens' "$EVR1/runs/run_resp_test/span_1-response.json")" "10" \
+  "response dump: usage.prompt_tokens"
 assert_eq "$(jq '.latency_ms' "$EVR1/runs/run_resp_test/span_1-response.json")" \
   "$(printf '%s' "$OUT" | jq '.api.latency_ms')" "response dump: latency matches the event's api.latency_ms"
 
@@ -250,7 +244,7 @@ EVR2B=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR2B")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"type":"error","error":{"message":"rate limited"}}
+{"error":{"message":"rate limited"}}
 STUB
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR2B" SHAI_RUN_ID=run_200err_resp SHAI_SPAN_ID=span_1 "$DIR/shai-eval" >/dev/null
@@ -263,7 +257,7 @@ _CLEANUP_DIRS+=("$EVR3")
 touch "$EVR3/runs"
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_x","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
+{"id":"msg_x","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR3" SHAI_RUN_ID=run_unwrite SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
@@ -277,7 +271,7 @@ EVR4=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR4")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_ns","type":"message","role":"assistant","model":"claude-opus-5-20260801","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}
+{"id":"msg_ns","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 STUB
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR4" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
