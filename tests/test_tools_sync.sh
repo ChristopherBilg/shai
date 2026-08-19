@@ -87,6 +87,19 @@ OUT="$(bash "$DIR/tests/tools-sync.sh" "$WF" 2>&1)"
 assert_eq "$?" "0" "prompt names only granted tools → exit 0"
 assert_contains "$OUT" "prompts/wfok.txt names only tools" "granted tool → per-prompt ok line"
 assert_contains "$OUT" "prompts/wfro.txt names only tools" "read-only fallback counts as granted"
+# Assert the wfmute skip directly: without this, a differently-handled policy-without-prompt
+# case (checked against nothing, or reported) would still leave the suite green.
+wfmute_mentioned=no
+[[ "$OUT" == *wfmute* ]] && wfmute_mentioned=yes
+assert_eq "$wfmute_mentioned" "no" "policy with no prompt → absent from the output"
+
+# --- "default": "allow" grants every tool, so the prompt is not checked ---
+mkdir -p "$WF/workflows/wfall"
+echo '{"default":"allow","rules":[]}' >"$WF/workflows/wfall/policy.json"
+echo 'Call the alpha tool to do the work.' >"$WF/prompts/wfall.txt"
+OUT="$(bash "$DIR/tests/tools-sync.sh" "$WF" 2>&1)"
+assert_eq "$?" "0" "write tool named under default allow → exit 0"
+assert_contains "$OUT" "every tool is granted" "default allow → prompt not checked"
 
 # --- prompt names a write tool the policy does not grant → fail ---
 mkdir -p "$WF/workflows/wfbad"

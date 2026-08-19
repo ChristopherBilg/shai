@@ -55,7 +55,20 @@ done
 # workflows/<name>/policy.json is prompts/<name>.txt; workflows with no prompt file (the
 # pure-bash dispatchers) are skipped. "Granted" means an explicit `allow` rule, or — when the
 # policy sets no `default` — a read-only tool, which shai-dispatch auto-allows as its per-tool
-# fallback.
+# fallback. A policy with `"default": "allow"` grants every tool at dispatch time, so its prompt
+# is not checked at all.
+#
+# Deliberate limits, so the invariant stays cheap and free of false positives:
+#   - Arg scoping is out of scope: a rule like `ci` with `args.cwd: "/tmp/*"` counts here as an
+#     unconditional grant, so a prompt telling the agent to call `ci` without a /tmp cwd still
+#     passes even though dispatch would fail closed.
+#   - The match is a bare word match, so it cannot tell "use the `ci` tool" from "you cannot run
+#     the `ci` tool". A prompt that names a tool only to rule it out must therefore still be
+#     backed by a grant, or must avoid naming the tool.
+#   - The read-only fallback assumes the user's base $SHAI_HOME/policy.json has no matching rule
+#     and no `default` — shai-dispatch consults the base policy before falling back — so this
+#     check cannot prove a read-only tool is reachable, only that the overlay does not
+#     contradict it.
 found_policy=0
 for policy in workflows/*/policy.json; do
   [ -f "$policy" ] || continue
@@ -68,8 +81,12 @@ for policy in workflows/*/policy.json; do
     continue
   fi
   policy_default="$(jq -r '.default // ""' "$policy")" || policy_default=""
+  if [ "$policy_default" = "allow" ]; then
+    ok "$policy sets \"default\": \"allow\" — every tool is granted, $prompt not checked"
+    continue
+  fi
   ro_allowed=no
-  if [ -z "$policy_default" ] || [ "$policy_default" = "allow" ]; then
+  if [ -z "$policy_default" ]; then
     ro_allowed=yes
   fi
   ungranted=()
