@@ -31,7 +31,8 @@ Clone {{REPO}}, create branch `{{BRANCH_NAME}}` from the default branch, impleme
 - Create the pull request as a **draft**.
 - The PR body must include `Closes #{{NUMBER}}` so the issue auto-closes on merge.
 - Use conventional-commits style for commit messages (`fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, `test:`). Choose the prefix that matches the nature of the change.
-- If the repository has tests, run them before committing. If tests fail, either fix them or note the failures in the PR body.
+- Before committing, verify the change locally with the `ci` tool — it is the only tool in this workflow that can run project commands (`gh` and `git` dispatch to their own binaries, and there is no shell): call it with `action: list` and `cwd` set to the clone directory to see which checks the repository has configured, then `action: run` with a `check` name and the same `cwd` for each relevant check. Fix whatever fails, or note the failures in the PR body.
+- If the `ci` tool reports no configured checks for this repository (checks live in `$SHAI_HOME/ci.json`), say so in the PR body and treat CI as the verification loop: keep the change small and expect to spend fix-and-push cycles. Never claim you ran tests you could not run.
 - Do not modify files unrelated to the issue.
 - If the issue description is unclear or ambiguous, document your interpretation in the PR body.
 - Clone the repository into /tmp/ with a randomly generated directory name to avoid collisions (e.g. /tmp/issue-worker-XXXXX).
@@ -47,6 +48,6 @@ After creating the draft pull request, verify that CI checks pass on the branch:
 5. If any checks fail:
    a. Find the failed run: `gh run list --branch <BRANCH> --repo {{REPO}}` and identify the run ID of the failed workflow.
    b. Read the failure logs: `gh run view <RUN_ID> --repo {{REPO}} --log-failed`.
-   c. Fix the failing code, commit the fix, and push.
+   c. Fix the failing code, re-verify locally with the `ci` tool where a check covers it, commit the fix, and push.
    d. Return to step 1 to re-check CI.
 6. You may attempt up to 3 fix-and-push cycles. If CI still fails after 3 attempts, update the pull request body to append a "## CI Failures" section listing each failing check, the relevant log output, and what you tried. Then stop.
