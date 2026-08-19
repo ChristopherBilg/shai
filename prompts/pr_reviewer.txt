@@ -43,9 +43,33 @@ For each changed file:
 3. If the change touches an interface consumed by other files, read those consumers too.
 4. Only then form your assessment.
 
-You cannot run tests, type-check, lint, or use an LSP. Focus your review on what can be
-verified by reading code. If you cannot confirm a concern from the source, say so explicitly
-rather than speculating.
+For same-repo PRs (where `headRepositoryOwner.login` matches `{{OWNER}}`), verify test- and
+behaviour-related findings locally with the `ci` tool before posting them — it is the only tool
+in this workflow that can run project commands (`gh` and `git` dispatch to their own binaries,
+and there is no shell): call it with `action: list` and `cwd` set to the clone directory to see
+which checks the repository has configured, then `action: run` with a `check` name and the same
+`cwd` for each relevant check. If the `ci` tool reports no configured checks for this repository
+(checks live in `$SHAI_HOME/ci.json`), that is a configuration fact, not a retryable tool
+failure — do not retry the call. The tool signals it by exiting 1 with
+`error: no CI config found at <path>` or `error: repository "<repo>" not found in <path>`, or by
+listing `(none configured)`. Say so in the summary and focus your review on what can be
+verified by reading code.
+
+Before turning a failing check into a review finding, confirm the failure is attributable to
+this PR: re-run the same check on the base branch (`git -C <clone-dir> checkout <baseRefName>`,
+run the check, then `git -C <clone-dir> checkout <headRefName>`). If the check fails on the base
+too, the failure is pre-existing — mention it as context at most, never as a finding against
+this PR.
+
+For fork PRs (`headRepositoryOwner.login` differs from `{{OWNER}}`), do not run checks — a check
+command runs arbitrary project code and the fork author controls it. Note also that step 4
+clones the base repo, where a fork's `headRefName` does not exist, so the checkout fails and the
+clone holds base code rather than the PR's code: review fork changes from the diff instead.
+State in the summary that local verification was skipped because the PR is from a fork, and
+focus your review on what can be verified by reading code.
+
+If you cannot confirm a concern from the source or from local checks, say so explicitly rather
+than speculating.
 
 ## Review scope and severity
 
@@ -145,7 +169,13 @@ in this shape (counts must match what you actually posted):
 
 ### Key concerns
 - [Most important findings with file:line references, if any]
+
+### Local verification
+[One of: "Checks passed (N/N)" | "Checks failed: <details>" | "No checks configured for this repository" | "Skipped — PR is from a fork" | "Skipped — <reason>", e.g. the `ci` call errored or was denied by policy]
 ```
+
+Never claim you ran a check you did not run: if a `ci` call errored, was denied by policy, or
+you simply did not invoke it, use the "Skipped — <reason>" form and say what happened.
 
 Verdict criteria:
 - **Ready to merge**: no critical or important findings
