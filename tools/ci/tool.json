@@ -1,0 +1,29 @@
+{
+  "name": "ci",
+  "description": "Run a configured CI check for a repository. Use action 'list' to see available checks, then 'run' with a check name to execute one. Only checks explicitly configured in $SHAI_HOME/ci.json can be run. Pass 'cwd' to target a checkout other than the current working directory.",
+  "capabilities": {
+    "read_only": false,
+    "requires": {
+      "tools": ["git", "timeout"]
+    }
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list", "run"],
+        "description": "Action to perform: 'list' shows available checks for the repo, 'run' executes a specific check."
+      },
+      "check": {
+        "type": "string",
+        "description": "Name of the check to run (required when action is 'run'). Must match a key in the repo's checks config."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Optional directory to detect the repository in and run the check from, e.g. a clone under /tmp. Defaults to the current working directory."
+      }
+    },
+    "required": ["action"]
+  }
+}
