@@ -42,6 +42,7 @@ normalize_url() {
   local url="$1"
   url="${url#https://}"
   url="${url#http://}"
+  url="${url#ssh://}"
   url="${url#git@}"
   url="${url%.git}"
   url="${url%/}"

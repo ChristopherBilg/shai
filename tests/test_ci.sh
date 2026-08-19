@@ -214,6 +214,11 @@ write_remote_stub "git@github.com:owner/repo"
 OUT=$("$TOOL" '{"action":"list"}')
 assert_eq "$?" "0" "normalize: SSH without .git"
 
+# SSH with ssh:// prefix
+write_remote_stub "ssh://git@github.com/owner/repo.git"
+OUT=$("$TOOL" '{"action":"list"}')
+assert_eq "$?" "0" "normalize: SSH with ssh:// prefix"
+
 # HTTPS with trailing slash
 write_remote_stub "https://github.com/owner/repo/"
 OUT=$("$TOOL" '{"action":"list"}')
