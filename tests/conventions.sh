@@ -58,7 +58,20 @@ for tj in tools/*/tool.json; do
   if jq empty "$tj" >/dev/null 2>&1; then ok "$tj is valid JSON"; else note "$tj is not valid JSON"; fi
 done
 
-# 5. Trailing whitespace + final newline on tracked text files
+# 5. Every runtime script is in the lint target. The inverse relation to the checks above: a new
+# category of runtime script cannot be held to these conventions while staying invisible to
+# the linters, which is exactly how tools/*/run.sh went unlinted (see #81).
+declare -A LINTED=()
+while IFS= read -r f; do LINTED["$f"]=1; done < <(bash tests/lint.sh --list)
+for f in "${RUNTIME[@]}"; do
+  if [ -n "${LINTED[$f]:-}" ]; then
+    ok "in the lint target: $f"
+  else
+    note "not in the lint target — add its glob to tests/lint.sh: $f"
+  fi
+done
+
+# 6. Trailing whitespace + final newline on tracked text files
 while IFS= read -r f; do
   case "$f" in *.png | *.jpg | *.jpeg | *.gif) continue ;; esac
   if LC_ALL=C grep -nq '[[:blank:]]$' "$f"; then note "trailing whitespace: $f"; fi
