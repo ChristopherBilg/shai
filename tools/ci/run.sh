@@ -145,26 +145,16 @@ if ! [[ "$check_timeout" =~ ^[0-9]+$ ]] || [ "$check_timeout" -eq 0 ]; then
   exit 1
 fi
 
-# timeout(1) reports 124, but a check command can also exit 124 on its own, so 124 alone
-# cannot be trusted. Instead the wrapper shell reports its own status on fd 3 from an EXIT
-# trap: the trap does not run when timeout(1) kills the shell with SIGTERM, so an empty
-# status file means "timed out" and a populated one carries the command's real exit code.
-rc_file=$(mktemp)
-trap 'rm -f "$rc_file"' EXIT
+# timeout(1) reports 124, but a check command can also exit 124 on its own, so 124 alone is
+# not enough. An in-band sentinel does not help either: bash runs EXIT traps even when it is
+# killed by SIGTERM. So require the run to have lasted about as long as the configured limit.
+# The 1s slack absorbs $SECONDS truncation; only a check that exits 124 on its own within a
+# second of its own limit stays ambiguous.
+start=$SECONDS
+output=$(timeout "${check_timeout}s" bash -c "$check_command" 2>&1) && rc=$? || rc=$?
+elapsed=$((SECONDS - start))
 
-output=$(timeout "${check_timeout}s" bash -c "trap 'printf %s \"\$?\" >&3' EXIT
-$check_command" 3>"$rc_file" 2>&1) && timeout_rc=$? || timeout_rc=$?
-
-if [ -s "$rc_file" ]; then
-  rc=$(cat "$rc_file")
-  [[ "$rc" =~ ^[0-9]+$ ]] || rc="$timeout_rc"
-  timed_out=false
-else
-  rc="$timeout_rc"
-  timed_out=true
-fi
-
-if [ "$timed_out" = true ]; then
+if [ "$rc" -eq 124 ] && [ "$elapsed" -ge $((check_timeout - 1)) ]; then
   printf 'error: check "%s" timed out after %ss\n' "$check" "$check_timeout"
   if [ -n "$output" ]; then printf '%s\n' "$output"; fi
   exit 1
