@@ -1,5 +1,5 @@
 #!/bin/bash
-# tools-sync.sh — verify tool lists in docs and prompts match tools/*/tool.json
+# tools-sync.sh — verify tool mentions in docs, prompts, and workflow policies stay in sync
 # Usage: ./tests/tools-sync.sh [root-dir]
 set -euo pipefail
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)}"
@@ -49,11 +49,75 @@ for f in "${FILES[@]}"; do
   fi
 done
 
+# A workflow's prompt may only name tools its own policy.json grants: the prompt is the
+# instruction set and policy.json is the capability set, so a tool named in one and absent from
+# the other is an instruction the workflow cannot follow (see issue #74). The prompt for
+# workflows/<name>/policy.json is prompts/<name>.txt; workflows with no prompt file (the
+# pure-bash dispatchers) are skipped. "Granted" means an explicit `allow` rule, or — when the
+# policy sets no `default` — a read-only tool, which shai-dispatch auto-allows as its per-tool
+# fallback. A policy with `"default": "allow"` grants every tool at dispatch time, so its prompt
+# is not checked at all.
+#
+# Deliberate limits, so the invariant stays cheap and free of false positives:
+#   - Arg scoping is out of scope: a rule like `ci` with `args.cwd: "/tmp/*"` counts here as an
+#     unconditional grant, so a prompt telling the agent to call `ci` without a /tmp cwd still
+#     passes even though dispatch would fail closed.
+#   - The match is a bare word match, so it cannot tell "use the `ci` tool" from "you cannot run
+#     the `ci` tool". A prompt that names a tool only to rule it out must therefore still be
+#     backed by a grant, or must avoid naming the tool.
+#   - The read-only fallback assumes the user's base $SHAI_HOME/policy.json has no matching rule
+#     and no `default` — shai-dispatch consults the base policy before falling back — so this
+#     check cannot prove a read-only tool is reachable, only that the overlay does not
+#     contradict it.
+found_policy=0
+for policy in workflows/*/policy.json; do
+  [ -f "$policy" ] || continue
+  found_policy=1
+  wf="$(basename "$(dirname "$policy")")"
+  prompt="prompts/$wf.txt"
+  [ -f "$prompt" ] || continue
+  if ! jq empty "$policy" >/dev/null 2>&1; then
+    note "$policy is not valid JSON"
+    continue
+  fi
+  policy_default="$(jq -r '.default // ""' "$policy")" || policy_default=""
+  if [ "$policy_default" = "allow" ]; then
+    ok "$policy sets \"default\": \"allow\" — every tool is granted, $prompt not checked"
+    continue
+  fi
+  ro_allowed=no
+  if [ -z "$policy_default" ]; then
+    ro_allowed=yes
+  fi
+  ungranted=()
+  for tool in "${TOOLS[@]}"; do
+    grep -qw -- "$tool" "$prompt" || continue
+    if jq -e --arg t "$tool" 'any(.rules[]?; .tool == $t and .action == "allow")' \
+      "$policy" >/dev/null 2>&1; then
+      continue
+    fi
+    read_only="$(jq -r '.capabilities.read_only // false' "tools/$tool/tool.json" 2>/dev/null)" ||
+      read_only=false
+    if [ "$ro_allowed" = "yes" ] && [ "$read_only" = "true" ]; then
+      continue
+    fi
+    ungranted+=("$tool")
+  done
+  if [ "${#ungranted[@]}" -eq 0 ]; then
+    ok "$prompt names only tools $policy grants"
+  else
+    note "$prompt names ${#ungranted[@]} tool(s) $policy does not grant: ${ungranted[*]}"
+  fi
+done
+if [ "$found_policy" -eq 0 ]; then
+  ok "no workflow policies to check"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo -e "${GREEN}TOOLS SYNC OK${NC}"
   exit 0
 else
-  echo -e "${RED}TOOLS SYNC FAILED${NC} — update the file(s) above to mention all tools from tools/*/tool.json"
+  echo -e "${RED}TOOLS SYNC FAILED${NC} — mention every tool from tools/*/tool.json in the file(s) above, and keep each workflow prompt to the tools its own policy.json grants"
   exit 1
 fi
