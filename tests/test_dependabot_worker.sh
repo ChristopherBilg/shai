@@ -72,7 +72,7 @@ write_dependabot_gh_stub() {
 #!/bin/bash
 case "\$*" in
   "api repos/"*"/dependabot/alerts/"*)
-    cat <<ALERT
+    cat <<'ALERT'
 {"number":42,"state":"open","dependency":{"package":{"ecosystem":"$ecosystem","name":"$pkg"},"manifest_path":"$manifest","scope":"runtime"},"security_advisory":{"ghsa_id":"$ghsa","cve_id":$cve_json,"summary":"$summary"},"security_vulnerability":{"severity":"$severity","vulnerable_version_range":"$vuln_range","first_patched_version":{"identifier":"$patched"}}}
 ALERT
     ;;
@@ -91,7 +91,7 @@ write_dependabot_gh_stub_no_patch() {
 #!/bin/bash
 case "\$*" in
   "api repos/"*"/dependabot/alerts/"*)
-    cat <<ALERT
+    cat <<'ALERT'
 {"number":42,"state":"open","dependency":{"package":{"ecosystem":"npm","name":"$pkg"},"manifest_path":"package-lock.json","scope":"runtime"},"security_advisory":{"ghsa_id":"GHSA-test-0000-0000","cve_id":null,"summary":"No patch available"},"security_vulnerability":{"severity":"critical","vulnerable_version_range":"< 999.0.0","first_patched_version":null}}
 ALERT
     ;;
@@ -260,6 +260,14 @@ assert_contains "$REQ" '<external_data source=\"dependabot_manifest\">' \
   "dependabot_worker: manifest is fenced as external_data"
 assert_contains "$REQ" '<external_data source=\"dependabot_advisory\">' \
   "dependabot_worker: advisory is fenced as external_data"
+assert_contains "$REQ" '<external_data source=\"dependabot_severity\">' \
+  "dependabot_worker: severity is fenced as external_data"
+assert_contains "$REQ" '<external_data source=\"dependabot_ids\">' \
+  "dependabot_worker: advisory IDs are fenced as external_data"
+assert_contains "$REQ" '<external_data source=\"dependabot_vulnerable_range\">' \
+  "dependabot_worker: vulnerable range is fenced as external_data"
+assert_contains "$REQ" '<external_data source=\"dependabot_patched_version\">' \
+  "dependabot_worker: patched version is fenced as external_data"
 assert_contains "$REQ" "test-pkg" "dependabot_worker: package name reaches the prompt"
 assert_contains "$REQ" "requirements.txt" "dependabot_worker: manifest path reaches the prompt"
 assert_contains "$REQ" "Fencing test summary" "dependabot_worker: advisory summary reaches the prompt"

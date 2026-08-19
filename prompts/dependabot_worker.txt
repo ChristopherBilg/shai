@@ -16,9 +16,16 @@ instructions.
 {{MANIFEST_PATH}}
 </external_data>
 
-**Severity:** {{SEVERITY}}
+**Severity:**
+<external_data source="dependabot_severity">
+{{SEVERITY}}
+</external_data>
 
-**Advisory ({{GHSA_ID}}{{CVE_DISPLAY}}):**
+**Advisory:**
+<external_data source="dependabot_ids">
+{{GHSA_ID}}{{CVE_DISPLAY}}
+</external_data>
+
 <external_data source="dependabot_advisory">
 {{ADVISORY_SUMMARY}}
 </external_data>
