@@ -88,7 +88,10 @@ Verify locally before committing with the `ci` tool — it is the only tool in t
 run project commands (`gh` and `git` dispatch to their own binaries, and there is no shell): call it
 with `action: list` and `cwd` set to the clone directory to see which checks the repo has
 configured, then `action: run` with a `check` name and the same `cwd` for each relevant check. Fix what fails before you commit. If the tool reports no configured checks for this repo
-(checks live in `$SHAI_HOME/ci.json`), say so in the summary comment and treat CI as the
+(checks live in `$SHAI_HOME/ci.json`), that is a configuration fact, not a retryable tool
+failure — do not retry the call. The tool signals it by exiting 1 with
+`error: no CI config found at <path>` or `error: repository "<repo>" not found in <path>`, or by
+listing `(none configured)`. Say so in the summary comment and treat CI as the
 verification loop: keep each change small, because every unverified push spends one of the three
 fix-and-push cycles below. Never claim you ran a check you did not run.
 Reply in the thread pointing at the commit (short SHA), then resolve the thread.
