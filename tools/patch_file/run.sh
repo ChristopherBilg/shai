@@ -23,8 +23,20 @@ new_string=$(printf '%s' "$input" | jq -rj '.new_string' && printf x) || {
 new_string=${new_string%x}
 # file_mode <path> — echo a file's octal permission bits, or nothing if unavailable.
 # GNU coreutils and BSD/macOS stat disagree on flags, so try both (the repo targets both).
+# GNU '%a' already includes the setuid/setgid/sticky bits; on BSD those live in '%Mp' and the
+# user/group/other bits in '%Lp', so concatenate them (zero-padding the low bits to 3 digits)
+# instead of using '%Lp' alone, which would silently drop setuid/setgid/sticky on macOS.
+# Always returns 0: the caller assigns via command substitution, and a non-zero status there
+# would abort the script under `set -e`.
 file_mode() {
-  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || printf ''
+  local mode high low
+  if mode=$(stat -c '%a' "$1" 2>/dev/null); then
+    printf '%s' "$mode"
+  elif high=$(stat -f '%Mp' "$1" 2>/dev/null) && low=$(stat -f '%Lp' "$1" 2>/dev/null); then
+    while [ "${#low}" -lt 3 ]; do low="0$low"; done
+    printf '%s%s' "$high" "$low"
+  fi
+  return 0
 }
 if [ ! -f "$path" ]; then
   printf 'file not found: %s' "$path"
@@ -69,13 +81,19 @@ OLD_STR="$old_string" NEW_STR="$new_string" awk '
 # destination, so without this the rename would silently drop the target's
 # permission bits (executable scripts become non-executable). Copy the mode
 # before the rename so the write stays atomic.
+# A mode that cannot be read or applied means the rename falls back to the buggy behaviour
+# (target left at the temp file's 0600), so say so in the output rather than failing the edit
+# or losing the bits silently.
 mode=$(file_mode "$path")
-if [ -n "$mode" ]; then
-  chmod "$mode" "$tmpfile" 2>/dev/null || true
+mode_note=""
+if [ -z "$mode" ]; then
+  mode_note=" (warning: could not read the original permission bits; they may have changed)"
+elif ! chmod "$mode" "$tmpfile" 2>/dev/null; then
+  mode_note=" (warning: could not restore mode $mode; permission bits may have changed)"
 fi
 mv -- "$tmpfile" "$path" 2>&1 || {
   rm -f "$tmpfile"
   printf 'cannot write to %s' "$path"
   exit 1
 }
-printf 'Patched %s' "$path"
+printf 'Patched %s%s' "$path" "$mode_note"
