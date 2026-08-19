@@ -147,7 +147,8 @@ for tool_dir in "$ROOT"/tools/*/; do
   fi
 
   # requires.files: must be array of {path, level: core|conditional} with optional
-  # format ("json"), keys (top-level object whose keys shai-doctor lists), hint (fix advice)
+  # format (only "json", which is also shai-doctor's default when omitted), keys (top-level
+  # object whose keys shai-doctor lists), hint (fix advice)
   req_files_type=$(jq -r '.capabilities.requires.files | type' "$tj" 2>/dev/null) || req_files_type="null"
   if [ "$req_files_type" != "null" ]; then
     if [ "$req_files_type" != "array" ]; then

@@ -41,11 +41,14 @@ for tj in "$ROOT"/tools/*/tool.json; do
   done < <(jq -r '.capabilities.requires.env // [] | .[].name' "$tj" 2>/dev/null)
 
   # Check declared config files. shai-doctor prints the *declared* path (with $SHAI_HOME left
-  # unexpanded), so a fixed-string match against tool.json is enough — and it keeps '$' and '/'
-  # out of the regex. The status marker must be on the same line as the path.
+  # unexpanded), so stripping the status marker and comparing the rest of the line as a fixed
+  # string keeps '$' and '/' out of the regex while staying as strict as the tool/env loops
+  # above: -x anchors the match, so a line for '<path>.bak' does not count as coverage.
   while IFS= read -r file_path; do
     [ -n "$file_path" ] || continue
-    if printf '%s\n' "$DOCTOR_OUT" | grep -E '\[(OK|WARN|FAIL)\]' | grep -qF -- "$file_path"; then
+    if printf '%s\n' "$DOCTOR_OUT" |
+      sed -nE 's/^[[:space:]]*\[(OK|WARN|FAIL)\][[:space:]]+(.*)$/\2/p' |
+      grep -qxF -- "$file_path"; then
       ok "$tname requires file '$file_path' — covered by shai-doctor"
     else
       note "$tname requires file '$file_path' — NOT found in shai-doctor output"

@@ -84,5 +84,8 @@ CI_EXAMPLE="${DEST}/ci.json.example"
 CI_CONFIG="${SHAI_HOME:-$HOME/.shai}/ci.json"
 if [ -f "$CI_EXAMPLE" ] && [ ! -f "$CI_CONFIG" ]; then
   printf '  Note: the ci tool has no config at %s. Seed it from the shipped example:\n' "$CI_CONFIG"
-  printf '        mkdir -p %s && cp %s %s\n' "$(dirname "$CI_CONFIG")" "$CI_EXAMPLE" "$CI_CONFIG"
+  # Quote the interpolated paths so the printed command stays paste-safe when $HOME or
+  # $SHAI_HOME contains a space.
+  printf '        mkdir -p "%s" && cp "%s" "%s"\n' \
+    "$(dirname "$CI_CONFIG")" "$CI_EXAMPLE" "$CI_CONFIG"
 fi

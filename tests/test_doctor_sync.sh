@@ -95,6 +95,12 @@ assert_eq "$?" "1" "fixture: unreported file dep → exit 1"
 assert_contains "$OUT" "DOCTOR SYNC FAILED" "fixture: unreported file dep → FAILED banner"
 assert_contains "$OUT" 'widget.json' "fixture: unreported file dep → names the path"
 
+# --- fixture: a near-miss path must not count as coverage (the match is anchored) ---
+stub_doctor '$SHAI_HOME/widget.json.bak'
+OUT="$(bash "$FIX/tests/doctor-sync.sh" 2>&1)"
+assert_eq "$?" "1" "fixture: near-miss file path → exit 1"
+assert_contains "$OUT" "NOT found" "fixture: near-miss file path → not treated as covered"
+
 # --- fixture: no deps declared → pass ---
 cat >"$FIX/tools/widget/tool.json" <<'EOF'
 {

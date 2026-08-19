@@ -290,10 +290,10 @@ interactive REPL.
 **Tool-declared prerequisites** — `capabilities.requires` in a `tool.json` is the source of truth
 for what a tool needs from its environment, and `shai-doctor` reports on all of it: `tools`
 (executables on `$PATH`), `env` (`[{name, level}]`, level `core`|`conditional`), and `files`
-(`[{path, level}]` plus optional `format: "json"` to check the file parses, `keys` — the
-top-level object whose key names get listed — and `hint`, the fix advice shown when it is
-missing). Only `$SHAI_HOME`, `$HOME`, and a leading `~` are expanded in `path`; `tool.json` is
-data and is never eval'd. `core` failures are errors, `conditional` ones warnings (the same
+(`[{path, level}]` plus optional `format` — only `"json"`, which is also the default, so the
+file is always checked to parse — `keys`, the top-level object whose key names get listed, and
+`hint`, the fix advice shown when it is missing). Only `$SHAI_HOME`, `$HOME`, and a leading `~`
+are expanded in `path`; `tool.json` is data and is never eval'd. `core` failures are errors, `conditional` ones warnings (the same
 degraded-but-usable treatment the Jira env vars get), and `tests/doctor-sync.sh` fails CI if any
 declared dependency goes unreported by `shai-doctor`. The only declared file today is the `ci`
 tool's `$SHAI_HOME/ci.json`, which nothing creates: copy the repo-root `ci.json.example` (already

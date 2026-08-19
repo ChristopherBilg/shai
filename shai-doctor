@@ -55,11 +55,14 @@ expand_path() {
 # check_config_file <declared-path> <level> [format] [keys-of] [hint]
 # A missing or malformed file is an error at level 'core' and a warning at 'conditional' —
 # the same degraded-but-usable treatment the conditional env vars get.
+# 'format' defaults to json here — the single place that default lives, matching
+# tests/validate-tool-schema.sh, which accepts only a missing or "json" format. Omitting it in
+# tool.json therefore still gets the parse check and the 'keys' listing, never a silent skip.
 # The status line ends with the *declared* path (with $SHAI_HOME still unexpanded) so
 # tests/doctor-sync.sh can match it against tool.json without re-expanding anything;
 # the resolved path and any detail go on an indented continuation line.
 check_config_file() {
-  local declared="$1" level="$2" format="${3:-}" keys_of="${4:-}" hint="${5:-}"
+  local declared="$1" level="$2" format="${3:-json}" keys_of="${4:-}" hint="${5:-}"
   local path detail="" marker keys
   path="$(expand_path "$declared")"
   if [ ! -f "$path" ]; then
@@ -146,7 +149,9 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
     [ -f "$tj" ] || continue
     while IFS= read -r line; do
       [ -n "$line" ] || continue
-      file_path=$(printf '%s' "$line" | jq -r '.path // empty')
+      # A non-object entry makes jq exit non-zero; keep the scan (and the summary line)
+      # alive instead of aborting the whole diagnostic under `set -e`.
+      file_path=$(printf '%s' "$line" | jq -r '.path // empty' 2>/dev/null) || file_path=""
       [ -n "$file_path" ] || continue
       case "$SEEN_FILES" in *"|$file_path|"*) continue ;; esac
       SEEN_FILES="$SEEN_FILES|$file_path|"
