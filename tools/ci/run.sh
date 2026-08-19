@@ -1,7 +1,7 @@
 #!/bin/bash
-# ci/run.sh — run a configured CI check for the current repository
+# ci/run.sh — run a configured CI check for a repository
 # Usage: run.sh '<json input>'
-# Reads: $1 (JSON with .action and optional .check), $SHAI_HOME/ci.json, git remote
+# Reads: $1 (JSON with .action, optional .check and .cwd), $SHAI_HOME/ci.json, git remote
 # Writes: check output or check listing to stdout
 # Exit: 0 on success (including failed checks), 1 on tool-level error
 set -euo pipefail
@@ -9,6 +9,7 @@ input="$1"
 
 action=$(printf '%s' "$input" | jq -r '.action // empty' 2>/dev/null) || action=""
 check=$(printf '%s' "$input" | jq -r '.check // empty' 2>/dev/null) || check=""
+cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null) || cwd=""
 
 if [ "$action" != "list" ] && [ "$action" != "run" ]; then
   printf 'error: action must be "list" or "run" (got "%s")\n' "$action"
@@ -18,6 +19,19 @@ fi
 if [ "$action" = "run" ] && [ -z "$check" ]; then
   echo "error: check name required when action is 'run'"
   exit 1
+fi
+
+# Repo detection and the check command both run in $cwd when given, so workflows that
+# clone elsewhere (e.g. /tmp) can point the tool at their checkout instead of shai's own.
+if [ -n "$cwd" ]; then
+  if [ ! -d "$cwd" ]; then
+    printf 'error: cwd "%s" is not a directory\n' "$cwd"
+    exit 1
+  fi
+  cd "$cwd" || {
+    printf 'error: cannot enter cwd "%s"\n' "$cwd"
+    exit 1
+  }
 fi
 
 config_file="${SHAI_HOME:-$HOME/.shai}/ci.json"
@@ -40,12 +54,21 @@ remote=$(git remote get-url origin 2>/dev/null) || {
 
 normalize_url() {
   local url="$1"
+  url="${url#git+ssh://}"
+  url="${url#ssh://}"
   url="${url#https://}"
   url="${url#http://}"
-  url="${url#ssh://}"
-  url="${url#git@}"
+  # Strip userinfo (user or user:token) so credentials never land in the lookup key.
+  # Only an '@' in the authority (before the first '/') is userinfo.
+  local authority="${url%%/*}"
+  if [[ "$authority" == *@* ]]; then
+    url="${url#*@}"
+  fi
+  # Trailing slashes first, then '.git', then any slash it was hiding, so both
+  # 'host/o/r.git' and 'host/o/r.git/' normalize to 'host/o/r'.
+  while [[ "$url" == */ ]]; do url="${url%/}"; done
   url="${url%.git}"
-  url="${url%/}"
+  while [[ "$url" == */ ]]; do url="${url%/}"; done
   if [[ "$url" =~ ^([^/:]+):(.+)$ ]]; then
     url="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
   fi
@@ -54,42 +77,101 @@ normalize_url() {
 
 repo_key=$(normalize_url "$remote")
 
-repo_exists=$(printf '%s' "$repo_key" | jq -Rsr --slurpfile cfg "$config_file" '$cfg[0].repos[.] // empty')
-if [ -z "$repo_exists" ]; then
+repo_cfg=$(jq -c --arg key "$repo_key" '.repos[$key] // empty' "$config_file" 2>/dev/null) || repo_cfg=""
+if [ -z "$repo_cfg" ]; then
   printf 'error: repository "%s" not found in %s\n' "$repo_key" "$config_file"
   echo "Add it to the 'repos' map with your CI checks."
   exit 1
 fi
 
+repo_cfg_type=$(printf '%s' "$repo_cfg" | jq -r 'type')
+if [ "$repo_cfg_type" != "object" ]; then
+  printf 'error: repository "%s" in %s must be an object (got %s)\n' \
+    "$repo_key" "$config_file" "$repo_cfg_type"
+  exit 1
+fi
+
+checks_type=$(printf '%s' "$repo_cfg" | jq -r '.checks | type')
+if [ "$checks_type" != "object" ]; then
+  printf 'error: repository "%s" in %s has no "checks" object (got %s)\n' \
+    "$repo_key" "$config_file" "$checks_type"
+  echo 'Expected: {"checks":{"test":{"command":"npm test"}}}'
+  exit 1
+fi
+
 if [ "$action" = "list" ]; then
   printf 'Available CI checks for %s:\n' "$repo_key"
-  printf '%s' "$repo_key" | jq -Rsr --slurpfile cfg "$config_file" \
-    '$cfg[0].repos[.].checks | to_entries[] | "  \(.key): \(.value.command)"'
+  printf '%s' "$repo_cfg" | jq -r '
+    .checks
+    | to_entries
+    | if length == 0 then "  (none configured)"
+      else (.[] | "  \(.key): \(.value.command? // "<no command configured>")")
+      end'
   exit 0
 fi
 
-command=$(printf '%s' "$repo_key" | jq -Rsr --argjson cfg "$(cat "$config_file")" --arg c "$check" \
-  '$cfg.repos[.].checks[$c].command // empty')
-if [ -z "$command" ]; then
+check_cfg=$(printf '%s' "$repo_cfg" | jq -c --arg c "$check" '.checks[$c] // empty')
+if [ -z "$check_cfg" ]; then
   printf 'error: check "%s" not found for %s\n' "$check" "$repo_key"
   echo "Available checks:"
-  printf '%s' "$repo_key" | jq -Rsr --slurpfile cfg "$config_file" \
-    '$cfg[0].repos[.].checks | keys[] | "  \(.)"'
+  printf '%s' "$repo_cfg" | jq -r '
+    .checks | keys | if length == 0 then "  (none configured)" else (.[] | "  \(.)") end'
   exit 1
 fi
 
-check_timeout=$(printf '%s' "$repo_key" | jq -Rsr --argjson cfg "$(cat "$config_file")" --arg c "$check" \
-  '$cfg.repos[.].checks[$c].timeout // empty')
+check_cfg_type=$(printf '%s' "$check_cfg" | jq -r 'type')
+if [ "$check_cfg_type" != "object" ]; then
+  printf 'error: check "%s" in %s must be an object with a "command" string (got %s)\n' \
+    "$check" "$config_file" "$check_cfg_type"
+  exit 1
+fi
+
+check_command=$(printf '%s' "$check_cfg" | jq -r '.command // empty')
+if [ -z "$check_command" ]; then
+  printf 'error: check "%s" in %s has no "command" string\n' "$check" "$config_file"
+  exit 1
+fi
+
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "error: 'timeout' not found on PATH (install coreutils) — refusing to run a check unbounded"
+  exit 1
+fi
+
+check_timeout=$(printf '%s' "$check_cfg" | jq -r '.timeout // empty')
 check_timeout="${check_timeout:-120}"
-
-output=$(timeout "${check_timeout}s" bash -c "$command" 2>&1) && rc=$? || rc=$?
-
-if [ "$rc" -eq 124 ]; then
-  printf 'error: check "%s" timed out after %ss\n' "$check" "$check_timeout"
-  [ -n "$output" ] && printf '%s\n' "$output"
+if ! [[ "$check_timeout" =~ ^[0-9]+$ ]] || [ "$check_timeout" -eq 0 ]; then
+  printf 'error: check "%s" has an invalid timeout "%s" — expected a positive integer (seconds)\n' \
+    "$check" "$check_timeout"
   exit 1
 fi
 
-[ -n "$output" ] && printf '%s\n' "$output"
+# timeout(1) reports 124, but a check command can also exit 124 on its own, so 124 alone
+# cannot be trusted. Instead the wrapper shell reports its own status on fd 3 from an EXIT
+# trap: the trap does not run when timeout(1) kills the shell with SIGTERM, so an empty
+# status file means "timed out" and a populated one carries the command's real exit code.
+rc_file=$(mktemp)
+trap 'rm -f "$rc_file"' EXIT
+
+output=$(timeout "${check_timeout}s" bash -c "trap 'printf %s \"\$?\" >&3' EXIT
+$check_command" 3>"$rc_file" 2>&1) && timeout_rc=$? || timeout_rc=$?
+
+if [ -s "$rc_file" ]; then
+  rc=$(cat "$rc_file")
+  [[ "$rc" =~ ^[0-9]+$ ]] || rc="$timeout_rc"
+  timed_out=false
+else
+  rc="$timeout_rc"
+  timed_out=true
+fi
+
+if [ "$timed_out" = true ]; then
+  printf 'error: check "%s" timed out after %ss\n' "$check" "$check_timeout"
+  if [ -n "$output" ]; then printf '%s\n' "$output"; fi
+  exit 1
+fi
+
+# exit_code goes first: shai-dispatch truncates tool output to the first 32000 bytes, so a
+# trailing status line would be lost for verbose checks.
 printf 'exit_code: %d\n' "$rc"
+if [ -n "$output" ]; then printf '%s\n' "$output"; fi
 exit 0
