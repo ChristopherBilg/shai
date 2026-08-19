@@ -16,11 +16,13 @@ DEFAULT_MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
   exit 1
 }
 DEFAULT_HEAD_BYTES=$(sed -n 's/^HEAD_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
-DEFAULT_TAIL_BYTES=$(sed -n 's/^TAIL_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
-if [ -z "$DEFAULT_HEAD_BYTES" ] || [ -z "$DEFAULT_TAIL_BYTES" ]; then
-  echo "FATAL: could not extract HEAD_BYTES/TAIL_BYTES from shai-dispatch" >&2
+if [ -z "$DEFAULT_HEAD_BYTES" ]; then
+  echo "FATAL: could not extract HEAD_BYTES from shai-dispatch" >&2
   exit 1
 fi
+# TAIL_BYTES is derived in shai-dispatch (MAX_BYTES - HEAD_BYTES) so the two windows can never
+# overlap; derive it the same way here rather than grepping for a literal that no longer exists.
+DEFAULT_TAIL_BYTES=$((DEFAULT_MAX_BYTES - DEFAULT_HEAD_BYTES))
 
 # permissive policy for tools that the read-only heuristic doesn't auto-allow (gh is
 # capabilities.read_only:false, same as the write_file/patch_file/etc. tests further down).
@@ -100,6 +102,41 @@ ATTOOL=$(jq -nc --arg p "$ATCAP" '{type:"message",source:"assistant",payload:{co
 ATBODY=$(echo "$ATTOOL" | "$DIR/shai-dispatch" | unfence)
 assert_eq "$(printf '%s' "$ATBODY" | wc -c | tr -d ' ')" "$DEFAULT_MAX_BYTES" "dispatch: output exactly at the cap is passed through whole"
 assert_eq "$(printf '%s' "$ATBODY" | grep -c 'truncated:')" "0" "dispatch: output exactly at the cap carries no marker"
+
+# the marker must report the window sizes actually retained, not the constants: command
+# substitution strips trailing newlines, so when the head cut lands on one the retained head is
+# shorter than HEAD_BYTES. Here bytes 23999-24000 are newlines, so `head -c $HEAD_BYTES` yields
+# HEAD_BYTES-2 bytes and the marker (and `elided`) must say so.
+NLFILE="$SMALLD/head-cut-on-newline"
+{
+  head -c $((DEFAULT_HEAD_BYTES - 2)) /dev/zero | tr '\0' 'x'
+  printf '\n\n'
+  head -c 50000 /dev/zero | tr '\0' 'y'
+  printf 'TAIL_SENTINEL exit_code: 7'
+} >"$NLFILE"
+NL_TOTAL=$(wc -c <"$NLFILE" | tr -d ' ')
+NL_HEAD=$((DEFAULT_HEAD_BYTES - 2))
+NLTOOL=$(jq -nc --arg p "$NLFILE" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"tn1",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
+NLBODY=$(echo "$NLTOOL" | "$DIR/shai-dispatch" | unfence)
+assert_contains "$NLBODY" "[truncated: $NL_TOTAL bytes total; showing the first $NL_HEAD and last $DEFAULT_TAIL_BYTES bytes, $((NL_TOTAL - NL_HEAD - DEFAULT_TAIL_BYTES)) bytes elided from the middle]" "dispatch: marker reports the retained window sizes, not the constants"
+assert_eq "${NLBODY: -26}" "TAIL_SENTINEL exit_code: 7" "dispatch: newline-aligned head cut still keeps the tail"
+
+# multi-byte UTF-8 straddling both cuts: byte-based head/tail can split a sequence, so the
+# retained windows can start/end with invalid UTF-8. jq --arg must still produce parseable JSON
+# (it substitutes U+FFFD) rather than failing and dropping the whole tool_result.
+U8FILE="$SMALLD/utf8-boundary"
+{
+  head -c $((DEFAULT_HEAD_BYTES - 1)) /dev/zero | tr '\0' 'x'
+  printf '\xe2\x82\xac' # € — its first byte is the last byte of the head window
+  head -c 50000 /dev/zero | tr '\0' 'y'
+  printf '\xe2\x82\xac' # € — split again by the tail window's left edge
+  head -c $((DEFAULT_TAIL_BYTES - 1)) /dev/zero | tr '\0' 'z'
+} >"$U8FILE"
+U8TOOL=$(jq -nc --arg p "$U8FILE" '{type:"message",source:"assistant",payload:{content:[{type:"tool_use",id:"tu1",name:"print_file",input:{path:$p}}],stop_reason:"tool_use"}}')
+U8OUT=$(echo "$U8TOOL" | "$DIR/shai-dispatch")
+assert_exit 0 "dispatch: UTF-8 split at the window boundaries still emits valid JSON" -- bash -c 'printf "%s" "$1" | jq -e "." >/dev/null' _ "$U8OUT"
+assert_contains "$U8OUT" '"type":"tool_result"' "dispatch: UTF-8 split at the window boundaries emits tool_result"
+assert_contains "$(printf '%s' "$U8OUT" | unfence)" "truncated:" "dispatch: UTF-8 split output still carries the truncation marker"
 
 NTOUT=$(echo "$NOTOOL" | "$DIR/shai-dispatch")
 assert_eq "$NTOUT" "" "dispatch: no-tool produces no output"
