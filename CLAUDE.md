@@ -287,7 +287,9 @@ as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CL
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
 than the 32000-byte output cap can be read a window at a time), `sleep` (read-only),
-`write_file`, `patch_file`, `delete_file` (write). `shai-tools`
+`write_file` (write; an optional `mode` of 3-4 octal digits sets the file's permission bits — the
+only way to create an executable file, e.g. a `tools/<name>/run.sh` — and without it an existing
+file keeps its mode while a new one gets the umask), `patch_file`, `delete_file` (write). `shai-tools`
 aggregates every `tools/*/tool.json` into the Anthropic tool array at startup, and
 `shai-dispatch` resolves a `tool_use` call straight to `tools/<name>/run.sh`. There is no central
 manifest or dispatch table to keep in sync — adding a tool means adding a directory. Workflows

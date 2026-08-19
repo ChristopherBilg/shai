@@ -1,6 +1,6 @@
 {
   "name": "write_file",
-  "description": "Create or overwrite a file with the given content. Creates parent directories if needed.",
+  "description": "Create or overwrite a file with the given content. Creates parent directories if needed. Pass 'mode' to set the file's permission bits (e.g. \"755\" for an executable script).",
   "capabilities": {
     "read_only": false
   },
@@ -8,7 +8,11 @@
     "type": "object",
     "properties": {
       "path": { "type": "string", "description": "Absolute or relative path to the file." },
-      "content": { "type": "string", "description": "The full content to write to the file." }
+      "content": { "type": "string", "description": "The full content to write to the file." },
+      "mode": {
+        "type": "string",
+        "description": "Optional octal permission bits as 3-4 digits, e.g. \"755\" to make the file executable or \"600\" to restrict it. Anything else is rejected without writing. Default: an existing file keeps its current mode, a new file gets the process umask (typically 644, i.e. not executable)."
+      }
     },
     "required": ["path", "content"]
   }
