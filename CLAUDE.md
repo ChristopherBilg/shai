@@ -286,7 +286,9 @@ as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CL
 `git` (generic Git CLI, write), `ci` (local CI checks, write), `jira_issue_view`,
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
-than the 32000-byte output cap can be read a window at a time), `sleep` (read-only),
+than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;
+grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`),
+`sleep` (read-only),
 `write_file`, `patch_file`, `delete_file` (write). `shai-tools`
 aggregates every `tools/*/tool.json` into the Anthropic tool array at startup, and
 `shai-dispatch` resolves a `tool_use` call straight to `tools/<name>/run.sh`. There is no central
