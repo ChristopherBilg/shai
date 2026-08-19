@@ -87,12 +87,12 @@ PROMPT_TEMPLATE=$("$DIR/shai-prompt" dependabot_worker) || wf_fail "cannot load 
 PROMPT=$(printf '%s' "$PROMPT_TEMPLATE" |
   sed "s/{{NUMBER}}/$NUMBER/g" |
   sed "s|{{REPO}}|$REPO|g" |
-  sed "s|{{BRANCH_NAME}}|$BRANCH_NAME|g" |
-  sed "s/{{SEVERITY}}/$SEVERITY/g")
+  sed "s|{{BRANCH_NAME}}|$BRANCH_NAME|g")
 
 PROMPT="${PROMPT//\{\{PACKAGE_NAME\}\}/$PACKAGE_NAME}"
 PROMPT="${PROMPT//\{\{ECOSYSTEM\}\}/$ECOSYSTEM}"
 PROMPT="${PROMPT//\{\{MANIFEST_PATH\}\}/$MANIFEST_PATH}"
+PROMPT="${PROMPT//\{\{SEVERITY\}\}/$SEVERITY}"
 PROMPT="${PROMPT//\{\{GHSA_ID\}\}/$GHSA_ID}"
 PROMPT="${PROMPT//\{\{CVE_DISPLAY\}\}/$CVE_DISPLAY}"
 PROMPT="${PROMPT//\{\{ADVISORY_SUMMARY\}\}/$ADVISORY_SUMMARY}"
