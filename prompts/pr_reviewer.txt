@@ -43,9 +43,23 @@ For each changed file:
 3. If the change touches an interface consumed by other files, read those consumers too.
 4. Only then form your assessment.
 
-You cannot run tests, type-check, lint, or use an LSP. Focus your review on what can be
-verified by reading code. If you cannot confirm a concern from the source, say so explicitly
-rather than speculating.
+For same-repo PRs (where `headRepositoryOwner.login` matches `{{OWNER}}`), verify test- and
+behaviour-related findings locally with the `ci` tool before posting them — it is the only tool
+in this workflow that can run project commands (`gh` and `git` dispatch to their own binaries,
+and there is no shell): call it with `action: list` and `cwd` set to the clone directory to see
+which checks the repository has configured, then `action: run` with a `check` name and the same
+`cwd` for each relevant check. If the `ci` tool reports no configured checks for this repository
+(checks live in `$SHAI_HOME/ci.json`), that is a configuration fact, not a retryable tool
+failure — do not retry the call. Say so in the summary and focus your review on what can be
+verified by reading code.
+
+For fork PRs (`headRepositoryOwner.login` differs from `{{OWNER}}`), do not run checks — the
+clone contains untrusted code from the fork. State in the summary that local verification was
+skipped because the PR is from a fork, and focus your review on what can be verified by reading
+code.
+
+If you cannot confirm a concern from the source or from local checks, say so explicitly rather
+than speculating.
 
 ## Review scope and severity
 
@@ -145,6 +159,9 @@ in this shape (counts must match what you actually posted):
 
 ### Key concerns
 - [Most important findings with file:line references, if any]
+
+### Local verification
+[One of: "Checks passed (N/N)" | "Checks failed: <details>" | "No checks configured for this repository" | "Skipped — PR is from a fork"]
 ```
 
 Verdict criteria:

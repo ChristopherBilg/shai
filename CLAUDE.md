@@ -420,10 +420,14 @@ leading-zero guards matching `review_resolver`), calls `wf_init`, exports the co
 diff, and existing comments (all with `--paginate`), clones the repo via `git clone`, checks
 out the head branch, and reads source files around each changed area before commenting.
 Reviews use conventionalcomments.org format with severity mapping (critical/important/minor)
-and assess correctness, architecture, testing quality, and production readiness. Posts a
+and assess correctness, architecture, testing quality, and production readiness. For same-repo
+PRs, the LLM verifies test- and behaviour-related findings locally with the `ci` tool before
+posting them (with `cwd` pointed at the clone); for fork PRs, checks are skipped because the
+clone contains untrusted code; when no checks are configured, the summary says so. Posts a
 GitHub review with inline comments plus a separate summary comment containing a verdict
-(Ready to merge / Ready with minor fixes / Needs changes) with finding counts. Handles
-cross-fork PRs (review proceeds but notes the PR cannot be updated). As its last step the
+(Ready to merge / Ready with minor fixes / Needs changes) with finding counts and a local
+verification status line. Handles cross-fork PRs (review proceeds but notes the PR cannot be
+updated). As its last step the
 prompt tells the LLM to add the `shai-resolve-dispatcher` label to the PR (creating the label
 in the repo first if needed) — but only when the review posted at least one actionable inline
 comment, so a clean praise-only "Ready to merge" review does not queue a no-op
