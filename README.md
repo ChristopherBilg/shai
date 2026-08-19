@@ -40,7 +40,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `gh` — run any GitHub CLI (gh) command via a pre-tokenized argument array (write, requires approval)
 - `jira_issue_view` — view a Jira issue (read-only)
 - `list_directory` — list the files and folders in a local directory (read-only)
-- `print_file` — print the contents of a local file (read-only)
+- `print_file` — print the contents of a local file, with optional `line_numbers` prefixes and an inclusive `start_line`/`end_line` range so `file:line` anchors need no hand counting and files larger than the output cap can be paged (read-only)
 - `sleep` — pause execution for a specified number of seconds, 1-300 (read-only)
 - `ci` — run a configured CI check for a repository; checks are defined in `$SHAI_HOME/ci.json` (start from [`ci.json.example`](ci.json.example) — see [Configuring `ci`](#configuring-ci)) keyed by normalized git remote URL, with an optional `cwd` input to target a checkout other than the current directory (write, requires approval)
 - `write_file` — create or overwrite a file with given content, creating parent directories as needed (write, requires approval)

@@ -1,13 +1,27 @@
 {
   "name": "print_file",
-  "description": "Print the contents of a local file.",
+  "description": "Print the contents of a local file. Set line_numbers to prefix each line with its line number (cat -n style) when you need a file:line anchor, and use start_line/end_line to print only an inclusive line range so large files can be paged a window at a time. Numbered or ranged output is line-oriented and always ends with a newline even if the file does not; read the file with no options for a byte-exact copy.",
   "capabilities": {
     "read_only": true
   },
   "input_schema": {
     "type": "object",
     "properties": {
-      "path": { "type": "string", "description": "Absolute or relative path to the file." }
+      "path": { "type": "string", "description": "Absolute or relative path to the file." },
+      "line_numbers": {
+        "type": "boolean",
+        "description": "Prefix each printed line with its line number in the file (cat -n style). Numbers are absolute file positions even when a range is requested. The number and tab prefix is not part of the file content, so strip it before reusing the text elsewhere — for example as patch_file's old_string. Defaults to false."
+      },
+      "start_line": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "First line to print, 1-based and inclusive. Defaults to the first line of the file."
+      },
+      "end_line": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Last line to print, 1-based and inclusive. Defaults to the last line of the file. Must be greater than or equal to start_line."
+      }
     },
     "required": ["path"]
   }

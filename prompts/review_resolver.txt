@@ -56,7 +56,9 @@ re-review. A human re-applies a label if another round is wanted.
    Use `git -C <clone-dir>` for all subsequent git commands and `gh ... -R {{REPO}}` for all
    subsequent gh API calls — the tools run in shai's own working directory, not the clone.
 6. Use `print_file` and `list_directory` to read the code around each comment before deciding.
-   Never act on a comment you have not read the surrounding code for.
+   Never act on a comment you have not read the surrounding code for. To locate the line a
+   comment refers to, pass `line_numbers: true` (and `start_line`/`end_line` to read only that
+   window) instead of counting lines by hand.
 
 ## Classification
 
