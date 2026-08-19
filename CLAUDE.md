@@ -167,7 +167,14 @@ The scripts:
   no `$SHAI_HOME/policy.json` rule matches the tool, and it's what the retry guard checks — when
   `SHAI_RETRY_ACTIVE` is set, non-read-only tools are skipped with an error instead of re-running
   a write. **Exit 1 if any tool ran** (signals `shai-repl` to re-evaluate), exit 0 otherwise. Tool
-  output is truncated to `MAX_BYTES=32000` and fenced in
+  output is capped at `MAX_BYTES=32000` bytes: under the cap it passes through byte-identical,
+  and over the cap it is replaced by its first `HEAD_BYTES=24000` plus its last
+  `TAIL_BYTES=8000` bytes (derived as `MAX_BYTES - HEAD_BYTES`, so the two windows can never
+  overlap) with an explicit `[truncated: N bytes total; …]` marker between them that reports the
+  byte counts actually retained — the cut is never silent, and trailing exit codes, test
+  summaries and error tails survive (`head` alone dropped exactly the part that usually carries
+  the verdict). The marker is part of the fenced content, so it is sanitized like the rest of
+  it. Output is fenced in
   `<external_data source="<tool>">…</external_data>` (source sanitized; injected closing tags
   neutralized).
 - **`shai-loop [--tools|--tools-file <path>|--model|--max-tokens|--quiet]`** (`shai-loop:1`) —

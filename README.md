@@ -48,7 +48,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `delete_file` — delete a file; the file must exist and must not be a directory (write, requires approval)
 - `git` — run any Git command via a pre-tokenized argument array (write, requires approval)
 
-Each tool is a directory under `tools/<name>/` with a `tool.json` (Anthropic schema) and a `run.sh`. Outputs are truncated to 32000 bytes before entering context.
+Each tool is a directory under `tools/<name>/` with a `tool.json` (Anthropic schema) and a `run.sh`. Outputs are capped at 32000 bytes before entering context: over-cap output keeps its first 24000 and last 8000 bytes with an explicit `[truncated: …]` marker in between that reports the exact byte counts retained and elided, so a clipped result is never mistaken for a complete one and trailing exit codes or error tails survive.
 
 ### Configuring `ci`
 

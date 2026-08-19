@@ -9,16 +9,54 @@
 #        $TOOLS_DIR/<tool>/run.sh (executed to run each tool); SHAI_RETRY_ACTIVE and
 #        SHAI_TOOLS_DIR (overrides the default $DIR/tools) from environment (retry skips
 #        non-read-only tools)
-# Writes: one tool_result event per tool_use (output truncated to 32000 bytes);
-#         write_file, patch_file, and delete_file modify the local filesystem
-# Exit: 1 if any tool ran (signals shai-repl to re-evaluate), 0 otherwise
+# Writes: one tool_result event per tool_use (32000-byte cap: first 24000 + last 8000 kept with
+#         a "[truncated: ...]" marker); write_file, patch_file, delete_file modify the filesystem
+# Exit: 1 if any tool ran (signals shai-repl to re-evaluate), 0 otherwise; 2 on bad constants
 set -euo pipefail
 
 MAX_BYTES=32000
+HEAD_BYTES=24000
+# Derived, never a second literal: the head and tail windows must sum to exactly MAX_BYTES. Two
+# independent literals silently break the split if MAX_BYTES is ever lowered — the two windows
+# would overlap (duplicated bytes) and `elided` would go negative.
+TAIL_BYTES=$((MAX_BYTES - HEAD_BYTES))
+if [ "$HEAD_BYTES" -le 0 ] || [ "$TAIL_BYTES" -le 0 ]; then
+  echo "shai-dispatch: bad truncation window — need 0 < HEAD_BYTES ($HEAD_BYTES) < MAX_BYTES ($MAX_BYTES)" >&2
+  exit 2
+fi
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 TOOLS_DIR="${SHAI_TOOLS_DIR:-$DIR/tools}"
+
+# truncate_output <raw>: echo tool output bounded to MAX_BYTES payload bytes.
+# Under the cap the bytes pass through unchanged (no marker). Over the cap, keep the first
+# HEAD_BYTES and the last TAIL_BYTES and put an explicit marker between them: `head` alone
+# drops exactly the part that usually carries the verdict (a `ci` exit_code line, a test
+# summary, an error tail), and silent tail loss lets the model reason from a clipped result
+# as if it were complete. Marker text stays inside the fenced content so the external_data
+# sanitization still applies to it. Here-strings (not pipes) feed head/tail so a short read
+# can never SIGPIPE the producer and take down the loop under `set -o pipefail`.
+truncate_output() {
+  local raw="$1" total head_part tail_part head_len tail_len elided
+  total=$(wc -c <<<"$raw" | tr -d ' ')
+  total=$((total - 1)) # the here-string appends one newline
+  if [ "$total" -le "$MAX_BYTES" ]; then
+    printf '%s' "$raw"
+    return 0
+  fi
+  head_part=$(head -c "$HEAD_BYTES" <<<"$raw")
+  # +1 absorbs the here-string's trailing newline, which $(...) then strips back off.
+  tail_part=$(tail -c $((TAIL_BYTES + 1)) <<<"$raw")
+  # Report the sizes actually retained, not the constants: $(...) strips *all* trailing newlines,
+  # so a window whose cut lands on one (e.g. byte HEAD_BYTES of a text file) is shorter than the
+  # constant claims. Measuring keeps the marker honest and `elided` exact.
+  head_len=$(printf '%s' "$head_part" | wc -c | tr -d ' ')
+  tail_len=$(printf '%s' "$tail_part" | wc -c | tr -d ' ')
+  elided=$((total - head_len - tail_len))
+  printf '%s\n[truncated: %s bytes total; showing the first %s and last %s bytes, %s bytes elided from the middle]\n%s' \
+    "$head_part" "$total" "$head_len" "$tail_len" "$elided" "$tail_part"
+}
 
 tool_is_read_only() {
   local name="$1"
@@ -177,7 +215,7 @@ while IFS= read -r block; do
   if ! "$skip_run"; then
     if raw=$(run_tool "$tool_name" "$tool_input"); then is_error=false; else is_error=true; fi
   fi
-  output=$(head -c "$MAX_BYTES" <<<"$raw")
+  output=$(truncate_output "$raw")
   jq -nc --arg id "$tool_id" --arg content "$output" --arg src "$tool_name" --argjson is_error "$is_error" '
     ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
     | (if ($s0 | length) > 0 then $s0 else "tool" end) as $safe_src
