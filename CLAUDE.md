@@ -40,6 +40,7 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./shai-workflow list                   # discover available workflows
 ./shai-workflow run heartbeat          # run a workflow
 ./shai-workflow describe heartbeat     # show a workflow's doc header
+./shai-workflow run dependabot_worker owner/repo 42  # fix a Dependabot alert
 
 # Process supervision (systemd --user):
 ./shai-supervise install workflows/heartbeat/run.sh                # install + enable the heartbeat timer
@@ -421,6 +422,23 @@ comment (creating the label in the repo first if needed), so reviewed PRs that h
 are automatically queued for resolution. Install via
 `shai-supervise install workflows/resolve_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
+
+**`workflows/dependabot_worker/run.sh`** takes `<repo> <number>` and fixes a Dependabot
+security alert by updating the vulnerable dependency and opening a draft pull request. It
+validates the repo/number (with path-traversal and leading-zero guards), calls `wf_init`,
+checks `wf_seen "dependabot:$REPO:$NUMBER"` for idempotency, then fetches the alert
+metadata via `gh api repos/$REPO/dependabot/alerts/$NUMBER`. Extracts package name,
+ecosystem, manifest path, severity, GHSA/CVE identifiers, advisory summary, vulnerable
+version range, and patched version. Fails early if no patched version is available
+(`first_patched_version` is null). Derives a branch name
+`shai/<number>-dependabot-<package_slug>` (slug from package name, capped at 50 chars,
+default `dependabot`). Sanitizes all API-derived fields (truncates summary to 32000 bytes,
+neutralizes `<external_data>` tag syntax) before substituting into
+`prompts/dependabot_worker.txt` and calling `wf_llm --tools`. The LLM clones the repo,
+updates the dependency, runs lock-file updates and tests, commits, pushes, creates a draft
+PR, and polls CI (up to ~6 minutes, 30s sleeps, at most 3 fix-and-push cycles). Uses
+`wf_seen`/`wf_mark` for idempotency (key `dependabot:<repo>:<number>`). Exit 0 on success
+(including idempotent skip), 1 on failure, 2 on usage error.
 
 ## Conventions to preserve
 
