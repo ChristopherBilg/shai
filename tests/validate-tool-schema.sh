@@ -1,5 +1,5 @@
 #!/bin/bash
-# Validate aggregated tools from shai-tools against the Anthropic Messages API tool-definition schema.
+# Validate aggregated tools from shai-tools against the Deepseek (OpenAI-compatible) function tool-definition schema.
 # Usage: ./tests/validate-tool-schema.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
@@ -24,7 +24,7 @@ fi
 ok "valid JSON array"
 
 # 2. No duplicate tool names
-dupes=$(printf '%s' "$TOOLS" | jq -r '[.[].name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')
+dupes=$(printf '%s' "$TOOLS" | jq -r '[.[].function.name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')
 if [ -n "$dupes" ]; then
   note "duplicate tool name: $dupes"
 else
@@ -34,7 +34,15 @@ fi
 # 3. Per-tool structural checks
 count=$(printf '%s' "$TOOLS" | jq 'length')
 for i in $(seq 0 $((count - 1))); do
-  name=$(printf '%s' "$TOOLS" | jq -r ".[$i].name // empty")
+  name=$(printf '%s' "$TOOLS" | jq -r ".[$i].function.name // empty")
+
+  # type must be "function"
+  tool_type=$(printf '%s' "$TOOLS" | jq -r ".[$i].type // empty")
+  if [ "$tool_type" != "function" ]; then
+    note "$name: type must be \"function\" (got \"$tool_type\")"
+  else
+    ok "$name: type is function"
+  fi
 
   # name exists and matches Anthropic's pattern
   if [ -z "$name" ]; then
@@ -48,38 +56,38 @@ for i in $(seq 0 $((count - 1))); do
   fi
 
   # description exists and is non-empty
-  desc=$(printf '%s' "$TOOLS" | jq -r ".[$i].description // empty")
+  desc=$(printf '%s' "$TOOLS" | jq -r ".[$i].function.description // empty")
   if [ -z "$desc" ]; then
     note "$name: missing or empty description"
   else
     ok "$name: has description"
   fi
 
-  # input_schema exists and is an object with type "object"
-  schema_type=$(printf '%s' "$TOOLS" | jq -r ".[$i].input_schema.type // empty")
+  # parameters exists and is an object with type "object"
+  schema_type=$(printf '%s' "$TOOLS" | jq -r ".[$i].function.parameters.type // empty")
   if [ "$schema_type" != "object" ]; then
-    note "$name: input_schema.type must be \"object\" (got \"$schema_type\")"
+    note "$name: parameters.type must be \"object\" (got \"$schema_type\")"
   else
-    ok "$name: input_schema.type is object"
+    ok "$name: parameters.type is object"
   fi
 
   # properties exists and is an object
-  if ! printf '%s' "$TOOLS" | jq -e ".[$i].input_schema.properties | type == \"object\"" >/dev/null 2>&1; then
-    note "$name: input_schema.properties missing or not an object"
+  if ! printf '%s' "$TOOLS" | jq -e ".[$i].function.parameters.properties | type == \"object\"" >/dev/null 2>&1; then
+    note "$name: parameters.properties missing or not an object"
     continue
   fi
   ok "$name: has properties object"
 
   # required exists and is an array of strings
-  if ! printf '%s' "$TOOLS" | jq -e ".[$i].input_schema.required | type == \"array\" and all(type == \"string\")" >/dev/null 2>&1; then
-    note "$name: input_schema.required missing or not a string array"
+  if ! printf '%s' "$TOOLS" | jq -e ".[$i].function.parameters.required | type == \"array\" and all(type == \"string\")" >/dev/null 2>&1; then
+    note "$name: parameters.required missing or not a string array"
   else
     ok "$name: has required array"
   fi
 
   # every required field exists in properties
   missing=$(printf '%s' "$TOOLS" | jq -r "
-    .[$i].input_schema |
+    .[$i].function.parameters |
     (.required // [])[] as \$r |
     select(.properties[\$r] == null) |
     \$r
@@ -92,7 +100,7 @@ for i in $(seq 0 $((count - 1))); do
 
   # every property has type and non-empty description
   bad_props=$(printf '%s' "$TOOLS" | jq -r "
-    .[$i].input_schema.properties | to_entries[] |
+    .[$i].function.parameters.properties | to_entries[] |
     select(.value.type == null or (.value.description // \"\" | length) == 0) |
     .key
   ")

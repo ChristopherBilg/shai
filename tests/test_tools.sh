@@ -16,7 +16,7 @@ cat >"$TDIR/tools/fake_tool/tool.json" <<'JSON'
   "name": "fake_tool",
   "description": "A fake tool for testing.",
   "capabilities": { "read_only": true },
-  "input_schema": {
+  "parameters": {
     "type": "object",
     "properties": {
       "arg": { "type": "string", "description": "An argument." }
@@ -36,11 +36,13 @@ OUT=$("$DIR/shai-tools" "$TDIR/tools")
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "tools: valid plugin produces array of length 1"
 assert_contains "$OUT" '"fake_tool"' "tools: output contains tool name"
 assert_eq "$(printf '%s' "$OUT" | jq '.[0] | has("capabilities")')" "false" "tools: capabilities stripped from output"
-assert_contains "$OUT" '"input_schema"' "tools: output contains input_schema"
+assert_contains "$OUT" '"function"' "tools: output contains function wrapper"
+assert_contains "$OUT" '"parameters"' "tools: output contains parameters"
 
 # --- capabilities stripped but schema preserved ---
-assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].name')" "fake_tool" "tools: name preserved"
-assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].description')" "A fake tool for testing." "tools: description preserved"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].type')" "function" "tools: type is function"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].function.name')" "fake_tool" "tools: name preserved"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].function.description')" "A fake tool for testing." "tools: description preserved"
 
 # --- empty tools directory ---
 EDIR=$(mktemp -d)
@@ -75,7 +77,7 @@ cat >"$RDIR/tools/norush/tool.json" <<'JSON'
   "name": "norush",
   "description": "Missing run.sh.",
   "capabilities": { "read_only": true },
-  "input_schema": { "type": "object", "properties": {}, "required": [] }
+  "parameters": { "type": "object", "properties": {}, "required": [] }
 }
 JSON
 if "$DIR/shai-tools" "$RDIR/tools" >/dev/null 2>&1; then
@@ -94,7 +96,7 @@ cat >"$XDIR/tools/noexec/tool.json" <<'JSON'
   "name": "noexec",
   "description": "Non-executable run.sh.",
   "capabilities": { "read_only": true },
-  "input_schema": { "type": "object", "properties": {}, "required": [] }
+  "parameters": { "type": "object", "properties": {}, "required": [] }
 }
 JSON
 cat >"$XDIR/tools/noexec/run.sh" <<'SH'
@@ -119,7 +121,7 @@ cat >"$NDIR/tools/dir_name/tool.json" <<'JSON'
   "name": "wrong_name",
   "description": "Name mismatch.",
   "capabilities": { "read_only": true },
-  "input_schema": { "type": "object", "properties": {}, "required": [] }
+  "parameters": { "type": "object", "properties": {}, "required": [] }
 }
 JSON
 cat >"$NDIR/tools/dir_name/run.sh" <<'SH'
@@ -144,7 +146,7 @@ cat >"$CDIR/tools/badcap/tool.json" <<'JSON'
   "name": "badcap",
   "description": "Bad capabilities.",
   "capabilities": "not_an_object",
-  "input_schema": { "type": "object", "properties": {}, "required": [] }
+  "parameters": { "type": "object", "properties": {}, "required": [] }
 }
 JSON
 cat >"$CDIR/tools/badcap/run.sh" <<'SH'
@@ -165,7 +167,7 @@ MLTDIR=$(mktemp -d)
 _CLEANUP_DIRS+=("$MLTDIR")
 for t in alpha beta; do
   mkdir -p "$MLTDIR/tools/$t"
-  jq -nc --arg n "$t" '{name:$n, description:("Tool " + $n + "."), capabilities:{read_only:true}, input_schema:{type:"object",properties:{},required:[]}}' >"$MLTDIR/tools/$t/tool.json"
+  jq -nc --arg n "$t" '{name:$n, description:("Tool " + $n + "."), capabilities:{read_only:true}, parameters:{type:"object",properties:{},required:[]}}' >"$MLTDIR/tools/$t/tool.json"
   printf '#!/bin/bash\nset -euo pipefail\necho "ok"\n' >"$MLTDIR/tools/$t/run.sh"
   chmod +x "$MLTDIR/tools/$t/run.sh"
 done
@@ -180,7 +182,7 @@ cat >"$NCDIR/tools/nocap/tool.json" <<'JSON'
 {
   "name": "nocap",
   "description": "No capabilities field.",
-  "input_schema": { "type": "object", "properties": {}, "required": [] }
+  "parameters": { "type": "object", "properties": {}, "required": [] }
 }
 JSON
 cat >"$NCDIR/tools/nocap/run.sh" <<'SH'
