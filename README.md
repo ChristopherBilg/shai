@@ -92,6 +92,7 @@ Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (
 ./tests/lint.sh --list   # the file list it lints, derived from git
 ./tests/lint.sh --write  # shfmt -w instead of -d (rewrite in place)
 ```
-There is no glob to keep in sync: `tests/lint.sh` derives its file list from `git ls-files`, and
+There is no glob to keep in sync: `tests/lint.sh` derives its file list fail-closed from
+`git ls-files` (every tracked `*.sh` plus every file with a `#!/bin/bash` shebang), and
 `tests/conventions.sh` asserts every runtime script is in it.
 CI runs all of the above on every push and pull request.

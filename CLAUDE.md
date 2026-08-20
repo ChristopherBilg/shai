@@ -509,15 +509,15 @@ are automatically queued for resolution. Install via
   `.shellcheckrc`.
 - Formatting is 2-space indent with indented `case` branches; enforced by `shfmt` and
   `.editorconfig`.
-- **There is exactly one lint target, `tests/lint.sh`.** It derives its file list from
-  `git ls-files` (`install.sh`, `shai-*`, `lib/*.sh`, `tools/*/run.sh`, `workflows/*/run.sh`,
-  `tests/*.sh`) and runs ShellCheck plus `shfmt -d` over it; the `lint` CI job,
+- **There is exactly one lint target, `tests/lint.sh`.** It derives its file list fail-closed from
+  git — every tracked `*.sh` plus every tracked file whose first line is `#!/bin/bash` (the
+  extensionless `shai-*` scripts) — and runs ShellCheck plus `shfmt -d` over it; the `lint` CI job,
   `ci.json.example`, and the docs all invoke that script instead of repeating a glob. The four
   hand-maintained copies it replaced had drifted: none of them included `tools/*/run.sh`, so the
   ten tool plugins — the execution surface for every model-requested action — were never linted
   (#81). `tests/conventions.sh` asserts the inverse relation too: every runtime script it checks
-  must appear in `./tests/lint.sh --list`, so a new runtime category cannot be invisible to the
-  linter. Widen the target by editing that one file list.
+  must appear in `./tests/lint.sh --list`, so a new runtime script cannot be invisible to the
+  linter. Add a tracked shell script anywhere and it is linted automatically — no list to widen.
 - **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
   undocumented **or of an unrecognized type**. This fail-closed design is intentional and should not be

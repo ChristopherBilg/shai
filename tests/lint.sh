@@ -24,19 +24,19 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 
-# Derived from git, not hardcoded: the same glob list used to live in .github/workflows/ci.yml,
-# README.md, CLAUDE.md, and ci.json.example, and those four copies drifted — tools/*/run.sh, the
-# execution surface for every model-requested action, was in none of them (#81). One list, here.
-# tests/conventions.sh asserts every runtime script it checks appears in this list, so a new
-# runtime category cannot be added while staying invisible to the linter.
-mapfile -t FILES < <({
-  git ls-files 'install.sh'
-  git ls-files 'shai-*'
-  git ls-files 'lib/*.sh'
-  git ls-files 'tools/*/run.sh'
-  git ls-files 'workflows/*/run.sh'
-  git ls-files 'tests/*.sh'
-} | sort -u)
+# Derived fail-closed from git, not a hand-maintained glob list: every tracked *.sh plus every
+# tracked file whose first line is a #!/bin/bash shebang (the extensionless shai-* scripts). A
+# future tracked shell script (e.g. hooks/*.sh) is picked up automatically instead of waiting for
+# a human to remember to edit a list — which is exactly how tools/*/run.sh went unlinted (#81).
+# tests/conventions.sh cross-checks that every runtime script it checks appears in this list.
+mapfile -t FILES < <(
+  git ls-files | while IFS= read -r f; do
+    case "$f" in
+      *.sh) printf '%s\n' "$f" ;;
+      *) [ "$(head -n1 "$f" 2>/dev/null)" = "#!/bin/bash" ] && printf '%s\n' "$f" ;;
+    esac
+  done | sort -u
+)
 
 if [ "${#FILES[@]}" -eq 0 ]; then
   echo "no files to lint — is $ROOT a git checkout?" >&2
@@ -75,6 +75,13 @@ require_tool shellcheck "$SHELLCHECK" || missing=1
 require_tool shfmt "$SHFMT" || missing=1
 [ "$missing" -eq 0 ] || exit 1
 
+# Surface which binaries will actually run so a $PATH fallback (or a $SHELLCHECK/$SHFMT override)
+# cannot silently substitute an unpinned linter for the checksum-verified one in ./bin.
+echo "shellcheck: $SHELLCHECK"
+"$SHELLCHECK" --version 2>&1 | sed -n '1,2p' || true
+echo "shfmt: $SHFMT"
+"$SHFMT" --version 2>&1 | sed -n '1,2p' || true
+
 fail=0
 if "$SHELLCHECK" "${FILES[@]}"; then
   echo -e "  ${GREEN}✓${NC} shellcheck: ${#FILES[@]} files clean"
@@ -84,8 +91,12 @@ else
 fi
 
 if [ "$mode" = "write" ]; then
-  "$SHFMT" -w "${FILES[@]}"
-  echo -e "  ${GREEN}✓${NC} shfmt: rewrote ${#FILES[@]} files in place"
+  if "$SHFMT" -w "${FILES[@]}"; then
+    echo -e "  ${GREEN}✓${NC} shfmt: rewrote ${#FILES[@]} files in place"
+  else
+    echo -e "  ${RED}✗${NC} shfmt write failed"
+    fail=1
+  fi
 elif "$SHFMT" -d "${FILES[@]}"; then
   echo -e "  ${GREEN}✓${NC} shfmt: ${#FILES[@]} files formatted"
 else
