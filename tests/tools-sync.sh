@@ -53,10 +53,11 @@ done
 # instruction set and policy.json is the capability set, so a tool named in one and absent from
 # the other is an instruction the workflow cannot follow (see issue #74). The prompt for
 # workflows/<name>/policy.json is prompts/<name>.txt; workflows with no prompt file (the
-# pure-bash dispatchers) are skipped. "Granted" means an explicit `allow` rule, or — when the
-# policy sets no `default` — a read-only tool, which shai-dispatch auto-allows as its per-tool
-# fallback. A policy with `"default": "allow"` grants every tool at dispatch time, so its prompt
-# is not checked at all.
+# pure-bash dispatchers) are skipped. "Granted" means an explicit `allow` rule: shai-dispatch's
+# per-tool read-only fallback is not guaranteed — the base $SHAI_HOME/policy.json may set a
+# `default` or a matching rule before the fallback ever applies — so read-only tools must be
+# granted explicitly too (see issue #84). A policy with `"default": "allow"` grants every tool
+# at dispatch time, so its prompt is not checked at all.
 #
 # Deliberate limits, so the invariant stays cheap and free of false positives:
 #   - Arg scoping is out of scope: a rule like `ci` with `args.cwd: "/tmp/*"` counts here as an
@@ -65,10 +66,6 @@ done
 #   - The match is a bare word match, so it cannot tell "use the `ci` tool" from "you cannot run
 #     the `ci` tool". A prompt that names a tool only to rule it out must therefore still be
 #     backed by a grant, or must avoid naming the tool.
-#   - The read-only fallback assumes the user's base $SHAI_HOME/policy.json has no matching rule
-#     and no `default` — shai-dispatch consults the base policy before falling back — so this
-#     check cannot prove a read-only tool is reachable, only that the overlay does not
-#     contradict it.
 found_policy=0
 for policy in workflows/*/policy.json; do
   [ -f "$policy" ] || continue
@@ -85,20 +82,11 @@ for policy in workflows/*/policy.json; do
     ok "$policy sets \"default\": \"allow\" — every tool is granted, $prompt not checked"
     continue
   fi
-  ro_allowed=no
-  if [ -z "$policy_default" ]; then
-    ro_allowed=yes
-  fi
   ungranted=()
   for tool in "${TOOLS[@]}"; do
     grep -qw -- "$tool" "$prompt" || continue
     if jq -e --arg t "$tool" 'any(.rules[]?; .tool == $t and .action == "allow")' \
       "$policy" >/dev/null 2>&1; then
-      continue
-    fi
-    read_only="$(jq -r '.capabilities.read_only // false' "tools/$tool/tool.json" 2>/dev/null)" ||
-      read_only=false
-    if [ "$ro_allowed" = "yes" ] && [ "$read_only" = "true" ]; then
       continue
     fi
     ungranted+=("$tool")
