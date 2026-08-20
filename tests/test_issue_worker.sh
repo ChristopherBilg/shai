@@ -173,7 +173,10 @@ write_issue_worker_gh_stub "Fix the login bug" "The login page crashes"
 printf '{"type":"message","content":[{"type":"text","text":"PR created."}],"stop_reason":"end_turn"}' |
   write_curl_stub 200
 rm -f "$SHAI_HOME/ledgers/issue_worker.jsonl"
-"$DIR/workflows/issue_worker/run.sh" owner/repo 42 >/dev/null 2>&1
+OUT=$("$DIR/workflows/issue_worker/run.sh" owner/repo 42 2>&1)
+RC=$?
+assert_eq "$RC" "0" "issue_worker: exit 0 on a repeat run for the same issue"
+assert_contains "$OUT" "implemented issue #42" "issue_worker: repeat run still does the work"
 assert_eq "$(test -f "$SHAI_HOME/ledgers/issue_worker.jsonl" && echo exists || echo absent)" \
   "absent" \
   "issue_worker: writes no idempotency ledger"
