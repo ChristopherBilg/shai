@@ -139,7 +139,7 @@ costs minutes and one of the three fix-and-push cycles below.
 2. Capture the pushed SHA right after the push: `git -C <clone-dir> rev-parse HEAD`.
    Do not trust `gh pr checks` alone — in the window between the push and GitHub registering
    the new run it reports the **previous** head's run, so a stale green run reads as success.
-   Poll SHA-aware instead, treating only entries whose `headSha` equals the pushed SHA as
+   Poll SHA-aware instead, treating only entries whose `headSha` equals the relevant SHA as
    relevant:
 
    ```
@@ -152,11 +152,21 @@ costs minutes and one of the three fix-and-push cycles below.
      `failure`, follow step 3 below.
    - A green result for any other `headSha` is a stale run of the parent commit and must NOT
      be reported as the push passing.
-   - If the branch has no runs at all (empty list), the repo likely has no CI on this branch —
-     stop polling early instead of sleeping out the budget, and say so in the summary comment.
+   - If the repo's CI triggers on `pull_request` rather than `push`, runs execute against the
+     merge commit (`refs/pull/N/merge`), so their `headSha` is the merge commit, never the
+     pushed head SHA — the equality above never matches and the poll would time out despite
+     green CI. For such repos, fetch the PR's merge commit SHA and compare against it instead:
+     `gh api repos/{{REPO}}/pulls/{{NUMBER}} --jq .merge_commit_sha`.
+   - If the branch has no runs at all (empty list), do not conclude "no CI" immediately —
+     `gh run list` can be transiently empty in the same registration window right after the
+     push, and CI that lives outside GitHub Actions never appears in it. Poll a couple more
+     times first (~60–90 seconds); if it is still empty, the repo likely has no Actions-based
+     CI on this branch — stop polling early instead of sleeping out the budget, and say so in
+     the summary comment.
 3. If a check fails: `gh run view <RUN_ID> -R {{REPO}} --log-failed` on the matching run's
    `databaseId` from step 2. Fix, re-verify with the `ci` tool where a check covers it, commit,
-   push, and re-poll (re-capturing the pushed SHA). Attempt at most 3 fix-and-push cycles.
+   push, and re-poll (re-capturing the pushed SHA — or the merge commit SHA for
+   `pull_request`-triggered CI). Attempt at most 3 fix-and-push cycles.
 4. If CI still fails after 3 cycles, or does not finish inside the polling window, document that
    in the summary comment instead of continuing.
 
