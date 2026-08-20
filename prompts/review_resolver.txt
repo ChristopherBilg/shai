@@ -64,7 +64,9 @@ re-review. A human re-applies a label if another round is wanted.
    `git -C <clone-dir> diff -U0 origin/<baseRefName>...HEAD -- <path>` and read the
    `+newStart,newCount` field of each `@@ -oldStart,oldCount +newStart,newCount @@` header —
    with `-U0` there is no context, so the RIGHT-side range is exactly `newStart` through
-   `newStart + newCount - 1`. Never count lines by hand.
+   `newStart + newCount - 1`. A pure-deletion hunk has `newCount = 0` (e.g.
+   `@@ -5,3 +5,0 @@`): the range is empty, so the PR adds no RIGHT-side lines there — there
+   is no line anchor, only the file-level fallback. Never count lines by hand.
 
 ## Classification
 
