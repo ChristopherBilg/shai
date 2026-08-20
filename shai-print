@@ -18,9 +18,9 @@ esac
 # rendered as their JSON representation.
 jq -r --argjson debug "$DEBUG" --argjson dispatches "$DISPATCHES" '
   if .type == "message" and .source == "assistant" then
-    (.payload.content[]? | select(.type=="text") | .text),
-    (if $debug then (.payload.content[]? | select(.type=="tool_use") | "[tool_use: \(.name) \(.input|@json)]") else empty end),
-    (if $dispatches then (.payload.content[]? | select(.type=="tool_use") | "⏺ \(.name)(\((.input // {}) | to_entries | map("\(.key): \(.value)") | join(", ")))") else empty end)
+    (if .payload.content and .payload.content != "" then .payload.content else empty end),
+    (if $debug then (.payload.tool_calls[]? | "[tool_use: \(.function.name) \(.function.arguments)]") else empty end),
+    (if $dispatches then (.payload.tool_calls[]? | "⏺ \(.function.name)(\((.function.arguments // "{}" | try fromjson catch {}) | to_entries | map("\(.key): \(.value)") | join(", ")))") else empty end)
   elif .type == "tool_result" and $debug then
     "[tool_result: \(.payload.content)]"
   elif .type == "error" then

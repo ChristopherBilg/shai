@@ -2,12 +2,12 @@
 
 [![CI](https://github.com/ChristopherBilg/shai/actions/workflows/ci.yml/badge.svg)](https://github.com/ChristopherBilg/shai/actions/workflows/ci.yml)
 
-Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl`, `jq`) over an append-only JSONL history, calling the Anthropic Claude API. A fresh build in the spirit of [llayer](https://github.com/ChristopherBilg/llayer).
+Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl`, `jq`) over an append-only JSONL history, calling the Deepseek API. A fresh build in the spirit of [llayer](https://github.com/ChristopherBilg/llayer).
 
 ## Requirements
 - `bash`, `curl`, `jq`
 - `gh` CLI, authenticated: `gh auth login`
-- `export ANTHROPIC_API_KEY=sk-ant-...`
+- `export DEEPSEEK_API_KEY=sk-...`
 
 ## Install
 
@@ -21,7 +21,7 @@ Check your version: `shai-version`
 
 ## Quick start
 ```shell
-export ANTHROPIC_API_KEY=sk-ant-...
+export DEEPSEEK_API_KEY=sk-...
 ./shai-repl
 > summarize PR 123 in owner/repo
 > what's in ./README.md
@@ -49,7 +49,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `delete_file` — delete a file; the file must exist and must not be a directory (write, requires approval)
 - `git` — run any Git command via a pre-tokenized argument array (write, requires approval)
 
-Each tool is a directory under `tools/<name>/` with a `tool.json` (Anthropic schema) and a `run.sh`. Outputs are capped at 32000 bytes before entering context: over-cap output keeps its first 24000 and last 8000 bytes with an explicit `[truncated: …]` marker in between that reports the exact byte counts retained and elided, so a clipped result is never mistaken for a complete one and trailing exit codes or error tails survive.
+Each tool is a directory under `tools/<name>/` with a `tool.json` (OpenAI-compatible schema) and a `run.sh`. Outputs are capped at 32000 bytes before entering context: over-cap output keeps its first 24000 and last 8000 bytes with an explicit `[truncated: …]` marker in between that reports the exact byte counts retained and elided, so a clipped result is never mistaken for a complete one and trailing exit codes or error tails survive.
 
 ### Configuring `ci`
 
@@ -88,7 +88,11 @@ All five scripts accept `--json` for structured output and prefix matching on th
 ```
 Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (into `bin/`):
 ```shell
-./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
-./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
+./tests/lint.sh          # ShellCheck + shfmt -d, exactly what CI runs
+./tests/lint.sh --list   # the file list it lints, derived from git
+./tests/lint.sh --write  # shfmt -w instead of -d (rewrite in place)
 ```
+There is no glob to keep in sync: `tests/lint.sh` derives its file list fail-closed from
+`git ls-files` (every tracked `*.sh` plus every file with a `#!/bin/bash` shebang), and
+`tests/conventions.sh` asserts every runtime script is in it.
 CI runs all of the above on every push and pull request.

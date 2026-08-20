@@ -12,7 +12,7 @@
       ]
     }
   },
-  "input_schema": {
+  "parameters": {
     "type": "object",
     "properties": {
       "key": { "type": "string", "description": "The Jira issue key (e.g. PROJ-123)." }

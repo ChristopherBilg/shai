@@ -1,7 +1,7 @@
 #!/bin/bash
 # review_resolver/run.sh — process PR review comments: classify and act on each
 # Usage: workflows/review_resolver/run.sh <repo> <number>
-# Reads: ANTHROPIC_API_KEY from environment; prompts/review_resolver.txt for LLM instructions
+# Reads: DEEPSEEK_API_KEY from environment; prompts/review_resolver.txt for LLM instructions
 # Writes: commits/replies/issues/resolved threads on GitHub; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error
 set -euo pipefail

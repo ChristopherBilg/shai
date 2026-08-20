@@ -12,7 +12,7 @@
         "doctor-sync": { "command": "./tests/doctor-sync.sh", "timeout": 120 },
         "tool-schema": { "command": "./tests/validate-tool-schema.sh", "timeout": 120 },
         "lint": {
-          "command": "./tests/install-lint-tools.sh >/dev/null && ./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh && ./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh",
+          "command": "./tests/install-lint-tools.sh >/dev/null && ./tests/lint.sh",
           "timeout": 300
         },
         "all": {

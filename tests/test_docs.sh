@@ -70,8 +70,8 @@ printf 'name: x\n' >"$FIX/bad.yml"
 printf '# .editorconfig — shared formatting rules\nroot = true\n' >"$FIX/.editorconfig"
 printf '# Title Here\n\nbody\n' >"$FIX/doc.md"
 printf '## Subheading only\n\nx\n' >"$FIX/bad.md"
-printf '[{"name":"t","description":"a tool","input_schema":{"properties":{"p":{"description":"a param"}}}}]\n' >"$FIX/tools.json"
-printf '[{"name":"t","description":"","input_schema":{"properties":{}}}]\n' >"$FIX/bad.json"
+printf '[{"name":"t","description":"a tool","parameters":{"properties":{"p":{"description":"a param"}}}}]\n' >"$FIX/tools.json"
+printf '[{"name":"t","description":"","parameters":{"properties":{}}}]\n' >"$FIX/bad.json"
 printf '{"_comment":"copy me to $SHAI_HOME/thing.json and edit","repos":{}}\n' >"$FIX/good.json.example"
 printf '{"repos":{}}\n' >"$FIX/bad.json.example"
 printf '{"_comment":"short","repos":{}}\n' >"$FIX/terse.json.example"
@@ -216,7 +216,7 @@ cat >"$FIX/workflows/good-wf/run.sh" <<'EOF'
 #!/bin/bash
 # run.sh — a compliant workflow script
 # Usage: run.sh <TICKET_ID>
-# Reads: ANTHROPIC_API_KEY from environment
+# Reads: DEEPSEEK_API_KEY from environment
 # Writes: draft PR on GitHub
 # Exit: 0 on success; 1 on failure
 set -euo pipefail

@@ -90,12 +90,26 @@ write_git_stub() {
 }
 
 # write_roundtrip_curl_stub <dir>: stateful curl stub for a full tool round-trip.
-# First call returns a list_directory tool_use, second returns end_turn text.
+# First call returns a list_directory tool call, second returns a stop/text reply.
 # Exports SHAI_ROUND_COUNT (the counter file); callers unset it when done.
 write_roundtrip_curl_stub() {
   export SHAI_ROUND_COUNT="$1/count"
   echo 0 >"$SHAI_ROUND_COUNT"
-  printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"type":"message","content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}\nJSON\nelse\n  cat <<JSON\n{"type":"message","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}\nJSON\nfi\necho "200"\n' >"$1/curl"
+  cat >"$1/curl" <<'STUBEOF'
+#!/bin/bash
+cat > /dev/null
+n=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"
+if [ "$n" = "0" ]; then
+  cat <<'JSON'
+{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tu1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+JSON
+else
+  cat <<'JSON'
+{"id":"chatcmpl-test2","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+JSON
+fi
+echo "200"
+STUBEOF
   chmod +x "$1/curl"
 }
 
@@ -123,4 +137,4 @@ fixture_event() {
      + (if $api == null then {} else {api:$api} end)'
 }
 
-export ANTHROPIC_API_KEY="test-key"
+export DEEPSEEK_API_KEY="test-key"

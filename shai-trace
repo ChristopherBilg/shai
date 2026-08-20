@@ -190,17 +190,17 @@ jq -sc --argjson verbose "$VERBOSE" '
           if .type == "message" and .source == "user" then
             (if $verbose then .payload.text else .payload.text[0:120] end)
           elif .type == "message" and .source == "assistant" then
-            ([.payload.content[]? |
-              if .type == "text" then (if $verbose then .text else .text[0:120] end)
-              elif .type == "tool_use" then
-                (if $verbose then "tool_use \(.name)(\(.input | tojson))"
-                 else "tool_use \(.name)(\(.input | tojson | .[0:80]))" end)
-              else empty end] | join("; "))
+            ([
+              (if .payload.content then (if $verbose then .payload.content else .payload.content[0:120] end) else empty end),
+              (.payload.tool_calls[]? |
+                if $verbose then "tool_call \(.function.name)(\(.function.arguments))"
+                else "tool_call \(.function.name)(\(.function.arguments | .[0:80]))" end)
+            ] | join("; "))
           elif .type == "tool_result" then
             (if $verbose then
-              "tool_result (tool_use_id: \(.payload.tool_use_id)): \(.payload.content | tostring)"
+              "tool_result (tool_call_id: \(.payload.tool_call_id)): \(.payload.content | tostring)"
              else
-              "tool_result (tool_use_id: \(.payload.tool_use_id), \(.payload.content | tostring | utf8bytelength) bytes)"
+              "tool_result (tool_call_id: \(.payload.tool_call_id), \(.payload.content | tostring | utf8bytelength) bytes)"
              end)
           elif .type == "error" then "ERROR: \(.payload.text)"
           else "\(.type)/\(.source)" end
@@ -210,8 +210,9 @@ jq -sc --argjson verbose "$VERBOSE" '
     }
 ' "$EVENTS_FILE" | while IFS= read -r span_json; do
   span_id=$(printf '%s' "$span_json" | jq -r '.span_id')
-  api_in=$(printf '%s' "$span_json" | jq '.api.usage.input_tokens // 0')
-  api_out=$(printf '%s' "$span_json" | jq '.api.usage.output_tokens // 0')
+  api_in=$(printf '%s' "$span_json" | jq '.api.usage.prompt_tokens // 0')
+  api_out=$(printf '%s' "$span_json" | jq '.api.usage.completion_tokens // 0')
+  cache_hit=$(printf '%s' "$span_json" | jq '.api.usage.prompt_cache_hit_tokens // 0')
   latency=$(printf '%s' "$span_json" | jq '.api.latency_ms // 0')
 
   printf '\n%s\n' "$span_id"
@@ -225,20 +226,24 @@ jq -sc --argjson verbose "$VERBOSE" '
 
   if [ "$api_in" != "0" ] || [ "$api_out" != "0" ]; then
     printf '  tokens: %s in / %s out' "$api_in" "$api_out"
+    [ "$cache_hit" != "0" ] && printf '  (%s cached)' "$cache_hit"
     [ "$latency" != "0" ] && printf '  (%sms)' "$latency"
     printf '\n'
   fi
 done
 
 # Print total
-TOTALS=$(jq -sc '[.[] | .api?.usage? // empty | values | {i: (.input_tokens // 0), o: (.output_tokens // 0)}]
-  | {input: (map(.i) | add // 0), output: (map(.o) | add // 0)}' "$EVENTS_FILE")
+TOTALS=$(jq -sc '[.[] | .api?.usage? // empty | values |
+  {i: (.prompt_tokens // 0), o: (.completion_tokens // 0), ch: (.prompt_cache_hit_tokens // 0)}]
+  | {input: (map(.i) | add // 0), output: (map(.o) | add // 0), cache_hit: (map(.ch) | add // 0)}' "$EVENTS_FILE")
 TOTAL_IN=$(printf '%s' "$TOTALS" | jq '.input')
 TOTAL_OUT=$(printf '%s' "$TOTALS" | jq '.output')
+TOTAL_CACHE_HIT=$(printf '%s' "$TOTALS" | jq '.cache_hit')
 TOTAL_LAT=$(jq -sc '[.[] | .api?.latency_ms? // empty | values] | add // 0' "$EVENTS_FILE")
 
 if [ "$TOTAL_IN" != "0" ] || [ "$TOTAL_OUT" != "0" ]; then
   printf '\nTOTAL: %s in / %s out tokens' "$TOTAL_IN" "$TOTAL_OUT"
+  [ "$TOTAL_CACHE_HIT" != "0" ] && printf '  (%s cached)' "$TOTAL_CACHE_HIT"
   [ "$TOTAL_LAT" != "0" ] && printf '  (%sms wall)' "$TOTAL_LAT"
   printf '\n'
 fi

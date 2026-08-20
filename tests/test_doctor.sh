@@ -51,7 +51,7 @@ cat >"$SHAI_HOME/ci.json" <<'JSON'
 JSON
 
 # --- Test 1: all checks pass ---
-export ANTHROPIC_API_KEY="test-key"
+export DEEPSEEK_API_KEY="test-key"
 export JIRA_BASE_URL="https://test.atlassian.net"
 export JIRA_USER_EMAIL="test@example.com"
 export JIRA_API_TOKEN="test-token"
@@ -79,14 +79,14 @@ RC=$?
 assert_eq "$RC" "0" "doctor: missing conditional tool → exit 0"
 assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
 
-# --- Test 4: core env var missing (ANTHROPIC_API_KEY) → exit 1 + FAIL ---
+# --- Test 4: core env var missing (DEEPSEEK_API_KEY) → exit 1 + FAIL ---
 (
-  unset ANTHROPIC_API_KEY
+  unset DEEPSEEK_API_KEY
   OUT=$(run_doctor)
   RC=$?
-  assert_eq "$RC" "1" "doctor: missing ANTHROPIC_API_KEY → exit 1"
+  assert_eq "$RC" "1" "doctor: missing DEEPSEEK_API_KEY → exit 1"
   assert_contains "$OUT" "[FAIL]" "doctor: missing API key shows FAIL"
-  assert_contains "$OUT" "ANTHROPIC_API_KEY" "doctor: FAIL line names the var"
+  assert_contains "$OUT" "DEEPSEEK_API_KEY" "doctor: FAIL line names the var"
   exit "$FAILED"
 ) || FAILED=1
 
