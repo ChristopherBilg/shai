@@ -6,14 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `shai` is a framework-free, terminal-native AI assistant built in the Unix philosophy: a
 handful of single-purpose `bash`/`curl`/`jq` scripts that pipe JSON "events" to each other,
-persist everything to an append-only JSONL log, and call the Anthropic Claude Messages API.
-No language runtime, no dependencies beyond `bash`, `curl`, `jq`, and (for the GitHub tools)
-`gh`.
+persist everything to an append-only JSONL log, and call the Deepseek API (OpenAI-compatible
+chat completions). No language runtime, no dependencies beyond `bash`, `curl`, `jq`, and (for
+the GitHub tools) `gh`.
 
 ## Commands
 
 ```shell
-export ANTHROPIC_API_KEY=sk-ant-...   # required at runtime
+export DEEPSEEK_API_KEY=sk-...        # required at runtime
 ./shai-repl                            # interactive REPL
 ./shai-doctor                          # check environment prerequisites
 ./shai-version                         # print installed version
@@ -25,7 +25,7 @@ export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base6
 # Run the pipeline by hand (every stage is a filter):
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 
-# Tests — fully offline (curl + gh are stubbed; ANTHROPIC_API_KEY faked):
+# Tests — fully offline (curl + gh are stubbed; DEEPSEEK_API_KEY faked):
 ./tests/run.sh                         # all suites, aggregated
 bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is standalone)
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
@@ -55,8 +55,8 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh  # -w to rewrite in place
 ```
 
-Environment: `ANTHROPIC_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
-`SHAI_MODEL` (default `claude-opus-5`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
+Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
+`SHAI_MODEL` (default `deepseek-v4-pro`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
 step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; overrides
@@ -95,15 +95,22 @@ State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-o
 | ----------------------- | ------------------------------------------------------------ | -------------------- |
 | `message` / `user`      | `{text}`                                                     | `shai-read`          |
 | `message` / `system`    | `{text}` (the seeded system prompt)                          | `shai-read --system` |
-| `message` / `assistant` | `{content:[...], stop_reason}` (raw Anthropic content array) | `shai-eval`          |
-| `tool_result` / `tool`  | `{tool_use_id, content, is_error}`                           | `shai-dispatch`      |
+| `message` / `assistant` | `{content, tool_calls, finish_reason}` (raw Deepseek message) | `shai-eval`         |
+| `tool_result` / `tool`  | `{tool_call_id, content, is_error}`                          | `shai-dispatch`      |
 | `error` / `system`      | `{text}`                                                     | `shai-eval`          |
 
+`content` is a string, or absent when the model returned none; `tool_calls`, when present, is a
+separate array of `{id, type:"function", function:{name, arguments}}` objects (`arguments` is a
+JSON-encoded string) — Deepseek keeps tool calls as a sibling of `content` rather than
+interleaving them into it, so a turn can carry text and tool calls together without a content
+array. `finish_reason` is Deepseek's OpenAI-compatible enum in place of Anthropic's
+`stop_reason` (`"end_turn"` → `"stop"`, `"tool_use"` → `"tool_calls"`).
+
 Assistant events additionally carry an **`api` key** (added by `shai-eval`, not by `shai-stamp`):
-`{message_id, model, usage: {input_tokens, output_tokens}, latency_ms}`. This is a top-level
-sibling of `type`/`source`/`payload`, like the envelope. No existing pipeline script reads it;
-it is consumed only by the observability filters (`shai-sessions`, `shai-runs`, `shai-trace`,
-`shai-stats`). Error events never carry `api`.
+`{message_id, model, usage: {prompt_tokens, completion_tokens, total_tokens}, latency_ms}`. This
+is a top-level sibling of `type`/`source`/`payload`, like the envelope. No existing pipeline
+script reads it; it is consumed only by the observability filters (`shai-sessions`, `shai-runs`,
+`shai-trace`, `shai-stats`). Error events never carry `api`.
 
 Every event additionally carries an **execution envelope**, added by `shai-stamp`:
 `version` (schema version, default `1.0`) and `meta` with `run_id`, `session_id`, `span_id`,
@@ -130,12 +137,13 @@ The scripts:
 - **`shai-version`** (`shai-version:1`) — prints the installed version to stdout as a bare string,
   resolved in order: the `VERSION` file next to the script (written by release tarballs), then
   `git describe --tags` in the install directory (dev clones), then the literal `dev`. Single
-  purpose and pipeable: it has no REPL dependency and needs no `ANTHROPIC_API_KEY`. Exit 0 always.
+  purpose and pipeable: it has no REPL dependency and needs no `DEEPSEEK_API_KEY`. Exit 0 always.
 - **`shai-tools [tools-dir]`** (`shai-tools:1`) — scans `tools/*/tool.json` (default:
   `$DIR/tools`) and validates each plugin: `tool.json` is valid JSON with `name`, `description`,
-  and `input_schema`; `name` matches its directory name; `run.sh` exists and is executable; and
-  `capabilities`, if present, is an object. Strips `capabilities` from each entry and prints the
-  aggregated Anthropic tool array to stdout. An empty or missing tools directory prints `[]`.
+  and `parameters`; `name` matches its directory name; `run.sh` exists and is executable; and
+  `capabilities`, if present, is an object. Strips `capabilities` from each entry, wraps it as
+  `{type:"function", function:{name, description, parameters}}`, and prints the aggregated
+  Deepseek tool array to stdout. An empty or missing tools directory prints `[]`.
   Used by `shai-repl` and `shai-retry` at startup to build the file passed to every `shai-eval
   --tools-file`. Exit 1 on the first invalid plugin found.
 - **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source + content sanitized) as a `user` message; interactive REPL input stays unwrapped.
@@ -143,23 +151,28 @@ The scripts:
   JSONL log, extracts the system prompt, and keeps as many recent **turn groups** as fit within
   the byte budget (default `SHAI_MAX_CONTEXT_BYTES` / `1300000`; `--max-bytes` overrides).
   The system prompt and latest turn group are always preserved (soft ceiling). Rebuilds the
-  exact Anthropic `{system, messages}` request shape — folding consecutive `tool_result`s
-  back into a single `user` message. `error` events are dropped here, so failures never
-  contaminate future context.
+  Deepseek `{messages}` request shape — the system prompt is prepended as a leading
+  `{role:"system", content}` message (there is no top-level `system` key), and each
+  `tool_result` becomes its own `{role:"tool", tool_call_id, content}` message rather than
+  being folded with others into a single `user` message (`is_error` is not part of that shape,
+  so it is dropped here). `error` events are dropped here, so failures never contaminate future
+  context.
 - **`shai-eval [--tools-file <path>|--model|--max-tokens|--dry-run|--health-check]`**
-  (`shai-eval:1`) — the only network hop (`curl` → Messages API). Emits an `assistant` or `error`
-  event. **Invariant: it must never crash the loop.** Every API/curl/parse failure becomes an
-  `error` event with exit 0 (the sole exception: `--health-check` exits 1 when the key is
-  missing). `--dry-run` prints the payload without calling out; `--tools-file <path>` attaches
-  the aggregated tool array at that path (built by `shai-tools`). Before each real call it
-  best-effort dumps the exact request to
-  `$SHAI_HOME/runs/<run_id>/<span_id>-request.json` and, on successful API responses, a
-  normalized response metadata file to `<span_id>-response.json` containing
-  `{message_id, model, usage, stop_reason, latency_ms}` (observability; never fails the loop).
+  (`shai-eval:1`) — the only network hop (`curl -H "Authorization: Bearer $DEEPSEEK_API_KEY"` →
+  `https://api.deepseek.com/v1/chat/completions`, Deepseek's OpenAI-compatible chat-completions
+  endpoint). Emits an `assistant` or `error` event. **Invariant: it must never crash the loop.**
+  Every API/curl/parse failure becomes an `error` event with exit 0 (the sole exception:
+  `--health-check` exits 1 when `DEEPSEEK_API_KEY` is missing). `--dry-run` prints the payload
+  without calling out; `--tools-file <path>` attaches the aggregated tool array at that path
+  (built by `shai-tools`). Before each real call it best-effort dumps the exact request to
+  `$SHAI_HOME/runs/<run_id>/<span_id>-request.json`. On success it parses `choices[0].message`
+  (`content`, `tool_calls`) plus the top-level `finish_reason` into the assistant event, and
+  dumps a normalized response metadata file to `<span_id>-response.json` containing
+  `{message_id, model, usage, finish_reason, latency_ms}` (observability; never fails the loop).
   Successful assistant events carry an `api` key with the same fields — see the event schema
   note above.
 - **`shai-dispatch`** (`shai-dispatch:1`) — reads the latest assistant event, runs each
-  `tool_use` block via `run_tool`, and emits `tool_result` events. Tools are resolved by
+  `tool_calls` entry via `run_tool`, and emits `tool_result` events. Tools are resolved by
   directory lookup: `run_tool` execs `$TOOLS_DIR/<name>/run.sh` with the tool's JSON input as
   `$1` (`$TOOLS_DIR` defaults to `$DIR/tools`, overridable via `$SHAI_TOOLS_DIR`); a name with no
   matching directory is an `is_error` tool_result, not a crash. `capabilities.read_only` from
@@ -205,7 +218,7 @@ The scripts:
   "nothing to resume" for a resumable run. No filter emits one, so this only guards hand-run input.
 - **`shai-retry [-q|--quiet] [--run <run_id>]`** (`shai-retry:1`) — without flags, resumes an
   interrupted run from `sessions/<session_id>.jsonl` with no re-prompt: classifies the tail
-  (assistant+`tool_use` → dispatch; `error`/`tool_result`/`user` → re-eval; complete or empty →
+  (assistant+`tool_calls` → dispatch; `error`/`tool_result`/`user` → re-eval; complete or empty →
   no-op) and drives the same eval/dispatch loop as `shai-repl` to completion. With `--run <run_id>`,
   replays a failed run's user message under a new run_id using buffer-then-commit — events go to
   the new run log during execution and are committed to the session log only on success. Records
@@ -255,8 +268,8 @@ The scripts:
   `workflows/<name>/run.sh` path; `install` resolves it against `$DIR` then `$DIR/workflows`, and
   the shared `unit_name` helper derives the systemd unit (strips a `workflows/` prefix and
   `/run.sh` suffix, rejects any other `/` or `..`, then normalizes to `shai-<name>`), requires the
-  script to be executable and `ANTHROPIC_API_KEY` to be set, writes the units to
-  `$SHAI_UNIT_DIR` (default `~/.config/systemd/user`) embedding `ANTHROPIC_API_KEY`/`SHAI_HOME`
+  script to be executable and `DEEPSEEK_API_KEY` to be set, writes the units to
+  `$SHAI_UNIT_DIR` (default `~/.config/systemd/user`) embedding `DEEPSEEK_API_KEY`/`SHAI_HOME`
   as `Environment=` lines, then `chmod 600`s the `.service` file (it holds the plaintext key)
   before `daemon-reload`ing and enabling the timer. `status [script] [--json]` discovers
   installed units by scanning `$SHAI_UNIT_DIR` for `shai-*.timer` files (or queries a single
@@ -278,9 +291,10 @@ and appends `tool_result`s → `shai-context | shai-eval` re-runs so the model s
 repeat until a turn ends with no tool call. `shai-repl` drives one turn of this via `shai-loop`;
 workflows drive it once per `wf_llm` call.
 
-**Tools** are plugins, one directory per tool under `tools/<name>/`: a `tool.json` (Anthropic
-tool-definition shape — `name`, `description`, `input_schema` — plus an optional `capabilities`
-object holding `read_only` plus a `requires` block — see **Tool-declared prerequisites** below)
+**Tools** are plugins, one directory per tool under `tools/<name>/`: a `tool.json`
+(Deepseek/OpenAI function-definition shape — `name`, `description`, `parameters` — plus an
+optional `capabilities` object holding `read_only` plus a `requires` block — see
+**Tool-declared prerequisites** below)
 and an executable `run.sh` that takes the tool's JSON input
 as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CLI, write),
 `git` (generic Git CLI, write), `ci` (local CI checks, write), `jira_issue_view`,
@@ -290,13 +304,13 @@ than the 32000-byte output cap can be read a window at a time), `search_files` (
 grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`),
 `sleep` (read-only),
 `write_file`, `patch_file`, `delete_file` (write). `shai-tools`
-aggregates every `tools/*/tool.json` into the Anthropic tool array at startup, and
-`shai-dispatch` resolves a `tool_use` call straight to `tools/<name>/run.sh`. There is no central
-manifest or dispatch table to keep in sync — adding a tool means adding a directory. Workflows
-share the same tool plugins — `wf_llm --tools` generates the tool array via `shai-tools`
-internally, and any resulting `tool_use` is dispatched through the identical `shai-dispatch`
-path, so the permission gate below applies to workflow tool calls exactly as it does to the
-interactive REPL.
+aggregates every `tools/*/tool.json` into the Deepseek tool array at startup (each entry wrapped
+as `{type:"function", function:{...}}`), and `shai-dispatch` resolves a `tool_calls` entry
+straight to `tools/<name>/run.sh`. There is no central manifest or dispatch table to keep in
+sync — adding a tool means adding a directory. Workflows share the same tool plugins —
+`wf_llm --tools` generates the tool array via `shai-tools` internally, and any resulting
+`tool_calls` entry is dispatched through the identical `shai-dispatch` path, so the permission
+gate below applies to workflow tool calls exactly as it does to the interactive REPL.
 
 **Tool-declared prerequisites** — `capabilities.requires` in a `tool.json` is the source of truth
 for what a tool needs from its environment, and `shai-doctor` reports on all of it: `tools`
@@ -526,7 +540,7 @@ are automatically queued for resolution. Install via
 
 ## Testing model
 
-Tests are hermetic and offline (`curl`/`gh` stubbed, `ANTHROPIC_API_KEY` faked). Do not add
+Tests are hermetic and offline (`curl`/`gh` stubbed, `DEEPSEEK_API_KEY` faked). Do not add
 tests that hit the network.
 
 Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
