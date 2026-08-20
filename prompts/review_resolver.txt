@@ -136,12 +136,37 @@ costs minutes and one of the three fix-and-push cycles below.
 1. Push all commits to the PR's head branch:
    `git -C <clone-dir> push origin <headRefName>`
    (This only works for same-repo PRs — cross-fork PRs were filtered in step 1.)
-2. Poll CI: `gh pr checks {{NUMBER}} -R {{REPO}}`. "no checks reported" means pending — CI has
-   not started yet. Use the `sleep` tool to wait 30 seconds between checks, for up to roughly
-   6 minutes total.
-3. If a check fails: `gh run list --branch <headRefName> -R {{REPO}}`, then
-   `gh run view <RUN_ID> -R {{REPO}} --log-failed`. Fix, re-verify with the `ci` tool where a
-   check covers it, commit, push, and re-poll. Attempt at most 3 fix-and-push cycles.
+2. Capture the pushed SHA right after the push: `git -C <clone-dir> rev-parse HEAD`.
+   Do not trust `gh pr checks` alone — in the window between the push and GitHub registering
+   the new run it reports the **previous** head's run, so a stale green run reads as success.
+   Poll SHA-aware instead, treating only entries whose `headSha` equals the relevant SHA as
+   relevant:
+
+   ```
+   gh run list --branch <headRefName> -R {{REPO}} --json headSha,databaseId,status,conclusion --limit 10
+   ```
+
+   - No entry with `headSha` == the pushed SHA means pending — CI has not started yet. Use the
+     `sleep` tool to wait 30 seconds between checks, for up to roughly 6 minutes total.
+   - A matching entry with `status: completed` gives the real verdict; if its `conclusion` is
+     `failure`, follow step 3 below.
+   - A green result for any other `headSha` is a stale run of the parent commit and must NOT
+     be reported as the push passing.
+   - If the repo's CI triggers on `pull_request` rather than `push`, runs execute against the
+     merge commit (`refs/pull/N/merge`), so their `headSha` is the merge commit, never the
+     pushed head SHA — the equality above never matches and the poll would time out despite
+     green CI. For such repos, fetch the PR's merge commit SHA and compare against it instead:
+     `gh api repos/{{REPO}}/pulls/{{NUMBER}} --jq .merge_commit_sha`.
+   - If the branch has no runs at all (empty list), do not conclude "no CI" immediately —
+     `gh run list` can be transiently empty in the same registration window right after the
+     push, and CI that lives outside GitHub Actions never appears in it. Poll a couple more
+     times first (~60–90 seconds); if it is still empty, the repo likely has no Actions-based
+     CI on this branch — stop polling early instead of sleeping out the budget, and say so in
+     the summary comment.
+3. If a check fails: `gh run view <RUN_ID> -R {{REPO}} --log-failed` on the matching run's
+   `databaseId` from step 2. Fix, re-verify with the `ci` tool where a check covers it, commit,
+   push, and re-poll (re-capturing the pushed SHA — or the merge commit SHA for
+   `pull_request`-triggered CI). Attempt at most 3 fix-and-push cycles.
 4. If CI still fails after 3 cycles, or does not finish inside the polling window, document that
    in the summary comment instead of continuing.
 
@@ -170,7 +195,9 @@ this shape (counts must match what you actually did):
 </details>
 ```
 
-Include a CI line stating whether checks passed, failed, or timed out, and whether the `ci` tool
-verified the changes locally beforehand — say "no checks configured for this repo" when that is
-what the tool reported, rather than implying a verification that did not happen. If there were no
+Include a CI line stating whether checks passed, failed, or timed out, naming the SHA the checks
+ran against (e.g. "all 11 checks pass on the new head `dc3bedc`") — a claim that does not name
+the SHA cannot be distinguished from a stale run of the parent commit — and whether the `ci`
+tool verified the changes locally beforehand — say "no checks configured for this repo" when
+that is what the tool reported, rather than implying a verification that did not happen. If there were no
 unresolved review comments, post a short comment saying so and stop.
