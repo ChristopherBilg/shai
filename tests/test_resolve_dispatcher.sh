@@ -270,5 +270,11 @@ assert_eq "$(printf '%s' "$PROMPT_OUT" | grep -c '|| true' || true)" "0" \
   "pr_reviewer prompt: no shell operators — the gh tool runs a pre-tokenized argv array"
 assert_contains "$PROMPT_OUT" "at least one actionable" \
   "pr_reviewer prompt: gates the label on actionable inline comments"
+# Regression guard for #106: the review payload must never go back to a fixed
+# /tmp/review.json --input path, and must stay inside the per-run clone dir with the PR number.
+assert_eq "$(printf '%s' "$PROMPT_OUT" | grep -cF -- '--input /tmp/review.json' || true)" "0" \
+  "pr_reviewer prompt: no fixed /tmp/review.json payload path"
+assert_contains "$PROMPT_OUT" "/tmp/pr-review-XXXXX/review-{{NUMBER}}.json" \
+  "pr_reviewer prompt: stages the payload inside the per-run clone dir with the PR number"
 
 finish
