@@ -1,7 +1,7 @@
 #!/bin/bash
 # shai-eval — the only network hop: call the Deepseek API
 # Usage: cat request.json | shai-eval [--tools-file <path>|--model M|--max-tokens N|--dry-run|--health-check]
-# Reads: a {system, messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
+# Reads: a {messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
 #        environment to locate the per-span request/response dumps
 # Writes: one assistant/error event (assistant events carry an `api` key: message_id, model,
 #         usage, latency_ms); on a real call, also dumps the request, and on success the response

@@ -227,7 +227,7 @@ while IFS= read -r block; do
 done < <(jq -c '
   select(.type=="message" and .source=="assistant")
   | .payload.tool_calls[]?
-  | {name: .function.name, id: .id, input: (.function.arguments | fromjson)}
+  | {name: .function.name, id: .id, input: (.function.arguments // "{}" | try fromjson catch {})}
 ')
 
 [ "$tool_calls" -gt 0 ] && exit 1 || exit 0

@@ -74,7 +74,7 @@ json_ok() { # valid array; every tool and every input property has a non-empty d
     type == "array"
     and all(.[];
       (.description // "" | length) > 0
-      and all((.input_schema.properties // {})[]; (.description // "" | length) > 0)
+      and all((.parameters.properties // {})[]; (.description // "" | length) > 0)
     )
   ' "$1" >/dev/null 2>&1
 }
@@ -88,7 +88,7 @@ tool_json_ok() { # single tool object; tool + every input property has a non-emp
   jq -e '
     type == "object"
     and ((.description // "") | length) > 0
-    and all((.input_schema.properties // {})[]; (.description // "") | length > 0)
+    and all((.parameters.properties // {})[]; (.description // "") | length > 0)
   ' "$1" >/dev/null 2>&1
 }
 

@@ -57,7 +57,8 @@ jq -R -s -c --argjson max_bytes "$MAX_BYTES" '
   | (reduce $win[] as $e (
         {messages: []};
         if $e.type == "tool_result" then
-          .messages += [{role:"tool", tool_call_id: $e.payload.tool_call_id, content: $e.payload.content}]
+          .messages += [{role:"tool", tool_call_id: $e.payload.tool_call_id,
+            content: (if ($e.payload.is_error // false) then "[ERROR] " + $e.payload.content else $e.payload.content end)}]
         elif $e.type=="message" and $e.source=="user" then
           .messages += [{role:"user", content: $e.payload.text}]
         elif $e.type=="message" and $e.source=="assistant" then

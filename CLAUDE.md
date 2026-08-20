@@ -247,7 +247,8 @@ The scripts:
   arguments.
 - **`shai-stats [--session ID] [--after DATE] [--before DATE] [--json]`** (`shai-stats:1`) —
   aggregates metrics across sessions: session/run counts, status breakdown with percentages,
-  token totals (in/out/total), tool usage frequency, averages per run, and average latency.
+  token totals (in/out/total), Deepseek prompt-cache hit/miss counts, tool usage frequency,
+  averages per run, and average latency.
   `--session` scopes to a single session (prefix matching). `--after`/`--before` filter by
   session date. `--json` outputs a JSON summary object. Exit 0 on success; 1 on invalid
   arguments or no match.
