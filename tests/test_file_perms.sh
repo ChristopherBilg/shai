@@ -124,20 +124,28 @@ else
 fi
 
 # --- write_file: a bad mode string is rejected and nothing is written ---
-for bad in "u+x" "75" "77777" "755 /etc/passwd" "" "988"; do
+for bad in "u+x" "75" "77777" "755 /etc/passwd" "988"; do
   OUT=$("$DIR/tools/write_file/run.sh" \
     "$(jq -nc --arg p "$TDIR/rejected.txt" --arg m "$bad" '{path:$p,content:"nope\n",mode:$m}')" \
     2>&1) && rc=0 || rc=$?
-  if [ "$bad" = "" ]; then
-    # An empty mode is indistinguishable from "no mode given", so it must simply write.
-    assert_eq "$rc" "0" "write_file: empty mode is treated as no mode"
-    continue
-  fi
   assert_eq "$rc" "1" "write_file: mode '$bad' is rejected (exit 1)"
   assert_contains "$OUT" "invalid mode" "write_file: mode '$bad' reports invalid mode"
 done
-# The only write in that loop is the empty-mode iteration, so the file must hold exactly its
-# content once: a rejected mode must not have written, appended, or truncated anything.
-assert_eq "$(cat "$TDIR/rejected.txt")" "nope" "write_file: rejected modes wrote nothing"
+# Every rejected mode above must have exited before touching the filesystem, so the target file
+# must not exist yet. Checking existence (rather than content) is what actually proves that: a
+# rejected mode that did write would otherwise be masked by the later empty-mode write.
+if [ -e "$TDIR/rejected.txt" ]; then
+  echo -e "  ${RED}✗${NC} write_file: rejected modes wrote nothing"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} write_file: rejected modes wrote nothing"
+fi
+
+# --- write_file: an empty mode is indistinguishable from no mode, so it simply writes ---
+OUT=$("$DIR/tools/write_file/run.sh" \
+  "$(jq -nc --arg p "$TDIR/rejected.txt" '{path:$p,content:"nope\n",mode:""}')" \
+  2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "0" "write_file: empty mode is treated as no mode"
+assert_eq "$(cat "$TDIR/rejected.txt")" "nope" "write_file: empty mode wrote the content"
 
 finish
