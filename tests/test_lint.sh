@@ -28,29 +28,62 @@ desc "usage errors are rejected with exit 2"
 assert_exit 2 "unknown flag exits 2" -- bash "$DIR/tests/lint.sh" --bogus
 assert_exit 2 "extra argument exits 2" -- bash "$DIR/tests/lint.sh" --list --write
 
-# The linters themselves are stubbed with true/false: this suite must stay offline and must not
-# depend on ./bin being populated, so it checks the plumbing (both tools run, both statuses are
-# reported and aggregated), not shellcheck's or shfmt's own verdicts.
-desc "both linters run and their exit status is aggregated"
-OUT="$(SHELLCHECK=true SHFMT=true bash "$DIR/tests/lint.sh" 2>&1)"
+# The linters themselves are stubbed with a script that records its argv and exits with a
+# configurable status: this suite must stay offline and must not depend on ./bin being populated,
+# so it checks the plumbing (which binaries run, that both statuses are reported and aggregated,
+# and that the git-derived file list actually reaches the linters), not the linters' own verdicts.
+STUB_DIR="$(mktemp -d)"
+_CLEANUP_DIRS+=("$STUB_DIR")
+ARGV_LOG="$STUB_DIR/argv.log"
+: >"$ARGV_LOG"
+write_lint_stub() { # name exit_code
+  local name="$1" code="$2"
+  {
+    printf '#!/bin/bash\n'
+    printf 'printf "%%s\\n" "$*" >>"%s"\n' "$ARGV_LOG"
+    printf 'exit %s\n' "$code"
+  } >"$STUB_DIR/$name"
+  chmod +x "$STUB_DIR/$name"
+}
+write_lint_stub shellcheck 0
+write_lint_stub shfmt 0
+write_lint_stub shellcheck-fail 1
+write_lint_stub shfmt-fail 1
+
+desc "resolved linters are printed and receive the git-derived file list"
+OUT="$(SHELLCHECK="$STUB_DIR/shellcheck" SHFMT="$STUB_DIR/shfmt" bash "$DIR/tests/lint.sh" 2>&1)"
 RC=$?
 assert_eq "$RC" "0" "both linters clean → exit 0"
 assert_contains "$OUT" "LINT OK" "clean run prints the LINT OK banner"
+assert_contains "$OUT" "shellcheck: $STUB_DIR/shellcheck" "resolved shellcheck path is printed"
+assert_contains "$OUT" "shfmt: $STUB_DIR/shfmt" "resolved shfmt path is printed"
+assert_contains "$(cat "$ARGV_LOG")" "install.sh" "shellcheck/shfmt receive the file list"
 
-OUT="$(SHELLCHECK=false SHFMT=true bash "$DIR/tests/lint.sh" 2>&1)"
+desc "shellcheck failure still runs shfmt and aggregates"
+: >"$ARGV_LOG"
+OUT="$(SHELLCHECK="$STUB_DIR/shellcheck-fail" SHFMT="$STUB_DIR/shfmt" bash "$DIR/tests/lint.sh" 2>&1)"
 RC=$?
 assert_eq "$RC" "1" "shellcheck findings → exit 1"
 assert_contains "$OUT" "shellcheck reported findings" "shellcheck failure is named"
 assert_contains "$OUT" "shfmt:" "shfmt still runs after a shellcheck failure"
+assert_contains "$(cat "$ARGV_LOG")" "install.sh" "shfmt still receives the file list"
 
-OUT="$(SHELLCHECK=true SHFMT=false bash "$DIR/tests/lint.sh" 2>&1)"
+desc "shfmt diff reports failure and aggregates"
+OUT="$(SHELLCHECK="$STUB_DIR/shellcheck" SHFMT="$STUB_DIR/shfmt-fail" bash "$DIR/tests/lint.sh" 2>&1)"
 RC=$?
 assert_eq "$RC" "1" "shfmt diff → exit 1"
 assert_contains "$OUT" "shfmt reported a diff" "shfmt failure is named"
 
-OUT="$(SHELLCHECK=true SHFMT=true bash "$DIR/tests/lint.sh" --write 2>&1)"
+desc "--write mode reports success and still aggregates a failing write"
+OUT="$(SHELLCHECK="$STUB_DIR/shellcheck" SHFMT="$STUB_DIR/shfmt" bash "$DIR/tests/lint.sh" --write 2>&1)"
 RC=$?
 assert_eq "$RC" "0" "--write exits 0"
 assert_contains "$OUT" "rewrote" "--write reports the in-place rewrite"
+
+OUT="$(SHELLCHECK="$STUB_DIR/shellcheck" SHFMT="$STUB_DIR/shfmt-fail" bash "$DIR/tests/lint.sh" --write 2>&1)"
+RC=$?
+assert_eq "$RC" "1" "--write shfmt failure → exit 1"
+assert_contains "$OUT" "shfmt write failed" "write failure is named"
+assert_contains "$OUT" "LINT FAILED" "write failure still prints the LINT FAILED banner"
 
 finish
