@@ -41,13 +41,31 @@ Clone {{REPO}}, create branch `{{BRANCH_NAME}}` from the default branch, impleme
 
 After creating the draft pull request, verify that CI checks pass on the branch:
 
-1. Poll CI status: `gh pr checks <PR_NUMBER> --repo {{REPO}}`. If the command fails with "no checks reported," treat that as pending — CI has not started yet.
-2. If any checks are still pending (or no checks are reported yet), use the `sleep` tool to wait 30 seconds, then re-check. Continue polling until all checks resolve or you have polled for roughly 6 minutes total.
-3. If all checks pass, add the label `shai-review-dispatcher` to the pull request so it is automatically queued for review. If the label does not exist in the repository, create it first with `gh label create shai-review-dispatcher --repo {{REPO}}`. You are done.
-4. If checks are still pending after roughly 6 minutes of polling, stop polling and update the pull request body to append a note that CI checks did not complete within the polling window, then stop.
-5. If any checks fail:
+1. Capture the pushed SHA right after pushing: `git -C <clone-dir> rev-parse HEAD`, where
+   `<clone-dir>` is the clone you made in the Objective step.
+2. Poll SHA-aware instead of trusting `gh pr checks` alone: in the window between the push and
+   GitHub registering the new run, `gh pr checks` reports the **previous** head's run, so a
+   stale green run reads as success. Treat only entries whose `headSha` equals the pushed SHA
+   as relevant:
+   `gh run list --branch <BRANCH> --repo {{REPO}} --json headSha,databaseId,status,conclusion --limit 10`
+3. No entry with `headSha` == the pushed SHA means pending — CI has not started yet. If the
+   branch has no runs at all (empty list), the repo likely has no CI on this branch — stop
+   polling early instead of sleeping out the budget, and note it in the PR body. Otherwise use
+   the `sleep` tool to wait 30 seconds between polls, for up to roughly 6 minutes total.
+4. A matching entry with `status: completed` gives the real verdict — read its `conclusion`.
+   A green result for any other `headSha` is a stale run of the parent commit and must NOT be
+   reported as the push passing. Any CI claim in the PR body must name the SHA the checks ran
+   against.
+5. If all checks pass on the pushed SHA, add the label `shai-review-dispatcher` to the pull
+   request so it is automatically queued for review. If the label does not exist in the
+   repository, create it first with `gh label create shai-review-dispatcher --repo {{REPO}}`.
+   You are done.
+6. If checks are still pending after roughly 6 minutes of polling, stop polling and update the
+   pull request body to append a note that CI checks did not complete within the polling
+   window, then stop.
+7. If any checks fail:
    a. Find the failed run: `gh run list --branch <BRANCH> --repo {{REPO}}` and identify the run ID of the failed workflow.
    b. Read the failure logs: `gh run view <RUN_ID> --repo {{REPO}} --log-failed`.
    c. Fix the failing code, re-verify locally with the `ci` tool where a check covers it, commit the fix, and push.
-   d. Return to step 1 to re-check CI.
-6. You may attempt up to 3 fix-and-push cycles. If CI still fails after 3 attempts, update the pull request body to append a "## CI Failures" section listing each failing check, the relevant log output, and what you tried. Then stop.
+   d. Return to step 2 to re-check CI (re-capture the new pushed SHA in step 1).
+8. You may attempt up to 3 fix-and-push cycles. If CI still fails after 3 attempts, update the pull request body to append a "## CI Failures" section listing each failing check, the relevant log output, and what you tried. Then stop.
