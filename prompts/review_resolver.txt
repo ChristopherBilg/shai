@@ -58,7 +58,13 @@ re-review. A human re-applies a label if another round is wanted.
 6. Use `print_file` and `list_directory` to read the code around each comment before deciding.
    Never act on a comment you have not read the surrounding code for. To locate the line a
    comment refers to, pass `line_numbers: true` (and `start_line`/`end_line` to read only that
-   window) instead of counting lines by hand.
+   window) instead of counting lines by hand. Note that `print_file`'s numbers tell you where
+   an anchor string sits, not which lines the diff actually contains: to see exactly which
+   RIGHT-side lines are in the diff (e.g. whether a comment's hunk is still current), run
+   `git -C <clone-dir> diff -U0 origin/<baseRefName>...HEAD -- <path>` and read the
+   `+newStart,newCount` field of each `@@ -oldStart,oldCount +newStart,newCount @@` header —
+   with `-U0` there is no context, so the RIGHT-side range is exactly `newStart` through
+   `newStart + newCount - 1`. Never count lines by hand.
 
 ## Classification
 
