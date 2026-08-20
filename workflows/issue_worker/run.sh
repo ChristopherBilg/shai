@@ -3,7 +3,7 @@
 # Usage: workflows/issue_worker/run.sh <repo> <number>
 # Reads: DEEPSEEK_API_KEY from environment; prompts/issue_worker.txt for LLM instructions
 # Writes: draft GitHub pull request; ephemeral session log (prunable)
-# Exit: 0 on success (including idempotent skip); 1 on failure; 2 on usage error
+# Exit: 0 on success; 1 on failure; 2 on usage error
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
 source "$(dirname "$0")/../../lib/workflow.sh"
@@ -27,10 +27,6 @@ if [[ ! "$NUMBER" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 wf_init
-
-if wf_seen "issue:$REPO:$NUMBER"; then
-  exit 0
-fi
 
 ISSUE_JSON=$(gh issue view "$NUMBER" --repo "$REPO" --json title,body,labels) ||
   wf_fail "cannot fetch issue #$NUMBER on $REPO"
@@ -79,7 +75,6 @@ TYPE=$(printf '%s' "$RESULT" | jq -r '.type // empty' 2>/dev/null) || TYPE=""
 SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE=""
 
 if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
-  wf_mark "issue:$REPO:$NUMBER"
   wf_output "implemented issue #$NUMBER on $REPO"
   wf_suggest
   exit 0
