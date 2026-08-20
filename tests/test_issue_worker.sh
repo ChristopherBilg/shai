@@ -1,7 +1,8 @@
 #!/bin/bash
 # test_issue_worker.sh — unit tests for workflows/issue_worker/run.sh
-# Covers: workflows/issue_worker/run.sh — arg parsing, idempotency, slug generation, LLM
-#   dispatch, external_data fencing/sanitization of issue content, gh stderr isolation, body truncation
+# Covers: workflows/issue_worker/run.sh — arg parsing, slug generation, LLM
+#   dispatch, external_data fencing/sanitization of issue content, gh stderr isolation, body truncation,
+#   non-idempotency
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -69,33 +70,6 @@ esac
 GHSTUB
   chmod +x "$STUB/gh"
 }
-
-# --- idempotency: already-processed issue skips (no gh fetch, no LLM call) ---
-desc "idempotency"
-write_issue_worker_gh_stub "Fix something" "Body text"
-mkdir -p "$SHAI_HOME/ledgers"
-printf '{"key":"issue:owner/repo:42","ts":"2026-08-13T00:00:00Z","session_id":"s1"}\n' \
-  >"$SHAI_HOME/ledgers/issue_worker.jsonl"
-
-# a curl that records whether it was ever invoked, so the idempotent skip can be verified
-# end-to-end rather than just inferred from the exit code
-CALLED_MARKER="$TMP/llm_called"
-rm -f "$CALLED_MARKER"
-{
-  printf '#!/bin/bash\n'
-  printf 'touch "%s"\n' "$CALLED_MARKER"
-  printf 'cat >/dev/null\n'
-  printf 'echo "500"\n'
-} >"$STUB/curl"
-chmod +x "$STUB/curl"
-
-OUT=$("$DIR/workflows/issue_worker/run.sh" owner/repo 42 2>&1)
-RC=$?
-assert_eq "$RC" "0" "issue_worker: exit 0 on already-processed issue"
-assert_eq "$(test -f "$CALLED_MARKER" && echo called || echo not-called)" "not-called" \
-  "issue_worker: idempotent skip makes no LLM call"
-
-rm -f "$SHAI_HOME/ledgers/issue_worker.jsonl" "$CALLED_MARKER"
 
 # --- gh failure ---
 desc "gh failure"
@@ -169,7 +143,6 @@ assert_contains "$REQ" 'shai/204-issue`' \
   "issue_worker: empty title defaults slug to issue"
 
 rm -rf "$SHAI_HOME/runs"
-rm -f "$SHAI_HOME/ledgers/issue_worker.jsonl"
 
 # --- success case: valid assistant response ---
 desc "success path"
@@ -183,17 +156,6 @@ assert_eq "$RC" "0" "issue_worker: exit 0 on valid assistant response"
 assert_contains "$OUT" "implemented issue #42" "issue_worker: output includes issue number"
 assert_contains "$OUT" "owner/repo" "issue_worker: output includes repo"
 
-# verify wf_mark was called
-LEDGER="$SHAI_HOME/ledgers/issue_worker.jsonl"
-if [ -f "$LEDGER" ] && grep -q '"issue:owner/repo:42"' "$LEDGER"; then
-  echo -e "  ${GREEN}✓${NC} issue_worker: wf_mark recorded issue key"
-else
-  echo -e "  ${RED}✗${NC} issue_worker: wf_mark did not record issue key"
-  FAILED=1
-fi
-
-rm -f "$SHAI_HOME/ledgers/issue_worker.jsonl"
-
 # --- fail case: error response from API ---
 desc "failure path"
 write_issue_worker_gh_stub "Some issue" "Body"
@@ -205,13 +167,16 @@ RC=$?
 assert_eq "$RC" "1" "issue_worker: exit 1 on error response"
 assert_contains "$OUT" "ERROR" "issue_worker: prints ERROR on failure"
 
-# verify wf_mark was NOT called
-if [ -f "$SHAI_HOME/ledgers/issue_worker.jsonl" ]; then
-  echo -e "  ${RED}✗${NC} issue_worker: wf_mark should not be called on failure"
-  FAILED=1
-else
-  echo -e "  ${GREEN}✓${NC} issue_worker: wf_mark not called on failure"
-fi
+# --- no idempotency: re-running the same issue is allowed and writes no ledger ---
+desc "non-idempotent by design"
+write_issue_worker_gh_stub "Fix the login bug" "The login page crashes"
+printf '{"type":"message","content":[{"type":"text","text":"PR created."}],"stop_reason":"end_turn"}' |
+  write_curl_stub 200
+rm -f "$SHAI_HOME/ledgers/issue_worker.jsonl"
+"$DIR/workflows/issue_worker/run.sh" owner/repo 42 >/dev/null 2>&1
+assert_eq "$(test -f "$SHAI_HOME/ledgers/issue_worker.jsonl" && echo exists || echo absent)" \
+  "absent" \
+  "issue_worker: writes no idempotency ledger"
 
 # --- security regression (finding 1): issue content is fenced as <external_data> ---
 desc "external_data fencing"
