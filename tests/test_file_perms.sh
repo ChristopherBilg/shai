@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_file_perms.sh — regression tests: the file-writing tools must preserve permission bits
-# Covers: tools/patch_file/run.sh, tools/write_file/run.sh — mode preserved across patch/overwrite
+# Covers: tools/patch_file/run.sh, tools/write_file/run.sh — mode preserved across patch/overwrite;
+#   write_file's explicit `mode` input (exec bit on new files, bad modes rejected)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -94,5 +95,57 @@ if [ -x "$TDIR/fresh.txt" ]; then
 else
   echo -e "  ${GREEN}✓${NC} write_file: new file is not executable"
 fi
+
+# --- write_file: an explicit mode makes a new file executable ---
+# Regression: without a `mode` input there was no way for a tool call to produce an executable
+# file at all, so adding a tool plugin's run.sh or a tests/test_*.sh was impossible (#80).
+OUT=$("$DIR/tools/write_file/run.sh" "$(jq -nc --arg p "$TDIR/new-script.sh" \
+  '{path:$p,content:"#!/bin/bash\necho hi\n",mode:"755"}')")
+assert_eq "$?" "0" "write_file: exits 0 with an explicit mode"
+assert_contains "$OUT" "mode 755" "write_file: output reports the applied mode"
+assert_exec "$TDIR/new-script.sh" "write_file: new file with mode 755 is executable"
+assert_mode "$TDIR/new-script.sh" "755" "write_file: new file has mode 0755"
+
+# --- write_file: an explicit mode wins over the preserved mode of an existing file ---
+printf 'old\n' >"$TDIR/relax.txt"
+chmod 600 "$TDIR/relax.txt"
+"$DIR/tools/write_file/run.sh" \
+  "$(jq -nc --arg p "$TDIR/relax.txt" '{path:$p,content:"new\n",mode:"644"}')" >/dev/null
+assert_mode "$TDIR/relax.txt" "644" "write_file: explicit mode overrides the existing mode"
+
+# --- write_file: a 4-digit mode is accepted ---
+# Skipped where the platform/filesystem refuses the setgid bit, as above.
+"$DIR/tools/write_file/run.sh" \
+  "$(jq -nc --arg p "$TDIR/sticky.sh" '{path:$p,content:"x\n",mode:"2755"}')" >/dev/null
+if [ "$(mode_of "$TDIR/sticky.sh")" = "755" ]; then
+  echo -e "  ${GREEN}✓${NC} write_file: 4-digit mode case skipped (setgid bit not settable here)"
+else
+  assert_mode "$TDIR/sticky.sh" "2755" "write_file: 4-digit mode 2755 applied"
+fi
+
+# --- write_file: a bad mode string is rejected and nothing is written ---
+for bad in "u+x" "75" "77777" "755 /etc/passwd" "988"; do
+  OUT=$("$DIR/tools/write_file/run.sh" \
+    "$(jq -nc --arg p "$TDIR/rejected.txt" --arg m "$bad" '{path:$p,content:"nope\n",mode:$m}')" \
+    2>&1) && rc=0 || rc=$?
+  assert_eq "$rc" "1" "write_file: mode '$bad' is rejected (exit 1)"
+  assert_contains "$OUT" "invalid mode" "write_file: mode '$bad' reports invalid mode"
+done
+# Every rejected mode above must have exited before touching the filesystem, so the target file
+# must not exist yet. Checking existence (rather than content) is what actually proves that: a
+# rejected mode that did write would otherwise be masked by the later empty-mode write.
+if [ -e "$TDIR/rejected.txt" ]; then
+  echo -e "  ${RED}✗${NC} write_file: rejected modes wrote nothing"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} write_file: rejected modes wrote nothing"
+fi
+
+# --- write_file: an empty mode is indistinguishable from no mode, so it simply writes ---
+OUT=$("$DIR/tools/write_file/run.sh" \
+  "$(jq -nc --arg p "$TDIR/rejected.txt" '{path:$p,content:"nope\n",mode:""}')" \
+  2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "0" "write_file: empty mode is treated as no mode"
+assert_eq "$(cat "$TDIR/rejected.txt")" "nope" "write_file: empty mode wrote the content"
 
 finish

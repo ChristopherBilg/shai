@@ -305,7 +305,9 @@ as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CL
 than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;
 grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`),
 `sleep` (read-only),
-`write_file`, `patch_file`, `delete_file` (write). `shai-tools`
+`write_file` (write; an optional `mode` of 3-4 octal digits sets the file's permission bits — the
+only way to create an executable file, e.g. a `tools/<name>/run.sh` — and without it an existing
+file keeps its mode while a new one gets the umask), `patch_file`, `delete_file` (write). `shai-tools`
 aggregates every `tools/*/tool.json` into the Deepseek tool array at startup (each entry wrapped
 as `{type:"function", function:{...}}`), and `shai-dispatch` resolves a `tool_calls` entry
 straight to `tools/<name>/run.sh`. There is no central manifest or dispatch table to keep in

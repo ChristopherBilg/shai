@@ -44,7 +44,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 - `search_files` — search for a text pattern across files in a directory tree; returns `path:line_number: text` rows plus a `[truncated: showing first N matches]` marker when the cap is hit; supports `glob`, `ignore_case`, and `max_results`; skips binary files and `.git/` (read-only)
 - `sleep` — pause execution for a specified number of seconds, 1-300 (read-only)
 - `ci` — run a configured CI check for a repository; checks are defined in `$SHAI_HOME/ci.json` (start from [`ci.json.example`](ci.json.example) — see [Configuring `ci`](#configuring-ci)) keyed by normalized git remote URL, with an optional `cwd` input to target a checkout other than the current directory (write, requires approval)
-- `write_file` — create or overwrite a file with given content, creating parent directories as needed (write, requires approval)
+- `write_file` — create or overwrite a file with given content, creating parent directories as needed, with an optional `mode` (3-4 octal digits, e.g. `"755"`) so a new file can be made executable; without it an existing file keeps its mode and a new one gets the umask (write, requires approval)
 - `patch_file` — replace a unique string in an existing file; the string must appear exactly once (write, requires approval)
 - `delete_file` — delete a file; the file must exist and must not be a directory (write, requires approval)
 - `git` — run any Git command via a pre-tokenized argument array (write, requires approval)
