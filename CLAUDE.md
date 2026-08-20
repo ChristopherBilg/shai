@@ -26,6 +26,7 @@ export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base6
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 
 # Tests — fully offline (curl + gh are stubbed; DEEPSEEK_API_KEY faked):
+./tests/all.sh                         # the pre-push command: every CI check locally, in CI order
 ./tests/run.sh                         # all suites, aggregated
 bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is standalone)
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
