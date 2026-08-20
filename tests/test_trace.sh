@@ -233,6 +233,34 @@ desc "no events found: error"
 setup_trace
 assert_exit 1 "no events" -- "$TRACE" "run_20260811T090000_gone"
 
+desc "cache tokens: per-span and total show cached count when present"
+setup_trace
+RID="run_20260811T090000_cache"
+make_run_with_dumps "$RID" \
+  "$(fixture_event "message" "user" '{"text":"hi"}' "$RID" "sess_test" "span_1")" \
+  "$(fixture_event "message" "assistant" '{"content":"cached reply","finish_reason":"stop"}' \
+    "$RID" "sess_test" "span_1" \
+    '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20},"latency_ms":50}')"
+OUT=$("$TRACE" "$RID")
+assert_contains "$OUT" "80 cached" "per-span cache hit shown"
+assert_contains "$OUT" "TOTAL" "total line present"
+# The TOTAL line should also show the aggregate cache hit
+TOTAL_LINE=$(printf '%s\n' "$OUT" | grep "^TOTAL:")
+assert_contains "$TOTAL_LINE" "80 cached" "total cache hit shown"
+
+desc "cache tokens: omitted when zero"
+setup_trace
+RID="run_20260811T090000_nocache"
+make_run_with_dumps "$RID" \
+  "$(fixture_event "message" "user" '{"text":"hi"}' "$RID" "sess_test" "span_1")" \
+  "$(fixture_event "message" "assistant" '{"content":"no cache","finish_reason":"stop"}' \
+    "$RID" "sess_test" "span_1" \
+    '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":50,"completion_tokens":10,"total_tokens":60},"latency_ms":100}')"
+OUT=$("$TRACE" "$RID")
+CACHED_IN_OUTPUT=no
+[[ "$OUT" == *"cached"* ]] && CACHED_IN_OUTPUT=yes
+assert_eq "$CACHED_IN_OUTPUT" "no" "no cache line when cache fields absent"
+
 desc "invalid args: exit 1"
 assert_exit 1 "no args" -- "$TRACE"
 

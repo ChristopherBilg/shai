@@ -103,7 +103,7 @@ session_count=${#valid_files[@]}
 
 if [ "$session_count" -eq 0 ]; then
   if [ "$JSON" = true ]; then
-    printf '{"sessions":0,"runs":0,"statuses":{"complete":0,"error":0,"incomplete":0},"tokens":{"input":0,"output":0,"total":0},"tools":[],"avg_per_run":{"input":0,"output":0},"avg_latency_ms":0}\n'
+    printf '{"sessions":0,"runs":0,"statuses":{"complete":0,"error":0,"incomplete":0},"tokens":{"input":0,"output":0,"total":0},"cache":{"hit":0,"miss":0},"tools":[],"avg_per_run":{"input":0,"output":0},"avg_latency_ms":0}\n'
   else
     printf 'No sessions found.\n'
   fi
@@ -133,6 +133,8 @@ AGGREGATE=$(cat "${valid_files[@]}" | jq -sc '
     },
     tokens_in: ([$all[] | select(.api?.usage?) | .api.usage.prompt_tokens // 0] | add // 0),
     tokens_out: ([$all[] | select(.api?.usage?) | .api.usage.completion_tokens // 0] | add // 0),
+    cache_hit: ([$all[] | select(.api?.usage?) | .api.usage.prompt_cache_hit_tokens // 0] | add // 0),
+    cache_miss: ([$all[] | select(.api?.usage?) | .api.usage.prompt_cache_miss_tokens // 0] | add // 0),
     tools: (
       [$all[] | select(.type == "message" and .source == "assistant") | .payload.tool_calls[]? | .function.name]
       | group_by(.) | map({name: .[0], count: length}) | sort_by(-.count)
@@ -145,6 +147,8 @@ runs=$(printf '%s' "$AGGREGATE" | jq '.runs')
 tokens_in=$(printf '%s' "$AGGREGATE" | jq '.tokens_in')
 tokens_out=$(printf '%s' "$AGGREGATE" | jq '.tokens_out')
 tokens_total=$((tokens_in + tokens_out))
+cache_hit=$(printf '%s' "$AGGREGATE" | jq '.cache_hit')
+cache_miss=$(printf '%s' "$AGGREGATE" | jq '.cache_miss')
 complete=$(printf '%s' "$AGGREGATE" | jq '.statuses.complete')
 err=$(printf '%s' "$AGGREGATE" | jq '.statuses.error')
 incomplete=$(printf '%s' "$AGGREGATE" | jq '.statuses.incomplete')
@@ -167,6 +171,7 @@ if [ "$JSON" = true ]; then
     --argjson avg_lat "$avg_latency" \
     '{sessions: $sessions, runs: .runs, statuses: .statuses,
       tokens: {input: .tokens_in, output: .tokens_out, total: $total},
+      cache: {hit: .cache_hit, miss: .cache_miss},
       tools: .tools,
       avg_per_run: {input: $avg_in, output: $avg_out},
       avg_latency_ms: $avg_lat}'
@@ -183,6 +188,10 @@ else
   printf '  input:      %d\n' "$tokens_in"
   printf '  output:     %d\n' "$tokens_out"
   printf '  total:      %d\n' "$tokens_total"
+  if [ "$cache_hit" -gt 0 ] || [ "$cache_miss" -gt 0 ]; then
+    printf '  cache hit:  %d\n' "$cache_hit"
+    printf '  cache miss: %d\n' "$cache_miss"
+  fi
   tools_out=$(printf '%s' "$AGGREGATE" | jq -r '.tools[] | "  \(.name): \(.count) calls"')
   if [ -n "$tools_out" ]; then
     printf '\nTool usage:\n%s\n' "$tools_out"

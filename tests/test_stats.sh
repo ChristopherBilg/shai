@@ -132,6 +132,68 @@ assert_contains "$OUT" "Sessions:" "has sessions line"
 assert_contains "$OUT" "Runs:" "has runs line"
 assert_contains "$OUT" "Tokens:" "has tokens section"
 
+desc "cache tokens: --json includes cache hit/miss"
+setup_stats
+SID="sess_20260811T090000_cache"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20},"latency_ms":100}'
+  fixture_event "message" "user" '{"text":"q2"}' "run_2" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a2","finish_reason":"stop"}' \
+    "run_2" "$SID" "span_1" \
+    '{"message_id":"m2","model":"m","usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300,"prompt_cache_hit_tokens":150,"prompt_cache_miss_tokens":50},"latency_ms":200}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.cache.hit')" "230" "cache hit tokens aggregated"
+assert_eq "$(printf '%s' "$OUT" | jq '.cache.miss')" "70" "cache miss tokens aggregated"
+
+desc "cache tokens: human output shows cache when nonzero"
+setup_stats
+SID="sess_20260811T090000_cacheh"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20},"latency_ms":100}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS")
+assert_contains "$OUT" "cache hit:" "human output shows cache hit"
+assert_contains "$OUT" "cache miss:" "human output shows cache miss"
+
+desc "cache tokens: human output omits cache when zero"
+setup_stats
+SID="sess_20260811T090000_nocacheh"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":100}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS")
+CACHED_IN_OUTPUT=no
+[[ "$OUT" == *"cache"* ]] && CACHED_IN_OUTPUT=yes
+assert_eq "$CACHED_IN_OUTPUT" "no" "no cache lines when fields absent"
+
+desc "cache tokens: --json has zeroes when no cache fields"
+setup_stats
+SID="sess_20260811T090000_nocachej"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":100}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.cache.hit')" "0" "cache hit 0 when absent"
+assert_eq "$(printf '%s' "$OUT" | jq '.cache.miss')" "0" "cache miss 0 when absent"
+
 desc "invalid args: exit 1"
 assert_exit 1 "unknown flag" -- "$STATS" --bogus
 

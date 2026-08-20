@@ -212,6 +212,7 @@ jq -sc --argjson verbose "$VERBOSE" '
   span_id=$(printf '%s' "$span_json" | jq -r '.span_id')
   api_in=$(printf '%s' "$span_json" | jq '.api.usage.prompt_tokens // 0')
   api_out=$(printf '%s' "$span_json" | jq '.api.usage.completion_tokens // 0')
+  cache_hit=$(printf '%s' "$span_json" | jq '.api.usage.prompt_cache_hit_tokens // 0')
   latency=$(printf '%s' "$span_json" | jq '.api.latency_ms // 0')
 
   printf '\n%s\n' "$span_id"
@@ -225,20 +226,24 @@ jq -sc --argjson verbose "$VERBOSE" '
 
   if [ "$api_in" != "0" ] || [ "$api_out" != "0" ]; then
     printf '  tokens: %s in / %s out' "$api_in" "$api_out"
+    [ "$cache_hit" != "0" ] && printf '  (%s cached)' "$cache_hit"
     [ "$latency" != "0" ] && printf '  (%sms)' "$latency"
     printf '\n'
   fi
 done
 
 # Print total
-TOTALS=$(jq -sc '[.[] | .api?.usage? // empty | values | {i: (.prompt_tokens // 0), o: (.completion_tokens // 0)}]
-  | {input: (map(.i) | add // 0), output: (map(.o) | add // 0)}' "$EVENTS_FILE")
+TOTALS=$(jq -sc '[.[] | .api?.usage? // empty | values |
+  {i: (.prompt_tokens // 0), o: (.completion_tokens // 0), ch: (.prompt_cache_hit_tokens // 0)}]
+  | {input: (map(.i) | add // 0), output: (map(.o) | add // 0), cache_hit: (map(.ch) | add // 0)}' "$EVENTS_FILE")
 TOTAL_IN=$(printf '%s' "$TOTALS" | jq '.input')
 TOTAL_OUT=$(printf '%s' "$TOTALS" | jq '.output')
+TOTAL_CACHE_HIT=$(printf '%s' "$TOTALS" | jq '.cache_hit')
 TOTAL_LAT=$(jq -sc '[.[] | .api?.latency_ms? // empty | values] | add // 0' "$EVENTS_FILE")
 
 if [ "$TOTAL_IN" != "0" ] || [ "$TOTAL_OUT" != "0" ]; then
   printf '\nTOTAL: %s in / %s out tokens' "$TOTAL_IN" "$TOTAL_OUT"
+  [ "$TOTAL_CACHE_HIT" != "0" ] && printf '  (%s cached)' "$TOTAL_CACHE_HIT"
   [ "$TOTAL_LAT" != "0" ] && printf '  (%sms wall)' "$TOTAL_LAT"
   printf '\n'
 fi
