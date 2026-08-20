@@ -10,7 +10,7 @@ make_stub_bin
 write_gh_stub
 
 # --- single-shot prompt (no tools): session log gets user + assistant ---
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hello back"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hello back"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 TMP="$(mktemp -d)"
@@ -107,7 +107,7 @@ mkdir -p "$TMP6/sessions"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMP6/sessions/test.jsonl"
 : >"$TMP6/sessions/test.latest.json"
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 printf 'test' | SHAI_HOME="$TMP6" SHAI_SESSION_ID=test "$DIR/shai-loop" >/dev/null 2>&1
@@ -127,7 +127,7 @@ printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are sh
 : >"$TMP7/sessions/test.latest.json"
 printf 'blocked' >"$TMP7/runs"
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"degraded ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"degraded ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 OUT7=$(printf 'hi' | SHAI_HOME="$TMP7" SHAI_SESSION_ID=test "$DIR/shai-loop" 2>/dev/null)
@@ -143,7 +143,7 @@ _CLEANUP_DIRS+=("$TMP8")
 # deliberately no `mkdir -p "$TMP8/sessions"` and no pre-seeded .jsonl/.latest.json —
 # this is the never-before-used-session path
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"fresh session ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"fresh session ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 OUT8=$(printf 'hi' | SHAI_HOME="$TMP8" SHAI_SESSION_ID=neversession "$DIR/shai-loop" 2>/dev/null)

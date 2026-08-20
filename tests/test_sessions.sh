@@ -33,7 +33,7 @@ SID="sess_20260810T140000_aabbccdd"
   fixture_event "message" "system" '{"text":"system prompt"}' "run_1" "$SID" "span_1"
   fixture_event "message" "user" '{"text":"hello"}' "run_1" "$SID" "span_1"
   fixture_event "message" "assistant" '{"content":"hi","finish_reason":"stop"}' \
-    "run_1" "$SID" "span_1" '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":1000}'
+    "run_1" "$SID" "span_1" '{"message_id":"msg_1","model":"deepseek-v4-flash","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":1000}'
 } >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$SESSIONS" --json | jq '.[0]')
 assert_eq "$(printf '%s' "$OUT" | jq -r '.session_id')" "$SID" "session_id"

@@ -57,7 +57,7 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ```
 
 Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
-`SHAI_MODEL` (default `deepseek-v4-pro`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
+`SHAI_MODEL` (default `deepseek-v4-flash`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
 step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; overrides
@@ -92,13 +92,13 @@ State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-o
 
 **The event schema is the contract between every script.** Records in `sessions/<session_id>.jsonl`:
 
-| type + source           | payload                                                      | written by           |
-| ----------------------- | ------------------------------------------------------------ | -------------------- |
-| `message` / `user`      | `{text}`                                                     | `shai-read`          |
-| `message` / `system`    | `{text}` (the seeded system prompt)                          | `shai-read --system` |
-| `message` / `assistant` | `{content, tool_calls, finish_reason}` (raw Deepseek message) | `shai-eval`         |
-| `tool_result` / `tool`  | `{tool_call_id, content, is_error}`                          | `shai-dispatch`      |
-| `error` / `system`      | `{text}`                                                     | `shai-eval`          |
+| type + source           | payload                                                       | written by           |
+| ----------------------- | ------------------------------------------------------------- | -------------------- |
+| `message` / `user`      | `{text}`                                                      | `shai-read`          |
+| `message` / `system`    | `{text}` (the seeded system prompt)                           | `shai-read --system` |
+| `message` / `assistant` | `{content, tool_calls, finish_reason}` (raw Deepseek message) | `shai-eval`          |
+| `tool_result` / `tool`  | `{tool_call_id, content, is_error}`                           | `shai-dispatch`      |
+| `error` / `system`      | `{text}`                                                      | `shai-eval`          |
 
 `content` is a string, or absent when the model returned none; `tool_calls`, when present, is a
 separate array of `{id, type:"function", function:{name, arguments}}` objects (`arguments` is a

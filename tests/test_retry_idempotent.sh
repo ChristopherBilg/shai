@@ -20,7 +20,7 @@ new_home() {
 # successful turn commits user + assistant to session log
 new_home
 make_stub_bin
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"committed reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"committed reply"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 printf 'hello\nexit\n' | SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 H=$(cat "$SHIST" 2>/dev/null || echo "")
 assert_contains "$H" '"source":"system"' "buffer-commit: system prompt seeded in session log"
@@ -71,7 +71,7 @@ _CLEANUP_DIRS+=("$BLOCKH")
 printf 'blocked' >"$BLOCKH/runs"
 mkdir -p "$BLOCKH/sessions"
 make_stub_bin
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"fallback reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"fallback reply"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 printf 'hello\nexit\n' | SHAI_HOME="$BLOCKH" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 BH=$(cat "$BLOCKH/sessions/test.jsonl" 2>/dev/null || echo "")
 assert_contains "$BH" '"source":"user"' "fallback: user event written directly to session log"
@@ -88,7 +88,7 @@ mkdir -p "$SHOME/runs/run_failed"
   printf '%s\n' '{"type":"error","source":"system","payload":{"text":"API timeout"},"version":"1.0","meta":{"run_id":"run_failed","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
 } >"$SHOME/runs/run_failed/events.jsonl"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}' >"$SHIST"
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"replayed answer"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"replayed answer"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_failed >/dev/null 2>&1
 RH=$(cat "$SHIST")
 assert_contains "$RH" 'replay me' "replay: user message committed to session log"
@@ -137,7 +137,7 @@ mkdir -p "$SHOME/runs/run_double"
   printf '%s\n' '{"type":"error","source":"system","payload":{"text":"timeout"},"version":"1.0","meta":{"run_id":"run_double","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
 } >"$SHOME/runs/run_double/events.jsonl"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}' >"$SHIST"
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"doubled"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"doubled"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_double >/dev/null 2>&1
 AFTER_FIRST=$(wc -l <"$SHIST")
 OUT2=$(SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_double 2>&1)

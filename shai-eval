@@ -11,7 +11,7 @@
 set -euo pipefail
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
-MODEL="${SHAI_MODEL:-deepseek-v4-pro}"
+MODEL="${SHAI_MODEL:-deepseek-v4-flash}"
 MAX_TOKENS="16000"
 DRY_RUN=false
 HEALTH_CHECK=false

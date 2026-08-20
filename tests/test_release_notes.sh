@@ -85,7 +85,7 @@ write_release_notes_gh_stub "$COMPARE_JSON" "$PR_JSON"
 # (the JSON as printf's *argument*, not its format string) writes it byte-for-byte — unlike
 # `printf 'literal-with-\n-in-it'`, which would have bash's printf interpret \n as a real
 # newline and corrupt the JSON (a raw control character inside a JSON string is invalid).
-LLM_RESPONSE='{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"## Added\n- Feature X (#1)\n\n## Fixed\n- Bug Y (#2)\n\n## Infrastructure\n- CI config (#3)"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
+LLM_RESPONSE='{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"## Added\n- Feature X (#1)\n\n## Fixed\n- Bug Y (#2)\n\n## Infrastructure\n- CI config (#3)"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
 printf '%s' "$LLM_RESPONSE" | write_curl_stub 200
 
 STDOUT=$("$DIR/workflows/release_notes/run.sh" owner/repo v1 v2 2>/dev/null)

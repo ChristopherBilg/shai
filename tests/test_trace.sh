@@ -19,8 +19,8 @@ make_run_with_dumps() {
   mkdir -p "$SHAI_HOME/runs/$run_id"
   shift
   for event in "$@"; do printf '%s\n' "$event"; done >"$SHAI_HOME/runs/$run_id/events.jsonl"
-  printf '{"model":"deepseek-v4-pro","messages":[]}' >"$SHAI_HOME/runs/$run_id/span_1-request.json"
-  printf '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15},"finish_reason":"stop","latency_ms":100}' \
+  printf '{"model":"deepseek-v4-flash","messages":[]}' >"$SHAI_HOME/runs/$run_id/span_1-request.json"
+  printf '{"message_id":"msg_1","model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15},"finish_reason":"stop","latency_ms":100}' \
     >"$SHAI_HOME/runs/$run_id/span_1-response.json"
 }
 
@@ -31,7 +31,7 @@ make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hello"}' "$RID" "sess_test" "span_1")" \
   "$(fixture_event "message" "assistant" '{"content":"hi there","finish_reason":"stop"}' \
     "$RID" "sess_test" "span_1" \
-    '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15},"latency_ms":100}')"
+    '{"message_id":"msg_1","model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15},"latency_ms":100}')"
 OUT=$("$TRACE" "$RID")
 assert_contains "$OUT" "span_1" "span id shown"
 assert_contains "$OUT" "hello" "user input shown"
@@ -240,7 +240,7 @@ make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hi"}' "$RID" "sess_test" "span_1")" \
   "$(fixture_event "message" "assistant" '{"content":"cached reply","finish_reason":"stop"}' \
     "$RID" "sess_test" "span_1" \
-    '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20},"latency_ms":50}')"
+    '{"message_id":"msg_1","model":"deepseek-v4-flash","usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20},"latency_ms":50}')"
 OUT=$("$TRACE" "$RID")
 assert_contains "$OUT" "80 cached" "per-span cache hit shown"
 assert_contains "$OUT" "TOTAL" "total line present"
@@ -255,7 +255,7 @@ make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hi"}' "$RID" "sess_test" "span_1")" \
   "$(fixture_event "message" "assistant" '{"content":"no cache","finish_reason":"stop"}' \
     "$RID" "sess_test" "span_1" \
-    '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":50,"completion_tokens":10,"total_tokens":60},"latency_ms":100}')"
+    '{"message_id":"msg_1","model":"deepseek-v4-flash","usage":{"prompt_tokens":50,"completion_tokens":10,"total_tokens":60},"latency_ms":100}')"
 OUT=$("$TRACE" "$RID")
 CACHED_IN_OUTPUT=no
 [[ "$OUT" == *"cached"* ]] && CACHED_IN_OUTPUT=yes

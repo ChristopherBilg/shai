@@ -86,7 +86,7 @@ assert_eq "$RC" "2" "pr_reviewer: exit 2 on leading-zero PR number"
 
 # --- success case: valid assistant response ---
 desc "happy path"
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"Review complete."},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"Review complete."},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_capture_curl_stub 200
 
 OUT=$("$DIR/workflows/pr_reviewer/run.sh" owner/repo 42 2>&1)

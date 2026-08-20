@@ -13,7 +13,7 @@ write_gh_stub
 TMP="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP")
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # shellcheck disable=SC2030,SC2031  # deliberate: each block scopes SHAI_HOME/DIR to its own subshell for test isolation
@@ -34,7 +34,7 @@ printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content
 TMP2="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP2")
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"llm reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"llm reply"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this test case
@@ -99,7 +99,7 @@ assert_contains "$FERR" "something broke" "wf_fail: message on stderr"
 TMP_LEDGER1="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP_LEDGER1")
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this test case
@@ -146,7 +146,7 @@ printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content
 TMP_LEDGER2="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP_LEDGER2")
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this test case
