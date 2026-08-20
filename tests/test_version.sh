@@ -23,11 +23,11 @@ assert_eq "$out" "dev" "shai-version: prints dev when no VERSION and git fails"
 # Case 3: exit 0 even when every resolution source fails (git still stubbed to fail)
 assert_exit 0 "shai-version: exits 0 on the dev fallback" -- "$DIR/shai-version"
 
-# Case 4: does not require ANTHROPIC_API_KEY
+# Case 4: does not require DEEPSEEK_API_KEY
 echo "v1.0.0" >"$DIR/VERSION"
-out=$(ANTHROPIC_API_KEY="" "$DIR/shai-version" 2>/dev/null)
+out=$(DEEPSEEK_API_KEY="" "$DIR/shai-version" 2>/dev/null)
 rm -f "$DIR/VERSION"
-assert_eq "$out" "v1.0.0" "shai-version: works without ANTHROPIC_API_KEY"
+assert_eq "$out" "v1.0.0" "shai-version: works without DEEPSEEK_API_KEY"
 
 # Case 5: empty VERSION file falls through to the dev fallback
 make_stub_bin

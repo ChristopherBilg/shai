@@ -1,5 +1,5 @@
 #!/bin/bash
-# shai-dispatch — run tool_use blocks from the latest assistant event; emit tool_result events
+# shai-dispatch — run tool_calls from the latest assistant event; emit tool_result events
 # Usage: cat latest.json | shai-dispatch
 # Reads: the latest assistant event JSON on stdin; $SHAI_HOME/policy.json for permission rules;
 #        SHAI_POLICY_OVERLAY (optional path to overlay policy — overlay rules are checked
@@ -200,7 +200,7 @@ while IFS= read -r block; do
     is_error=true
     jq -nc --arg id "$tool_id" --arg content "$raw" --argjson is_error true '
       {type:"tool_result", source:"tool",
-       payload:{tool_use_id:$id, content:$content, is_error:$is_error}}'
+       payload:{tool_call_id:$id, content:$content, is_error:$is_error}}'
     continue
   fi
   skip_run=false
@@ -221,12 +221,13 @@ while IFS= read -r block; do
     | (if ($s0 | length) > 0 then $s0 else "tool" end) as $safe_src
     | ($content | gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")) as $safe
     | {type:"tool_result", source:"tool",
-       payload:{tool_use_id:$id,
+       payload:{tool_call_id:$id,
                 content:("<external_data source=\"" + $safe_src + "\">\n" + $safe + "\n</external_data>"),
                 is_error:$is_error}}'
 done < <(jq -c '
   select(.type=="message" and .source=="assistant")
-  | .payload.content[]? | select(.type=="tool_use")
+  | .payload.tool_calls[]?
+  | {name: .function.name, id: .id, input: (.function.arguments // "{}" | try fromjson catch {})}
 ')
 
 [ "$tool_calls" -gt 0 ] && exit 1 || exit 0

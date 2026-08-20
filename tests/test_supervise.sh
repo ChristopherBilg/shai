@@ -122,9 +122,9 @@ assert_contains "$ERR" "must not contain / or .." "validate: path traversal erro
 assert_exit 1 "validate: uninstall rejects / in script name" -- "$DIR/shai-supervise" uninstall "foo/bar"
 assert_exit 1 "validate: start rejects .. in script name" -- "$DIR/shai-supervise" start "foo..bar"
 
-# --- validation: install missing ANTHROPIC_API_KEY ---
+# --- validation: install missing DEEPSEEK_API_KEY ---
 (
-  unset ANTHROPIC_API_KEY
+  unset DEEPSEEK_API_KEY
   assert_exit 1 "validate: install missing API key" -- "$DIR/shai-supervise" install shai-print
   exit "$FAILED"
 ) || FAILED=1
@@ -144,7 +144,7 @@ assert_eq "$([ -f "$TIMER" ] && echo yes || echo no)" "yes" "install: .timer fil
 assert_contains "$(cat "$SERVICE")" "Type=oneshot" "install: service Type=oneshot"
 assert_contains "$(cat "$SERVICE")" "ExecStart=" "install: service has ExecStart"
 assert_contains "$(cat "$SERVICE")" "shai-print" "install: ExecStart references script"
-assert_contains "$(cat "$SERVICE")" "ANTHROPIC_API_KEY=" "install: service has API key"
+assert_contains "$(cat "$SERVICE")" "DEEPSEEK_API_KEY=" "install: service has API key"
 assert_contains "$(cat "$SERVICE")" "SHAI_HOME=" "install: service has SHAI_HOME"
 assert_eq "$(stat -c '%a' "$SERVICE")" "600" "install: service file is chmod 600 (contains secret)"
 

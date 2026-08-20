@@ -2,7 +2,7 @@
 # shai-tools — scan, validate, and aggregate tool plugin directories
 # Usage: shai-tools [tools-dir]   (default: $DIR/tools)
 # Reads: tools/*/tool.json and checks tools/*/run.sh for each plugin directory
-# Writes: aggregated Anthropic tool array (JSON) to stdout
+# Writes: aggregated Deepseek tool array (JSON) to stdout
 # Exit: 0 on success, 1 on validation failure
 set -euo pipefail
 
@@ -40,7 +40,7 @@ for tool_dir in "${DIRS[@]}"; do
     exit 1
   fi
 
-  for field in name description input_schema; do
+  for field in name description parameters; do
     if [ "$(jq --arg f "$field" 'has($f)' "$tool_json")" != "true" ]; then
       printf 'error: %s/tool.json missing required field: %s\n' "$dir_name" "$field" >&2
       exit 1
@@ -69,7 +69,7 @@ for tool_dir in "${DIRS[@]}"; do
     exit 1
   fi
 
-  TOOLS=$(printf '%s' "$TOOLS" | jq --argjson tool "$(jq 'del(.capabilities)' "$tool_json")" '. + [$tool]')
+  TOOLS=$(printf '%s' "$TOOLS" | jq --argjson tool "$(jq 'del(.capabilities)' "$tool_json")" '. + [{type:"function", function:$tool}]')
 done
 
 printf '%s' "$TOOLS"

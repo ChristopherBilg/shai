@@ -16,7 +16,7 @@
       ]
     }
   },
-  "input_schema": {
+  "parameters": {
     "type": "object",
     "properties": {
       "action": {

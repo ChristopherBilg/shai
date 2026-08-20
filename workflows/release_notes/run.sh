@@ -1,7 +1,7 @@
 #!/bin/bash
 # release_notes/run.sh — generate categorized release notes from merged PRs between two refs
 # Usage: workflows/release_notes/run.sh <repo> <base> [head]
-# Reads: ANTHROPIC_API_KEY from environment; prompts/release_notes.txt for LLM instructions
+# Reads: DEEPSEEK_API_KEY from environment; prompts/release_notes.txt for LLM instructions
 # Writes: markdown changelog to stdout; ephemeral session log (prunable)
 # Exit: 0 on success (including no-change early exits); 1 on failure; 2 on usage error
 set -euo pipefail
@@ -96,7 +96,7 @@ SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE
 
 if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
   printf '# Release Notes - %s..%s\n\n' "$BASE" "$HEAD"
-  printf '%s' "$RESULT" | jq -r '.payload.content[] | select(.type == "text") | .text'
+  printf '%s' "$RESULT" | jq -r '.payload.content // empty'
   if [ -n "$CONTRIBUTORS" ]; then
     printf '\n## Contributors\n\n%s\n' "$CONTRIBUTORS"
   fi
