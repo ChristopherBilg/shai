@@ -58,6 +58,10 @@ printf '%s' "$content" >"$path" || {
   printf 'cannot write to %s' "$path"
   exit 1
 }
+# Capture the byte count before any chmod. Counting the content we just wrote (rather than
+# reading the file back) keeps the confirmation correct even when a requested mode like 000
+# makes the file owner-unreadable, and avoids a spurious read error.
+size=$(printf '%s' "$content" | wc -c)
 # A requested mode that cannot be applied is an error, not a warning: the caller asked for it
 # explicitly (usually to make the file runnable), so reporting plain success would hide a file
 # that does not do what was asked. The content is already on disk, so say that too.
@@ -68,11 +72,11 @@ mode_note=""
 if [ -n "$want_mode" ]; then
   chmod "$want_mode" "$path" 2>/dev/null || {
     printf 'wrote %d bytes to %s but could not apply mode %s' \
-      "$(wc -c <"$path")" "$path" "$want_mode"
+      "$size" "$path" "$want_mode"
     exit 1
   }
   mode_note=" (mode $want_mode)"
 elif [ -n "$mode" ] && ! chmod "$mode" "$path" 2>/dev/null; then
   mode_note=" (warning: could not restore mode $mode; permission bits may have changed)"
 fi
-printf 'Wrote %d bytes to %s%s' "$(wc -c <"$path")" "$path" "$mode_note"
+printf 'Wrote %d bytes to %s%s' "$size" "$path" "$mode_note"
