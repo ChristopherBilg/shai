@@ -7,6 +7,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-dispatch: check_policy"
 
+# The permission gate must be hermetic: a workflow running the suite exports
+# SHAI_POLICY_OVERLAY, and an inherited overlay supersedes base rules (including
+# deny), flipping deny assertions to allow. lib.sh unsets it centrally; this canary
+# fails loudly if the leak ever re-appears.
+if [ -n "${SHAI_POLICY_OVERLAY:-}" ]; then
+  echo "FATAL: SHAI_POLICY_OVERLAY is set on entry ($SHAI_POLICY_OVERLAY); refusing to run with a leaked overlay" >&2
+  exit 1
+fi
+
 # Derive read-only tool names from tool.json instead of hardcoding
 mapfile -t READ_ONLY_TOOLS < <(
   for tj in "$DIR"/tools/*/tool.json; do
@@ -146,6 +155,21 @@ RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{}')
 assert_eq "$RES" "allow" "no rule matches, no default: read-only → allow"
 RES=$(SHAI_HOME="$PDIR" run_check_policy "some_write_tool" '{}')
 assert_eq "$RES" "prompt" "no rule matches, no default: non-read-only → prompt"
+
+# --- hermeticity: the overlay is pinned per call, never inherited from the caller ---
+# A workflow running the suite exports SHAI_POLICY_OVERLAY, and overlay rules are
+# checked before base rules and supersede them, including deny — so a leaked overlay
+# flips the deny assertions above to allow. lib.sh unsets it centrally; these two
+# pins cover the overlay-supersedes-deny behaviour on purpose instead of by accident.
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"gh","action":"deny"}]}')
+RES=$(SHAI_HOME="$PDIR" SHAI_POLICY_OVERLAY="" run_check_policy "gh" '{}')
+assert_eq "$RES" "deny" "hermetic: no overlay (pinned) → base deny still denies"
+
+OVERLAY=$(mktemp)
+_CLEANUP_DIRS+=("$OVERLAY")
+printf '{"rules":[{"tool":"gh","action":"allow"}]}' >"$OVERLAY"
+RES=$(SHAI_HOME="$PDIR" SHAI_POLICY_OVERLAY="$OVERLAY" run_check_policy "gh" '{}')
+assert_eq "$RES" "allow" "hermetic: fixture overlay (pinned) allow supersedes base deny"
 
 # --- overlay: rules checked before base, base still applies for unmatched tools ---
 

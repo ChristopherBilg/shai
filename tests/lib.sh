@@ -138,3 +138,14 @@ fixture_event() {
 }
 
 export DEEPSEEK_API_KEY="test-key"
+
+# Suites must not inherit the caller's shai environment: a workflow exports
+# SHAI_POLICY_OVERLAY, and an inherited overlay supersedes fixture deny rules
+# (check_policy in shai-dispatch consults the overlay before the base policy), so a
+# leaked overlay flips permission-gate deny assertions to allow. Neutralize every
+# shai input centrally and give each suite a fresh SHAI_HOME; suites that want a
+# specific value set it per call, as test_policy.sh does for SHAI_HOME.
+unset SHAI_POLICY_OVERLAY SHAI_RETRY_ACTIVE SHAI_TOOLS_DIR SHAI_SPAN_ID SHAI_RUN_ID SHAI_MAX_CONTEXT_BYTES
+export SHAI_HOME
+SHAI_HOME=$(mktemp -d)
+_CLEANUP_DIRS+=("$SHAI_HOME")
