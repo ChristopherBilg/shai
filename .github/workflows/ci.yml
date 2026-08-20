@@ -53,11 +53,10 @@ jobs:
           key: lint-tools-${{ hashFiles('tests/lint-tools.sha256') }}
       - name: Install pinned lint tools
         run: ./tests/install-lint-tools.sh
-      # If you change these globs, also update README.md, CLAUDE.md, and ci.json.example
-      - name: ShellCheck all scripts
-        run: ./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
-      - name: shfmt diff check
-        run: ./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
+      # The lint target lives in tests/lint.sh (derived from git), not in a glob spelled out
+      # here: four hand-maintained copies of it drifted and left tools/*/run.sh unlinted (#81).
+      - name: ShellCheck + shfmt (tests/lint.sh)
+        run: ./tests/lint.sh
 
   conventions:
     runs-on: ubuntu-latest

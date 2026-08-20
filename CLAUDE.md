@@ -51,8 +51,9 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 
 # Lint / format — pinned tools downloaded into ./bin (gitignored):
 ./tests/install-lint-tools.sh
-./bin/shellcheck install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh
-./bin/shfmt -d install.sh shai-* lib/*.sh workflows/*/run.sh tests/*.sh  # -w to rewrite in place
+./tests/lint.sh            # ShellCheck + shfmt -d over the whole lint target (what CI runs)
+./tests/lint.sh --list     # print the target: the file list, derived from git
+./tests/lint.sh --write    # same target, but shfmt -w rewrites in place
 ```
 
 Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
@@ -505,7 +506,8 @@ are automatically queued for resolution. Install via
 
 - Every runtime script (`shai-repl`, `shai-*`, and each `tools/*/run.sh`) starts with `#!/bin/bash` +
   `set -euo pipefail`. `tests/conventions.sh` enforces this along with the executable bit, valid
-  `tools/*/tool.json`, no trailing whitespace, and a final newline. Run it before committing.
+  `tools/*/tool.json`, membership in the lint target, no trailing whitespace, and a final
+  newline. Run it before committing.
 - **`set -euo pipefail` is load-bearing, not just hygiene.** `shai-dispatch` signals "a tool ran"
   by exiting 1, and the re-eval loop reads that through `| shai-stamp`. Only `pipefail` carries a
   non-rightmost exit status out of a pipeline — without it the loop silently ends after one pass.
@@ -522,6 +524,15 @@ are automatically queued for resolution. Install via
   `.shellcheckrc`.
 - Formatting is 2-space indent with indented `case` branches; enforced by `shfmt` and
   `.editorconfig`.
+- **There is exactly one lint target, `tests/lint.sh`.** It derives its file list fail-closed from
+  git — every tracked `*.sh` plus every tracked file whose first line is `#!/bin/bash` (the
+  extensionless `shai-*` scripts) — and runs ShellCheck plus `shfmt -d` over it; the `lint` CI job,
+  `ci.json.example`, and the docs all invoke that script instead of repeating a glob. The four
+  hand-maintained copies it replaced had drifted: none of them included `tools/*/run.sh`, so the
+  ten tool plugins — the execution surface for every model-requested action — were never linted
+  (#81). `tests/conventions.sh` asserts the inverse relation too: every runtime script it checks
+  must appear in `./tests/lint.sh --list`, so a new runtime script cannot be invisible to the
+  linter. Add a tracked shell script anywhere and it is linted automatically — no list to widen.
 - **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
   undocumented **or of an unrecognized type**. This fail-closed design is intentional and should not be
