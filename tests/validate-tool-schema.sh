@@ -44,7 +44,7 @@ for i in $(seq 0 $((count - 1))); do
     ok "$name: type is function"
   fi
 
-  # name exists and matches Anthropic's pattern
+  # name exists and matches the tool-name pattern
   if [ -z "$name" ]; then
     note "tool[$i]: missing name"
     continue
