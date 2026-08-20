@@ -331,6 +331,23 @@ to run. That config deliberately stays user-owned under `$SHAI_HOME` and is neve
 cloned repo — `command` runs through `bash -c`, so checkout-local config would be arbitrary code
 execution from repo content.
 
+**The `ci` tool** — the workflow's local verification loop (see `issue_worker`, `pr_reviewer`,
+`review_resolver`). `action: list` prints the configured checks, `action: run` executes one via
+`timeout … bash -c` in the repo (or in the `cwd` the tool was given). **Environment isolation is
+part of the contract**: a check runs project code, so it must not observe the agent's own state.
+Every exported `SHAI_*` variable (`SHAI_HOME`, `SHAI_RUN_ID`, `SHAI_SPAN_ID`,
+`SHAI_PARENT_SPAN_ID`, `SHAI_POLICY_OVERLAY`, `SHAI_TOOLS_DIR`, `SHAI_RETRY_ACTIVE`,
+`SHAI_SESSION_ID`, …) and the API keys (`DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`) are scrubbed
+from the check's environment; `PATH`, `HOME`, `LANG`, and `TERM` survive (`env -i` is the wrong
+instrument). The scrub is a prefix sweep over the exported names, so a newly exported `SHAI_*`
+variable cannot be forgotten by a stale deny list. A per-check `"env"` map in `ci.json`
+re-injects variables by literal value for the rare check that genuinely needs one. The scrub
+is scoped to `SHAI_*` names plus those two keys: any other credential the agent exports (e.g.
+`GITHUB_TOKEN`) still reaches the check. This is what
+makes a local `ci` run trustworthy: `cwd` already points the tool at a `/tmp` clone, and the
+environment now points at the checkout too — repository-under-test and environment-under-test
+agree.
+
 **Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
 Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:
 `allow` (execute silently), `prompt` (interactive Y/N on `/dev/tty`; non-interactive → fail
