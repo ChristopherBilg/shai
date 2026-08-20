@@ -27,14 +27,14 @@ SID="sess_20260811T090000_aabb"
   fixture_event "message" "system" '{"text":"sys"}' "run_1" "$SID" "span_1"
   fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
   fixture_event "message" "assistant" \
-    '{"content":[{"type":"text","text":"a"}],"stop_reason":"end_turn"}' \
+    '{"content":"a","finish_reason":"stop"}' \
     "run_1" "$SID" "span_1" \
-    '{"message_id":"m","model":"m","usage":{"input_tokens":100,"output_tokens":50},"latency_ms":1000}'
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":1000}'
   fixture_event "message" "user" '{"text":"q2"}' "run_2" "$SID" "span_1"
   fixture_event "message" "assistant" \
-    '{"content":[{"type":"text","text":"a2"}],"stop_reason":"end_turn"}' \
+    '{"content":"a2","finish_reason":"stop"}' \
     "run_2" "$SID" "span_1" \
-    '{"message_id":"m2","model":"m","usage":{"input_tokens":200,"output_tokens":100},"latency_ms":2000}'
+    '{"message_id":"m2","model":"m","usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300},"latency_ms":2000}'
 } >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$STATS" --json)
 assert_eq "$(printf '%s' "$OUT" | jq '.sessions')" "1" "1 session"
@@ -48,7 +48,7 @@ setup_stats
 SID="sess_20260811T090000_aabb"
 {
   fixture_event "message" "user" '{"text":"q"}' "run_ok" "$SID" "span_1"
-  fixture_event "message" "assistant" '{"content":[{"type":"text","text":"a"}],"stop_reason":"end_turn"}' "run_ok" "$SID" "span_1"
+  fixture_event "message" "assistant" '{"content":"a","finish_reason":"stop"}' "run_ok" "$SID" "span_1"
   fixture_event "message" "user" '{"text":"q2"}' "run_err" "$SID" "span_1"
   fixture_event "error" "system" '{"text":"fail"}' "run_err" "$SID" "span_1"
 } >"$SHAI_HOME/sessions/$SID.jsonl"
@@ -62,11 +62,11 @@ SID="sess_20260811T090000_aabb"
 {
   fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
   fixture_event "message" "assistant" \
-    '{"content":[{"type":"tool_use","id":"tu_1","name":"print_file","input":{}},{"type":"tool_use","id":"tu_2","name":"list_directory","input":{}}],"stop_reason":"tool_use"}' \
+    '{"content":null,"tool_calls":[{"id":"tu_1","type":"function","function":{"name":"print_file","arguments":"{}"}},{"id":"tu_2","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}' \
     "run_1" "$SID" "span_1"
   fixture_event "message" "user" '{"text":"q2"}' "run_2" "$SID" "span_1"
   fixture_event "message" "assistant" \
-    '{"content":[{"type":"tool_use","id":"tu_3","name":"print_file","input":{}}],"stop_reason":"tool_use"}' \
+    '{"content":null,"tool_calls":[{"id":"tu_3","type":"function","function":{"name":"print_file","arguments":"{}"}}],"finish_reason":"tool_calls"}' \
     "run_2" "$SID" "span_1"
 } >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$STATS" --json | jq '.tools')
@@ -79,11 +79,11 @@ S1="sess_20260810T090000_aabb"
 S2="sess_20260811T090000_ccdd"
 {
   fixture_event "message" "user" '{"text":"a"}' "run_1" "$S1" "span_1"
-  fixture_event "message" "assistant" '{"content":[{"type":"text","text":"a"}],"stop_reason":"end_turn"}' "run_1" "$S1" "span_1"
+  fixture_event "message" "assistant" '{"content":"a","finish_reason":"stop"}' "run_1" "$S1" "span_1"
 } >"$SHAI_HOME/sessions/$S1.jsonl"
 {
   fixture_event "message" "user" '{"text":"b"}' "run_2" "$S2" "span_1"
-  fixture_event "message" "assistant" '{"content":[{"type":"text","text":"b"}],"stop_reason":"end_turn"}' "run_2" "$S2" "span_1"
+  fixture_event "message" "assistant" '{"content":"b","finish_reason":"stop"}' "run_2" "$S2" "span_1"
 } >"$SHAI_HOME/sessions/$S2.jsonl"
 OUT=$("$STATS" --session "$S1" --json)
 assert_eq "$(printf '%s' "$OUT" | jq '.sessions')" "1" "scoped to 1"
@@ -124,13 +124,75 @@ setup_stats
 SID="sess_20260811T090000_aabb"
 {
   fixture_event "message" "user" '{"text":"hi"}' "run_1" "$SID" "span_1"
-  fixture_event "message" "assistant" '{"content":[{"type":"text","text":"yo"}],"stop_reason":"end_turn"}' "run_1" "$SID" "span_1" \
-    '{"message_id":"m","model":"m","usage":{"input_tokens":10,"output_tokens":5},"latency_ms":100}'
+  fixture_event "message" "assistant" '{"content":"yo","finish_reason":"stop"}' "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15},"latency_ms":100}'
 } >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$STATS")
 assert_contains "$OUT" "Sessions:" "has sessions line"
 assert_contains "$OUT" "Runs:" "has runs line"
 assert_contains "$OUT" "Tokens:" "has tokens section"
+
+desc "cache tokens: --json includes cache hit/miss"
+setup_stats
+SID="sess_20260811T090000_cache"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20},"latency_ms":100}'
+  fixture_event "message" "user" '{"text":"q2"}' "run_2" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a2","finish_reason":"stop"}' \
+    "run_2" "$SID" "span_1" \
+    '{"message_id":"m2","model":"m","usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300,"prompt_cache_hit_tokens":150,"prompt_cache_miss_tokens":50},"latency_ms":200}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.cache.hit')" "230" "cache hit tokens aggregated"
+assert_eq "$(printf '%s' "$OUT" | jq '.cache.miss')" "70" "cache miss tokens aggregated"
+
+desc "cache tokens: human output shows cache when nonzero"
+setup_stats
+SID="sess_20260811T090000_cacheh"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":20},"latency_ms":100}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS")
+assert_contains "$OUT" "cache hit:" "human output shows cache hit"
+assert_contains "$OUT" "cache miss:" "human output shows cache miss"
+
+desc "cache tokens: human output omits cache when zero"
+setup_stats
+SID="sess_20260811T090000_nocacheh"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":100}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS")
+CACHED_IN_OUTPUT=no
+[[ "$OUT" == *"cache"* ]] && CACHED_IN_OUTPUT=yes
+assert_eq "$CACHED_IN_OUTPUT" "no" "no cache lines when fields absent"
+
+desc "cache tokens: --json has zeroes when no cache fields"
+setup_stats
+SID="sess_20260811T090000_nocachej"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":100}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.cache.hit')" "0" "cache hit 0 when absent"
+assert_eq "$(printf '%s' "$OUT" | jq '.cache.miss')" "0" "cache miss 0 when absent"
 
 desc "invalid args: exit 1"
 assert_exit 1 "unknown flag" -- "$STATS" --bogus

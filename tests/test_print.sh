@@ -9,27 +9,28 @@ echo "shai-print"
 
 # --- ported from tests/tests.sh:203-215 (assistant text, error line, default hides
 #     tool_use/tool_result, --debug shows both) ---
-NOTOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn"}}'
+NOTOOL='{"type":"message","source":"assistant","payload":{"content":"hi","finish_reason":"stop"}}'
 POUT=$(echo "$NOTOOL" | "$DIR/shai-print")
 assert_eq "$POUT" "hi" "print: assistant text"
 EOUT=$(echo '{"type":"error","source":"system","payload":{"text":"boom"}}' | "$DIR/shai-print")
 assert_eq "$EOUT" "Error: boom" "print: error line"
-TOOL_MSG='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t1","name":"gh","input":{"args":["pr","view","123"]}}],"stop_reason":"tool_use"}}'
+TOOL_MSG='{"type":"message","source":"assistant","payload":{"content":null,"tool_calls":[{"id":"t1","type":"function","function":{"name":"gh","arguments":"{\"args\":[\"pr\",\"view\",\"123\"]}"}}],"finish_reason":"tool_calls"}}'
 assert_eq "$(echo "$TOOL_MSG" | "$DIR/shai-print")" "" "print: default hides tool_use"
 TDEBUG=$(echo "$TOOL_MSG" | "$DIR/shai-print" --debug)
 assert_contains "$TDEBUG" '[tool_use: gh' "print: --debug shows tool_use"
-TOOL_RES='{"type":"tool_result","source":"tool","payload":{"tool_use_id":"t1","content":"result data","is_error":false}}'
+TOOL_RES='{"type":"tool_result","source":"tool","payload":{"tool_call_id":"t1","content":"result data","is_error":false}}'
 assert_eq "$(echo "$TOOL_RES" | "$DIR/shai-print")" "" "print: default hides tool_result"
 TRDEBUG=$(echo "$TOOL_RES" | "$DIR/shai-print" --debug)
 assert_contains "$TRDEBUG" '[tool_result:' "print: --debug shows tool_result"
 
-# new: multiple text blocks printed in order
-MULTITXT='{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"first"},{"type":"text","text":"second"}],"stop_reason":"end_turn"}}'
-MTOUT=$(echo "$MULTITXT" | "$DIR/shai-print")
-assert_eq "$MTOUT" "$(printf 'first\nsecond')" "print: multiple text blocks printed in order"
+# new: content is a single string now — Deepseek has no multi-text-block concept, so there is
+# nothing analogous to the old "multiple text blocks in one message" case to port.
+SINGLETXT='{"type":"message","source":"assistant","payload":{"content":"first","finish_reason":"stop"}}'
+STOUT=$(echo "$SINGLETXT" | "$DIR/shai-print")
+assert_eq "$STOUT" "first" "print: single string content printed"
 
 # new: under --debug, text precedes the tool_use annotation for the same message
-MIX='{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"thinking"},{"type":"tool_use","id":"t1","name":"gh","input":{"args":["pr","view","1"]}}],"stop_reason":"tool_use"}}'
+MIX='{"type":"message","source":"assistant","payload":{"content":"thinking","tool_calls":[{"id":"t1","type":"function","function":{"name":"gh","arguments":"{\"args\":[\"pr\",\"view\",\"1\"]}"}}],"finish_reason":"tool_calls"}}'
 MIXOUT=$(echo "$MIX" | "$DIR/shai-print" --debug)
 assert_eq "$(printf '%s' "$MIXOUT" | head -n1)" "thinking" "print: --debug prints text before tool_use"
 assert_contains "$MIXOUT" '[tool_use: gh' "print: --debug shows the tool_use annotation"
@@ -50,7 +51,7 @@ assert_contains "$MIXDISP" '⏺ gh(args: ["pr","view","1"])' "print: --dispatche
 assert_eq "$(echo "$TOOL_RES" | "$DIR/shai-print" --dispatches)" "" "print: --dispatches hides tool_result"
 
 # new: --dispatches handles empty tool input
-EMPTY_TOOL='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"t2","name":"list_directory","input":{}}],"stop_reason":"tool_use"}}'
+EMPTY_TOOL='{"type":"message","source":"assistant","payload":{"content":null,"tool_calls":[{"id":"t2","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}}'
 assert_eq "$(echo "$EMPTY_TOOL" | "$DIR/shai-print" --dispatches)" "⏺ list_directory()" "print: --dispatches handles empty input"
 
 finish

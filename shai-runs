@@ -81,13 +81,13 @@ run_metrics() {
       if length == 0 then "incomplete"
       else .[-1] as $last |
         if $last.type == "message" and $last.source == "assistant" then
-          if [($last.payload.content // [])[] | select(.type == "tool_use")] | length > 0
+          if (($last.payload.tool_calls // []) | length) > 0
           then "incomplete" else "complete" end
         elif $last.type == "error" then "error"
         else "incomplete" end
       end
     ),
-    tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.input_tokens // 0) + (.output_tokens // 0))] | add // 0)
+    tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.prompt_tokens // 0) + (.completion_tokens // 0))] | add // 0)
   }'
 }
 
@@ -113,12 +113,12 @@ if [ -n "$SESSION" ]; then
           tools: ([.[] | select(.type == "tool_result")] | length),
           status: (.[-1] as $last |
             if $last.type == "message" and $last.source == "assistant" then
-              if [($last.payload.content // [])[] | select(.type == "tool_use")] | length > 0
+              if (($last.payload.tool_calls // []) | length) > 0
               then "incomplete" else "complete" end
             elif $last.type == "error" then "error"
             else "incomplete" end
           ),
-          tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.input_tokens // 0) + (.output_tokens // 0))] | add // 0)
+          tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.prompt_tokens // 0) + (.completion_tokens // 0))] | add // 0)
         }})
       | .[] | {run_id, metrics: (.metrics | tojson)}
     ' "$session_file" 2>/dev/null); then

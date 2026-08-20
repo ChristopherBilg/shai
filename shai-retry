@@ -165,7 +165,7 @@ run_eval() {
 # classify the true tail of the session log (the latest file is not updated by shai-dispatch)
 CLASS=$(tail -n 1 "$SESSION_LOG" | jq -r '
   if .type=="message" and .source=="assistant" then
-    (if ([.payload.content[]? | select(.type=="tool_use")] | length) > 0 then "DISPATCH" else "DONE" end)
+    (if ((.payload.tool_calls // []) | length) > 0 then "DISPATCH" else "DONE" end)
   elif .type=="error" then "EVAL"
   elif .type=="tool_result" then "EVAL"
   elif .type=="message" and .source=="user" then "EVAL"

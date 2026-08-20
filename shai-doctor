@@ -108,7 +108,7 @@ printf '\nConditional tools:\n' >&2
 for t in "${COND_TOOLS[@]}"; do check_tool "$t" conditional; done
 
 printf '\nEnvironment:\n' >&2
-check_env ANTHROPIC_API_KEY core
+check_env DEEPSEEK_API_KEY core
 
 # Derive additional deps from tool plugins
 if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
