@@ -551,6 +551,17 @@ are automatically queued for resolution. Install via
   To add a new file type: add a classification branch and its check to `tests/docs.sh` (with a
   fixture case in `tests/test_docs.sh`), or add the path to the checker's `EXEMPT` array with a
   reason. Never silence the check by loosening a rule.
+- **Workflow-created GitHub labels are created idempotently.** Every prompt that ensures a
+  label exists uses one form — `gh label create <name> -R {{REPO}} --description "..."
+  --color <hex> --force` — and `tests/conventions.sh` fails any `gh label create` in
+  `prompts/*.txt` that omits `--force`, so a run on an already-onboarded repo never fails
+  with `label ... already exists` and never leaves a label with a random color or no
+  description (#86). Canonical workflow labels:
+  - `shai-suggestion` — `0E8A16` — "Automated improvement suggestion from shai workflows"
+    (created on the shai repo itself, `-R {{SHAI_REPO}}`)
+  - `shai-review-dispatcher` — `5319E7` — "PRs awaiting automated review"
+  - `shai-resolve-dispatcher` — `1D76DB` — "PRs with review comments awaiting resolution"
+  New workflows copy these names/colors/descriptions rather than inventing a fourth variant.
 
 ## Testing model
 

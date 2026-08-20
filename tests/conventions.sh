@@ -83,6 +83,19 @@ while IFS= read -r f; do
   if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then note "no final newline: $f"; fi
 done < <(git ls-files)
 
+# 7. Every `gh label create` in prompts/*.txt carries --force: without it a workflow run on an
+# already-onboarded repo fails with "label ... already exists" on every run after the first,
+# and the issue_worker variant leaves labels with no description and a random color (#86).
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  grep -q 'gh label create' "$f" || continue
+  if grep 'gh label create' "$f" | grep -qv -- '--force'; then
+    note "gh label create without --force: $f"
+  else
+    ok "gh label create uses --force: $f"
+  fi
+done < <(git ls-files 'prompts/*.txt')
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo -e "${GREEN}CONVENTIONS OK${NC}"
