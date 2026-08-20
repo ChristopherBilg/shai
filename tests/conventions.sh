@@ -45,6 +45,7 @@ mapfile -t EXEC_TARGETS < <(
   {
     printf '%s\n' "${RUNTIME[@]}"
     echo "tests/run.sh"
+    echo "tests/lint.sh"
     git ls-files 'tests/test_*.sh'
   } | sort -u
 )
@@ -62,14 +63,18 @@ done
 # category of runtime script cannot be held to these conventions while staying invisible to
 # the linters, which is exactly how tools/*/run.sh went unlinted (see #81).
 declare -A LINTED=()
-while IFS= read -r f; do LINTED["$f"]=1; done < <(bash tests/lint.sh --list)
-for f in "${RUNTIME[@]}"; do
-  if [ -n "${LINTED[$f]:-}" ]; then
-    ok "in the lint target: $f"
-  else
-    note "not in the lint target — add its glob to tests/lint.sh: $f"
-  fi
-done
+if LINT_LIST="$(bash tests/lint.sh --list)"; then
+  while IFS= read -r f; do LINTED["$f"]=1; done <<<"$LINT_LIST"
+  for f in "${RUNTIME[@]}"; do
+    if [ -n "${LINTED[$f]:-}" ]; then
+      ok "in the lint target: $f"
+    else
+      note "not in the lint target: $f"
+    fi
+  done
+else
+  note "tests/lint.sh --list failed — cannot verify runtime scripts are in the lint target"
+fi
 
 # 6. Trailing whitespace + final newline on tracked text files
 while IFS= read -r f; do
