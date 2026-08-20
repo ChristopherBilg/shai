@@ -129,9 +129,9 @@ builds trust in the rest of the findings.
 6. Read source files around every changed area before forming any comments.
 7. Post a GitHub review with inline comments using `gh api`:
    ```
-   gh api repos/{{REPO}}/pulls/{{NUMBER}}/reviews --method POST --input /tmp/review.json
+   gh api repos/{{REPO}}/pulls/{{NUMBER}}/reviews --method POST --input /tmp/pr-review-XXXXX/review-{{NUMBER}}.json
    ```
-   where `/tmp/review.json` contains:
+   where `/tmp/pr-review-XXXXX/review-{{NUMBER}}.json` contains:
    ```json
    {
      "event": "COMMENT",
@@ -142,6 +142,12 @@ builds trust in the rest of the findings.
    ```
    Use `COMMENT` as the event — not `APPROVE` or `REQUEST_CHANGES`. Verdicts go in the
    summary comment below. Write the JSON to a temp file first, then pass it via `--input`.
+   Stage the payload inside the unique clone directory from step 4 (`/tmp/pr-review-XXXXX`,
+   the same random suffix), naming the file `review-{{NUMBER}}.json` — the filename must
+   contain the PR number and the clone's random suffix so concurrent or leftover runs can
+   never share it. Never use a fixed path like `/tmp/review.json`: a stale or
+   concurrently-written payload would silently be posted to the wrong PR. Before the POST,
+   re-read the file with `print_file` and confirm it is the payload you just wrote for this PR.
 8. Post a separate summary comment with your verdict:
    `gh pr comment {{NUMBER}} -R {{REPO}} --body "..."`
 
