@@ -98,7 +98,15 @@ verification loop: keep each change small, because every unverified push spends 
 fix-and-push cycles below. Never claim you ran a check you did not run.
 Reply in the thread pointing at the commit (short SHA), then resolve the thread.
 
-**followup** — `gh issue create -R {{REPO}} --title "..." --body "..." --assignee @me`.
+**followup** — classify priority first:
+- **P0** — silent correctness hazard: wrong results with no visible indication
+- **P1** — significant reliability gap: incorrect behavior, narrower or less silent
+- **P2** — real improvement: would help but not causing wrong results today
+- **P3** — minor polish: documentation wording, small inconsistencies
+
+Then create the issue:
+`gh issue create -R {{REPO}} --title "..." --body "..." --assignee @me --label <priority>`
+where `<priority>` is one of `P0`, `P1`, `P2`, `P3`.
 The body must link the PR and quote the originating review comment plus the relevant code.
 Do **not** add the `shai-issue-dispatcher` label — follow-ups require manual triage. Reply in
 the thread with the new issue number, then resolve the thread.

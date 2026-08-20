@@ -24,8 +24,16 @@ Categories (use as title prefix):
    Create the label (idempotent):
    `gh label create shai-suggestion -R {{SHAI_REPO}} --description "Automated improvement suggestion from shai workflows" --color 0E8A16 --force`
 
+   Then classify priority:
+   - **P0** — silent correctness hazard: the system produces wrong results, reviews wrong code, posts to the wrong target, or allows what it should deny, with no visible indication
+   - **P1** — significant reliability gap: incorrect behavior that is narrower in scope or less silent, but still degrades trust in outputs (e.g. broken assertions, ambiguous errors, false greens, missing requirements context)
+   - **P2** — real improvement: would help but is not causing wrong results today (e.g. missing features, test coverage gaps, refactoring, DX improvements)
+   - **P3** — minor polish: documentation wording, small inconsistencies, nice-to-haves
+
    Then create the issue:
-   `gh issue create -R {{SHAI_REPO}} --label shai-suggestion --title "[category] Short description" --body "BODY"`
+   `gh issue create -R {{SHAI_REPO}} --label shai-suggestion --label <priority> --title "[category] Short description" --body "BODY"`
+
+   where `<priority>` is one of `P0`, `P1`, `P2`, `P3`.
 
    The body must include:
    - **What**: What you observed
