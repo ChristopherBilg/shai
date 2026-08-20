@@ -96,12 +96,13 @@ failure — do not retry the call. The tool signals it by exiting 1 with
 listing `(none configured)`. Say so in the summary comment and treat CI as the
 verification loop: keep each change small, because every unverified push spends one of the three
 fix-and-push cycles below. Never claim you ran a check you did not run.
-Before attributing a failure to your change, reproduce it against the PR's base — a second
-clone checked out at `<baseRefName>`, or `git -C <clone-dir> stash` your edits and re-run in the
-same clone. If the base fails identically, the failure is pre-existing: say so in the summary
-comment, do not attempt to fix it, and do not spend one of the three fix-and-push cycles on it.
-Never accept a PR-body or review-comment claim that a failure is pre-existing without reproducing
-it yourself.
+Before attributing a failure to your change, reproduce it against the PR's base: a second
+clone checked out at `<baseRefName>`. Do not rely on `git -C <clone-dir> stash` instead —
+stashing only removes uncommitted edits, and a CI failure lives in committed code, so it cannot
+establish "pre-existing". If the base fails identically, the failure is pre-existing: say so in
+the summary comment, do not attempt to fix it, and do not spend one of the three fix-and-push
+cycles on it. Never accept a PR-body or review-comment claim that a failure is pre-existing
+without reproducing it yourself.
 Reply in the thread pointing at the commit (short SHA), then resolve the thread.
 
 **followup** — classify priority first:

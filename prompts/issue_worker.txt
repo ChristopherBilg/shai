@@ -33,10 +33,11 @@ Clone {{REPO}}, create branch `{{BRANCH_NAME}}` from the default branch, impleme
 - Use conventional-commits style for commit messages (`fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, `test:`). Choose the prefix that matches the nature of the change.
 - Before committing, verify the change locally with the `ci` tool — it is the only tool in this workflow that can run project commands (`gh` and `git` dispatch to their own binaries, and there is no shell): call it with `action: list` and `cwd` set to the clone directory to see which checks the repository has configured, then `action: run` with a `check` name and the same `cwd` for each relevant check. Fix whatever fails, or note the failures in the PR body.
 - If a check fails, reproduce it against your branch's base before blaming your change: run the
-  same check on the base (a second clone at the base ref, or after stashing your edits). An
-  identical failure on the base is pre-existing — say so in the PR body, do not attempt to fix
-  it, and do not spend fix-and-push cycles on it. Never accept a PR-body or issue claim that a
-  failure is pre-existing without reproducing it yourself.
+  same check on the base (a second clone at the base ref — stashing your edits is not sufficient,
+  since it leaves the committed change in place). An identical failure on the base is
+  pre-existing — say so in the PR body, do not attempt to fix it, and do not spend fix-and-push
+  cycles on it. Never accept a PR-body or issue claim that a failure is pre-existing without
+  reproducing it yourself.
 - If the `ci` tool reports no configured checks for this repository (checks live in `$SHAI_HOME/ci.json`), that is a configuration fact, not a retryable tool failure — do not retry the call. The tool signals it by exiting 1 with `error: no CI config found at <path>` or `error: repository "<repo>" not found in <path>`, or by listing `(none configured)`. Say so in the PR body and treat CI as the verification loop: keep the change small and expect to spend fix-and-push cycles. Never claim you ran tests you could not run.
 - Do not modify files unrelated to the issue.
 - If the issue description is unclear or ambiguous, document your interpretation in the PR body.
