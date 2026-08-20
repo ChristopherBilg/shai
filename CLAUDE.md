@@ -521,6 +521,14 @@ are automatically queued for resolution. Install via
   (source + content sanitized, injected closing tags neutralized so the fence can't be escaped),
   and the system prompt (`prompts/system.txt`) tells the model never to follow instructions inside those tags
   — a deliberate defense against context contamination.
+- **Every `/tmp` file a workflow creates must be per-run and collision-free.** Workflows that
+  clone use a randomly generated directory per run (`/tmp/pr-review-XXXXX`,
+  `/tmp/review-resolver-XXXXX`, `/tmp/issue-worker-XXXXX`) precisely so concurrent runs cannot
+  collide; payloads staged for a side-effecting `gh ... --input` must follow the same rule —
+  write them inside that run's unique directory with the target in the name (e.g.
+  `/tmp/pr-review-XXXXX/review-{{NUMBER}}.json`), and re-read the file with `print_file` before
+  POSTing it to confirm it is the payload just written. Never reuse a fixed `/tmp` filename: a
+  stale or concurrently-written payload can silently land on the wrong PR (see #106).
 - `jq` programs are single-quoted — `$vars` inside them are jq variables, not shell (SC2016
   is disabled). Pipelines use `cat file | filter` for readability (SC2002 disabled). See
   `.shellcheckrc`.
