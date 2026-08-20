@@ -1,8 +1,9 @@
 #!/bin/bash
 # test_ci.sh — unit tests for tools/ci/run.sh
 # Covers: tools/ci/run.sh — list/run actions, URL normalization, config lookup, cwd targeting,
-#   timeout validation, environment isolation (SHAI_* and API-key scrubbing, per-check env map),
-#   malformed config shapes, error paths, the shipped ci.json.example
+#   timeout validation, environment isolation (SHAI_* and API-key scrubbing, per-check env map
+#   with literal values and key validation), malformed config shapes, error paths, the shipped
+#   ci.json.example
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -346,6 +347,56 @@ write_remote_stub "https://github.com/owner/repo.git"
 OUT=$("$TOOL" '{"action":"run","check":"badenv"}' 2>&1) || true
 assert_contains "$OUT" "invalid \"env\"" "env isolation: non-object env rejected"
 assert_exit 1 "env isolation: non-object env exit 1" -- "$TOOL" '{"action":"run","check":"badenv"}'
+
+# env-map values are passed literally: jq @tsv escapes tabs/newlines/backslashes and read
+# takes those escapes literally, silently corrupting the value (review #156). A tab, a
+# newline, a backslash, and an '=' inside a value must all survive byte-for-byte.
+write_ci_config <<'JSON'
+{
+  "version": "1.0",
+  "repos": {
+    "github.com/owner/repo": {
+      "checks": {
+        "envliteral": {
+          "command": "printf 'tab=<%s> nl=<%s> eq=<%s> empty=<%s>' \"$LITERAL_TAB\" \"$LITERAL_NL\" \"$LITERAL_EQ\" \"${LITERAL_EMPTY-unset}\"",
+          "env": {
+            "LITERAL_TAB": "a\tb\\c",
+            "LITERAL_NL": "line1\nline2",
+            "LITERAL_EQ": "x=y=z",
+            "LITERAL_EMPTY": ""
+          }
+        }
+      }
+    }
+  }
+}
+JSON
+write_remote_stub "https://github.com/owner/repo.git"
+OUT=$("$TOOL" '{"action":"run","check":"envliteral"}' 2>&1)
+RC=$?
+assert_eq "$RC" "0" "env literal: exit 0"
+assert_contains "$OUT" $'tab=<a\tb\\c>' "env literal: tab and backslash in value passed literally"
+assert_contains "$OUT" $'nl=<line1\nline2>' "env literal: newline in value passed literally"
+assert_contains "$OUT" "eq=<x=y=z>" "env literal: '=' in value preserved"
+assert_contains "$OUT" "empty=<>" "env literal: empty value passed through as set, not dropped"
+
+# an invalid env-map key is a clean config error, not a confusing env(1) failure (review #156)
+write_ci_config <<'JSON'
+{
+  "version": "1.0",
+  "repos": {
+    "github.com/owner/repo": {
+      "checks": {
+        "badkey": { "command": "echo hi", "env": { "FOO BAR": "x", "1BAD": "y", "": "z" } }
+      }
+    }
+  }
+}
+JSON
+write_remote_stub "https://github.com/owner/repo.git"
+OUT=$("$TOOL" '{"action":"run","check":"badkey"}' 2>&1) || true
+assert_contains "$OUT" "invalid \"env\" key" "env key validation: bogus key rejected with config error"
+assert_exit 1 "env key validation: bad key exit 1" -- "$TOOL" '{"action":"run","check":"badkey"}'
 
 write_default_config
 
