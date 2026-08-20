@@ -42,16 +42,19 @@ BRANCH_NAME="shai/${NUMBER}-${SLUG}"
 
 # Issue content is attacker-controlled (anyone who can open an issue) and is spliced
 # straight into the prompt below rather than fetched by the model via a tool call, so it
-# never gets shai-dispatch's automatic <external_data> truncation/sanitization. Bound the
-# body's size (matching shai-dispatch's MAX_BYTES) and neutralize external_data tag syntax
-# in all three fields (same regex shai-dispatch uses to sanitize tool_result content)
-# before they reach prompts/issue_worker.txt's <external_data> fences, so injected content
-# can't forge a closing tag and break out of the fence.
+# never gets shai-dispatch's automatic [external_data] truncation/escaping. Bound the
+# body's size (matching shai-dispatch's MAX_BYTES) and escape closing external_data tags
+# in all three fields (same pattern shai-dispatch uses to escape tool_result content)
+# before they reach prompts/issue_worker.txt's external_data fences, so injected content
+# can't forge a closing tag and break out of the fence. The final `gsub("&"; "\\&")`
+# backslash-escapes ampersands: the ${PROMPT//...} substitution below expands a bare `&`
+# in the replacement to the whole matched text, which would otherwise corrupt the escaped
+# form into the {{ISSUE_BODY}} placeholder itself.
 ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | head -c 32000)
 
-ISSUE_TITLE=$(printf '%s' "$ISSUE_TITLE" | jq -Rrs 'gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")')
-ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | jq -Rrs 'gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")')
-ISSUE_LABELS=$(printf '%s' "$ISSUE_LABELS" | jq -Rrs 'gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")')
+ISSUE_TITLE=$(printf '%s' "$ISSUE_TITLE" | jq -Rrs 'gsub("</\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i") | gsub("&"; "\\&")')
+ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | jq -Rrs 'gsub("</\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i") | gsub("&"; "\\&")')
+ISSUE_LABELS=$(printf '%s' "$ISSUE_LABELS" | jq -Rrs 'gsub("</\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i") | gsub("&"; "\\&")')
 
 WF_POLICY="$(dirname "$0")/policy.json"
 if [ -f "$WF_POLICY" ]; then
