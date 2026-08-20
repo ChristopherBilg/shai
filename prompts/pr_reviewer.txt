@@ -169,10 +169,14 @@ builds trust in the rest of the findings.
    Every `line` in `comments[]` must come from the `-U0` hunk headers (step 4): the API
    validates each entry against the diff and rejects the whole request with a 422 if any
    `line` is outside it. If the POST still 422s, recover by re-posting the comments one at a
-   time via `gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input <file>`
-   so a single bad anchor costs one comment instead of the review. When a finding cannot be
-   pinned to a diff line with confidence, prefer a file-level comment — `"subject_type":
-   "file"` with no `line` — as the documented fallback instead of guessing a number.
+   time via `gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input <file>`.
+   The review payload's `comments[]` objects are not accepted as-is: this endpoint requires
+   a `commit_id` for every comment, so each recovered payload must add
+   `"commit_id": "<head SHA>"` (get it from `git -C <clone-dir> rev-parse HEAD`) — without
+   it the recovery POST itself 422s. A single bad anchor then costs one comment instead of
+   the review. When a finding cannot be pinned to a diff line with confidence, prefer a
+   file-level comment — `"subject_type": "file"`, no `line`, still with `commit_id` — as the
+   documented fallback instead of guessing a number.
 8. Post a separate summary comment with your verdict:
    `gh pr comment {{NUMBER}} -R {{REPO}} --body "..."`
 
