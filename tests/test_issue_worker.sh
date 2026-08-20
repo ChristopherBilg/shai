@@ -170,7 +170,7 @@ assert_contains "$OUT" "ERROR" "issue_worker: prints ERROR on failure"
 # --- no idempotency: re-running the same issue is allowed and writes no ledger ---
 desc "non-idempotent by design"
 write_issue_worker_gh_stub "Fix the login bug" "The login page crashes"
-printf '{"type":"message","content":[{"type":"text","text":"PR created."}],"stop_reason":"end_turn"}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"PR created."},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 rm -f "$SHAI_HOME/ledgers/issue_worker.jsonl"
 OUT=$("$DIR/workflows/issue_worker/run.sh" owner/repo 42 2>&1)
