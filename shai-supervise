@@ -2,7 +2,7 @@
 # shai-supervise — manage shai workflows under systemd --user
 # Usage: shai-supervise install|uninstall|start|stop|logs <script> [--interval <timespan>]
 #        shai-supervise status [script] [--json]
-# Reads: ANTHROPIC_API_KEY, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows
+# Reads: DEEPSEEK_API_KEY, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows
 # Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall)
 # Exit: 0 on success; 1 on validation error or systemctl failure; 2 on usage error
 set -euo pipefail
@@ -38,8 +38,8 @@ cmd_install() {
     exit 1
   fi
 
-  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    printf 'error: ANTHROPIC_API_KEY must be set\n' >&2
+  if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
+    printf 'error: DEEPSEEK_API_KEY must be set\n' >&2
     exit 1
   fi
 
@@ -56,7 +56,7 @@ Description=shai $name workflow
 [Service]
 Type=oneshot
 ExecStart=$script_path
-Environment=ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+Environment=DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
 Environment=SHAI_HOME=$shai_home
 EOF
   chmod 600 "$UNIT_DIR/$name.service"

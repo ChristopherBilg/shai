@@ -11,7 +11,7 @@ echo "shai-repl (integration)"
 #     round-trip drives the dispatch loop to completion, final line w/o newline) ---
 make_stub_bin
 write_gh_stub
-printf '%s' '{"type":"message","content":[{"type":"text","text":"stub reply"}],"stop_reason":"end_turn"}' |
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 SHAI_TMP="$(mktemp -d)"
@@ -31,11 +31,11 @@ CSTUB="$(mktemp -d)"
 _CLEANUP_DIRS+=("$CSTUB")
 export SHAI_ROUND_COUNT="$CSTUB/count"
 echo 0 >"$SHAI_ROUND_COUNT"
-printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"type":"message","content":[{"type":"tool_use","id":"tu1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}\nJSON\nelse\n  cat <<JSON\n{"type":"message","content":[{"type":"text","text":"done summarizing"}],"stop_reason":"end_turn"}\nJSON\nfi\necho "200"\n' >"$CSTUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tu1","type":"function","function":{"name":"list_directory","arguments":"{\\\\\"path\\\\\":\\\\\".\\\\\"}"}  }]},"finish_reason":"tool_calls"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\nelse\n  cat <<JSON\n{"id":"chatcmpl-test2","choices":[{"message":{"role":"assistant","content":"done summarizing"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\nfi\necho "200"\n' >"$CSTUB/curl"
 chmod +x "$CSTUB/curl"
 printf 'list the dir\nexit\n' | PATH="$CSTUB:$PATH" SHAI_HOME="$SHAI_TMP2" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 H2=$(cat "$SHAI_TMP2/sessions/test.jsonl" 2>/dev/null || echo "")
-assert_contains "$H2" '"type":"tool_use"' "shai-repl: tool round-trip records tool_use"
+assert_contains "$H2" '"tool_calls"' "shai-repl: tool round-trip records tool_calls"
 assert_contains "$H2" '"type":"tool_result"' "shai-repl: tool round-trip records tool_result"
 assert_contains "$H2" 'done summarizing' "shai-repl: loop re-evaluates after tool and finishes"
 unset SHAI_ROUND_COUNT
@@ -50,7 +50,7 @@ assert_contains "$H3" '"text":"hi there"' "shai-repl: processes final line witho
 # new: `exit` ends the loop cleanly with a goodbye and without erroring
 make_stub_bin
 write_gh_stub
-printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"type":"message","content":[{"type":"text","text":"hi there"}],"stop_reason":"end_turn"}\nJSON\necho "200"\n' >"$STUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
 
 SHAI_TMP="$(mktemp -d)"
@@ -68,8 +68,8 @@ assert_eq "$(printf '%s\n' "$BLANKHIST" | jq -sr '[.[] | select(.source=="assist
 # new: a failed startup health-check aborts before the loop (no session dir created)
 SHAI_TMP3="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP3")
-printf 'hello\nexit\n' | env -u ANTHROPIC_API_KEY SHAI_HOME="$SHAI_TMP3" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
-assert_exit 1 "shai-repl: missing key aborts at health-check (exit 1)" -- bash -c 'printf "" | env -u ANTHROPIC_API_KEY SHAI_HOME="'"$SHAI_TMP3"'" SHAI_SESSION_ID=test "'"$DIR"'/shai-repl"'
+printf 'hello\nexit\n' | env -u DEEPSEEK_API_KEY SHAI_HOME="$SHAI_TMP3" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
+assert_exit 1 "shai-repl: missing key aborts at health-check (exit 1)" -- bash -c 'printf "" | env -u DEEPSEEK_API_KEY SHAI_HOME="'"$SHAI_TMP3"'" SHAI_SESSION_ID=test "'"$DIR"'/shai-repl"'
 assert_eq "$(test -d "$SHAI_TMP3/sessions" && echo exists || echo absent)" "absent" "shai-repl: no session dir when health-check fails"
 
 # new: by default the REPL prints a "⏺ <tool>(<args>)" dispatch line for each tool call
@@ -92,7 +92,7 @@ QUIETOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_Q:$PATH" SHAI_HOME="$SHA
 assert_eq "$(grep -c '⏺' <<<"$QUIETOUT" || true)" "0" "shai-repl: --quiet suppresses dispatch markers"
 QHIST=$(cat "$SHAI_TMP_Q/sessions/test.jsonl" 2>/dev/null || echo "")
 assert_contains "$QHIST" '"type":"tool_result"' "shai-repl: --quiet still records the tool round-trip"
-assert_contains "$QHIST" '"type":"tool_use"' "shai-repl: --quiet still records the tool_use"
+assert_contains "$QHIST" '"tool_calls"' "shai-repl: --quiet still records the tool_calls"
 unset SHAI_ROUND_COUNT
 
 # new: the short -q flag suppresses dispatch markers just like --quiet

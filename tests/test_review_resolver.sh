@@ -80,7 +80,7 @@ assert_eq "$RC" "2" "review_resolver: exit 2 on PR number 0"
 
 # --- success case: valid assistant response ---
 desc "happy path"
-printf '{"type":"message","content":[{"type":"text","text":"Resolution complete."}],"stop_reason":"end_turn"}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"Resolution complete."},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_capture_curl_stub 200
 
 OUT=$("$DIR/workflows/review_resolver/run.sh" owner/repo 42 2>&1)

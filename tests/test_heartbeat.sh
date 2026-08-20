@@ -9,7 +9,7 @@ echo "workflows/heartbeat/run.sh"
 make_stub_bin
 
 # --- PASS case: valid assistant response ---
-printf '{"type":"message","content":[{"type":"text","text":"OK"}],"stop_reason":"end_turn"}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 TMP="$(mktemp -d)"

@@ -1,7 +1,7 @@
 #!/bin/bash
 # issue_worker/run.sh — implement a GitHub issue and open a draft pull request
 # Usage: workflows/issue_worker/run.sh <repo> <number>
-# Reads: ANTHROPIC_API_KEY from environment; prompts/issue_worker.txt for LLM instructions
+# Reads: DEEPSEEK_API_KEY from environment; prompts/issue_worker.txt for LLM instructions
 # Writes: draft GitHub pull request; ephemeral session log (prunable)
 # Exit: 0 on success (including idempotent skip); 1 on failure; 2 on usage error
 set -euo pipefail

@@ -8,7 +8,7 @@
 #         events in $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits finalized
 #         events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes directly if
 #         the run dir is unavailable)
-# Exit: 0 on clean exit; 1 if ANTHROPIC_API_KEY is missing (health check); 2 on unknown option; 3 if the system prompt is missing or empty (shai-prompt)
+# Exit: 0 on clean exit; 1 if DEEPSEEK_API_KEY is missing (health check); 2 on unknown option; 3 if the system prompt is missing or empty (shai-prompt)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"

@@ -202,7 +202,7 @@ tmpdir=$(setup_policy '{"version":"1.0","default":"deny","rules":[{"tool":"list_
 make_stub_bin
 stub_dir="$STUB"
 write_gh_stub
-event='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"test_deny","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}'
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"test_deny","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}  }],"finish_reason":"tool_calls"}}'
 result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$result" '"is_error":true' "deny → is_error true"
 assert_contains "$result" 'Policy denied' "deny → error message"
@@ -212,7 +212,7 @@ tmpdir=$(setup_policy '{"version":"1.0","default":"prompt","rules":[]}')
 make_stub_bin
 stub_dir="$STUB"
 write_gh_stub
-event='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"test_prompt","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}}'
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"test_prompt","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}  }],"finish_reason":"tool_calls"}}'
 result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$result" '"is_error":true' "non-interactive prompt → is_error true"
 assert_contains "$result" 'Permission denied' "non-interactive prompt → denied message"
@@ -222,7 +222,7 @@ tmpdir=$(setup_policy '{"version":"1.0","default":"deny","rules":[{"tool":"list_
 make_stub_bin
 stub_dir="$STUB"
 write_gh_stub
-event='{"type":"message","source":"assistant","payload":{"content":[{"type":"tool_use","id":"test_allow","name":"list_directory","input":{"path":"'"$tmpdir"'"}}],"stop_reason":"tool_use"}}'
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"test_allow","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\"'"$tmpdir"'\"}"}  }],"finish_reason":"tool_calls"}}'
 result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$result" '"is_error":false' "allow → executes, is_error false"
 

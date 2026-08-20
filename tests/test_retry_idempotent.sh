@@ -20,7 +20,7 @@ new_home() {
 # successful turn commits user + assistant to session log
 new_home
 make_stub_bin
-printf '%s' '{"type":"message","content":[{"type":"text","text":"committed reply"}],"stop_reason":"end_turn"}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"committed reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 printf 'hello\nexit\n' | SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 H=$(cat "$SHIST" 2>/dev/null || echo "")
 assert_contains "$H" '"source":"system"' "buffer-commit: system prompt seeded in session log"
@@ -59,7 +59,7 @@ FRUN="$FHOME/run.jsonl"
 FOUT="$FHOME/session.jsonl"
 printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}' >"$FRUN"
 printf '%s\n' '{"type":"error","source":"system","payload":{"text":"transient"}}' >>"$FRUN"
-printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}}' >>"$FRUN"
+printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":"ok","finish_reason":"stop"}}' >>"$FRUN"
 jq -c 'select(.type != "error")' "$FRUN" >"$FOUT"
 assert_eq "$(wc -l <"$FOUT")" "2" "commit filter: error excluded (3 events → 2 committed)"
 assert_eq "$(jq -r 'select(.type=="error") | .type' "$FOUT" | wc -l)" "0" "commit filter: no errors in output"
@@ -71,7 +71,7 @@ _CLEANUP_DIRS+=("$BLOCKH")
 printf 'blocked' >"$BLOCKH/runs"
 mkdir -p "$BLOCKH/sessions"
 make_stub_bin
-printf '%s' '{"type":"message","content":[{"type":"text","text":"fallback reply"}],"stop_reason":"end_turn"}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"fallback reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 printf 'hello\nexit\n' | SHAI_HOME="$BLOCKH" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 BH=$(cat "$BLOCKH/sessions/test.jsonl" 2>/dev/null || echo "")
 assert_contains "$BH" '"source":"user"' "fallback: user event written directly to session log"
@@ -88,7 +88,7 @@ mkdir -p "$SHOME/runs/run_failed"
   printf '%s\n' '{"type":"error","source":"system","payload":{"text":"API timeout"},"version":"1.0","meta":{"run_id":"run_failed","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
 } >"$SHOME/runs/run_failed/events.jsonl"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}' >"$SHIST"
-printf '%s' '{"type":"message","content":[{"type":"text","text":"replayed answer"}],"stop_reason":"end_turn"}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"replayed answer"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_failed >/dev/null 2>&1
 RH=$(cat "$SHIST")
 assert_contains "$RH" 'replay me' "replay: user message committed to session log"
@@ -111,7 +111,7 @@ printf '%s\n' '{"type":"message","source":"user","payload":{"text":"done"},"vers
 {
   printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}'
   printf '%s\n' '{"type":"message","source":"user","payload":{"text":"done"},"version":"1.0","meta":{"run_id":"run_done","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:00Z"}}'
-  printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"},"version":"1.0","meta":{"run_id":"run_done","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
+  printf '%s\n' '{"type":"message","source":"assistant","payload":{"content":"ok","finish_reason":"stop"},"version":"1.0","meta":{"run_id":"run_done","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
 } >"$SHIST"
 BEFORE=$(wc -l <"$SHIST")
 OUT=$(SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_done 2>&1)
@@ -137,7 +137,7 @@ mkdir -p "$SHOME/runs/run_double"
   printf '%s\n' '{"type":"error","source":"system","payload":{"text":"timeout"},"version":"1.0","meta":{"run_id":"run_double","session_id":"test","span_id":"span_1","parent_span_id":null,"timestamp":"2026-08-01T00:00:01Z"}}'
 } >"$SHOME/runs/run_double/events.jsonl"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"sys"}}' >"$SHIST"
-printf '%s' '{"type":"message","content":[{"type":"text","text":"doubled"}],"stop_reason":"end_turn"}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"doubled"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_double >/dev/null 2>&1
 AFTER_FIRST=$(wc -l <"$SHIST")
 OUT2=$(SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_double 2>&1)
