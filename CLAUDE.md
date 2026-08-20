@@ -341,7 +341,9 @@ Every exported `SHAI_*` variable (`SHAI_HOME`, `SHAI_RUN_ID`, `SHAI_SPAN_ID`,
 from the check's environment; `PATH`, `HOME`, `LANG`, and `TERM` survive (`env -i` is the wrong
 instrument). The scrub is a prefix sweep over the exported names, so a newly exported `SHAI_*`
 variable cannot be forgotten by a stale deny list. A per-check `"env"` map in `ci.json`
-re-injects variables by literal value for the rare check that genuinely needs one. This is what
+re-injects variables by literal value for the rare check that genuinely needs one. The scrub
+is scoped to `SHAI_*` names plus those two keys: any other credential the agent exports (e.g.
+`GITHUB_TOKEN`) still reaches the check. This is what
 makes a local `ci` run trustworthy: `cwd` already points the tool at a `/tmp` clone, and the
 environment now points at the checkout too — repository-under-test and environment-under-test
 agree.

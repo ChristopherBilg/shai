@@ -1,6 +1,6 @@
 {
   "name": "ci",
-  "description": "Run a configured CI check for a repository. Use action 'list' to see available checks, then 'run' with a check name to execute one. Only checks explicitly configured in $SHAI_HOME/ci.json can be run. Pass 'cwd' to target a checkout other than the current working directory. The check runs in an environment scrubbed of every exported SHAI_* variable and the API keys (PATH/HOME/LANG/TERM survive), so the repository under test never observes the agent's own run/span/session state; a per-check \"env\" map in ci.json re-injects a variable for the rare check that needs one.",
+  "description": "Run a configured CI check for a repository. Use action 'list' to see available checks, then 'run' with a check name to execute one. Only checks explicitly configured in $SHAI_HOME/ci.json can be run. Pass 'cwd' to target a checkout other than the current working directory. The check runs in an environment scrubbed of every exported SHAI_* variable and the API keys (PATH/HOME/LANG/TERM survive), so the repository under test never observes the agent's own run/span/session state; a per-check \"env\" map in ci.json re-injects a variable for the rare check that needs one. The scrub covers SHAI_* names and DEEPSEEK_API_KEY/ANTHROPIC_API_KEY only; any other credential the agent exports (e.g. GITHUB_TOKEN) still reaches the check.",
   "capabilities": {
     "read_only": false,
     "requires": {
