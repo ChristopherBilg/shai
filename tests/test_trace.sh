@@ -19,8 +19,8 @@ make_run_with_dumps() {
   mkdir -p "$SHAI_HOME/runs/$run_id"
   shift
   for event in "$@"; do printf '%s\n' "$event"; done >"$SHAI_HOME/runs/$run_id/events.jsonl"
-  printf '{"model":"claude-opus-5","messages":[]}' >"$SHAI_HOME/runs/$run_id/span_1-request.json"
-  printf '{"message_id":"msg_1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":5},"latency_ms":100}' \
+  printf '{"model":"deepseek-v4-pro","messages":[]}' >"$SHAI_HOME/runs/$run_id/span_1-request.json"
+  printf '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15},"finish_reason":"stop","latency_ms":100}' \
     >"$SHAI_HOME/runs/$run_id/span_1-response.json"
 }
 
@@ -29,9 +29,9 @@ setup_trace
 RID="run_20260811T090000_aabb"
 make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hello"}' "$RID" "sess_test" "span_1")" \
-  "$(fixture_event "message" "assistant" '{"content":[{"type":"text","text":"hi there"}],"stop_reason":"end_turn"}' \
+  "$(fixture_event "message" "assistant" '{"content":"hi there","finish_reason":"stop"}' \
     "$RID" "sess_test" "span_1" \
-    '{"message_id":"msg_1","model":"claude-opus-5","usage":{"input_tokens":10,"output_tokens":5},"latency_ms":100}')"
+    '{"message_id":"msg_1","model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15},"latency_ms":100}')"
 OUT=$("$TRACE" "$RID")
 assert_contains "$OUT" "span_1" "span id shown"
 assert_contains "$OUT" "hello" "user input shown"
@@ -49,14 +49,14 @@ RID="run_20260811T090000_multi"
 # eval requested". Fixed here to span_1 so this fixture matches a real span chain.
 make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"list files"}' "$RID" "sess_test" "span_1")" \
-  "$(fixture_event "message" "assistant" '{"content":[{"type":"tool_use","id":"tu_1","name":"list_directory","input":{"path":"."}}],"stop_reason":"tool_use"}' \
+  "$(fixture_event "message" "assistant" '{"content":null,"tool_calls":[{"id":"tu_1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}],"finish_reason":"tool_calls"}' \
     "$RID" "sess_test" "span_1" \
-    '{"message_id":"msg_1","model":"m","usage":{"input_tokens":20,"output_tokens":10},"latency_ms":200}')" \
-  "$(fixture_event "tool_result" "tool" '{"tool_use_id":"tu_1","content":"file1\nfile2","is_error":false}' \
+    '{"message_id":"msg_1","model":"m","usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30},"latency_ms":200}')" \
+  "$(fixture_event "tool_result" "tool" '{"tool_call_id":"tu_1","content":"file1\nfile2","is_error":false}' \
     "$RID" "sess_test" "span_1")" \
-  "$(fixture_event "message" "assistant" '{"content":[{"type":"text","text":"Found 2 files"}],"stop_reason":"end_turn"}' \
+  "$(fixture_event "message" "assistant" '{"content":"Found 2 files","finish_reason":"stop"}' \
     "$RID" "sess_test" "span_2" \
-    '{"message_id":"msg_2","model":"m","usage":{"input_tokens":30,"output_tokens":15},"latency_ms":300}')"
+    '{"message_id":"msg_2","model":"m","usage":{"prompt_tokens":30,"completion_tokens":15,"total_tokens":45},"latency_ms":300}')"
 OUT=$("$TRACE" "$RID")
 assert_contains "$OUT" "span_1" "first span"
 assert_contains "$OUT" "span_2" "second span"
@@ -68,8 +68,8 @@ setup_trace
 RID="run_20260811T090000_spanorder"
 mkdir -p "$SHAI_HOME/runs/$RID"
 {
-  fixture_event "message" "assistant" '{"content":[{"type":"text","text":"first"}],"stop_reason":"end_turn"}' "$RID" "sess_test" "span_2"
-  fixture_event "message" "assistant" '{"content":[{"type":"text","text":"tenth"}],"stop_reason":"end_turn"}' "$RID" "sess_test" "span_10"
+  fixture_event "message" "assistant" '{"content":"first","finish_reason":"stop"}' "$RID" "sess_test" "span_2"
+  fixture_event "message" "assistant" '{"content":"tenth","finish_reason":"stop"}' "$RID" "sess_test" "span_10"
 } >"$SHAI_HOME/runs/$RID/events.jsonl"
 OUT=$("$TRACE" "$RID")
 POS2=$(printf '%s\n' "$OUT" | grep -nx "span_2" | head -1 | cut -d: -f1)
@@ -83,8 +83,8 @@ setup_trace
 RID="run_20260811T090000_bytecount"
 LONG_RESULT=$(head -c 90 /dev/zero | tr '\0' 'y')
 make_run_with_dumps "$RID" \
-  "$(fixture_event "message" "assistant" '{"content":[{"type":"tool_use","id":"tu_1","name":"print_file","input":{"path":"x"}}],"stop_reason":"tool_use"}' "$RID" "sess_test" "span_1")" \
-  "$(fixture_event "tool_result" "tool" '{"tool_use_id":"tu_1","content":"'"$LONG_RESULT"'","is_error":false}' "$RID" "sess_test" "span_1")"
+  "$(fixture_event "message" "assistant" '{"content":null,"tool_calls":[{"id":"tu_1","type":"function","function":{"name":"print_file","arguments":"{\"path\":\"x\"}"}}],"finish_reason":"tool_calls"}' "$RID" "sess_test" "span_1")" \
+  "$(fixture_event "tool_result" "tool" '{"tool_call_id":"tu_1","content":"'"$LONG_RESULT"'","is_error":false}' "$RID" "sess_test" "span_1")"
 OUT=$("$TRACE" "$RID")
 assert_contains "$OUT" "90 bytes" "byte count reflects the true 90-byte length, not a 60-char cap"
 
@@ -95,8 +95,8 @@ LONG_TEXT=$(head -c 200 /dev/zero | tr '\0' 'x')
 LONG_RESULT=$(head -c 90 /dev/zero | tr '\0' 'y')
 make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"'"$LONG_TEXT"'"}' "$RID" "sess_test" "span_1")" \
-  "$(fixture_event "message" "assistant" '{"content":[{"type":"tool_use","id":"tu_1","name":"print_file","input":{"path":"x"}}],"stop_reason":"tool_use"}' "$RID" "sess_test" "span_1")" \
-  "$(fixture_event "tool_result" "tool" '{"tool_use_id":"tu_1","content":"'"$LONG_RESULT"'","is_error":false}' "$RID" "sess_test" "span_1")"
+  "$(fixture_event "message" "assistant" '{"content":null,"tool_calls":[{"id":"tu_1","type":"function","function":{"name":"print_file","arguments":"{\"path\":\"x\"}"}}],"finish_reason":"tool_calls"}' "$RID" "sess_test" "span_1")" \
+  "$(fixture_event "tool_result" "tool" '{"tool_call_id":"tu_1","content":"'"$LONG_RESULT"'","is_error":false}' "$RID" "sess_test" "span_1")"
 OUT_DEFAULT=$("$TRACE" "$RID")
 FULL_TEXT_IN_DEFAULT=no
 [[ "$OUT_DEFAULT" == *"$LONG_TEXT"* ]] && FULL_TEXT_IN_DEFAULT=yes
@@ -110,7 +110,7 @@ setup_trace
 RID="run_20260811T090000_json"
 make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hi"}' "$RID" "sess_test" "span_1")" \
-  "$(fixture_event "message" "assistant" '{"content":[{"type":"text","text":"yo"}],"stop_reason":"end_turn"}' "$RID" "sess_test" "span_1")"
+  "$(fixture_event "message" "assistant" '{"content":"yo","finish_reason":"stop"}' "$RID" "sess_test" "span_1")"
 OUT=$("$TRACE" "$RID" --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'type')" '"array"' "json is array"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "2" "json has 2 events"
@@ -188,7 +188,7 @@ RID="run_20260811T090000_fallback"
 SID="sess_20260811T090000_aabb"
 {
   fixture_event "message" "user" '{"text":"hi"}' "$RID" "$SID" "span_1"
-  fixture_event "message" "assistant" '{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}' "$RID" "$SID" "span_1"
+  fixture_event "message" "assistant" '{"content":"ok","finish_reason":"stop"}' "$RID" "$SID" "span_1"
 } >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$TRACE" "$RID" 2>&1)
 assert_contains "$OUT" "hi" "found events in session log"

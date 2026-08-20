@@ -115,7 +115,7 @@ AGGREGATE=$(cat "${valid_files[@]}" | jq -sc '
   def run_status:
     .[-1] as $last |
     if $last.type == "message" and $last.source == "assistant" then
-      if [($last.payload.content // [])[] | select(.type == "tool_use")] | length > 0
+      if (($last.payload.tool_calls // []) | length) > 0
       then "incomplete" else "complete" end
     elif $last.type == "error" then "error"
     else "incomplete" end;
@@ -131,10 +131,10 @@ AGGREGATE=$(cat "${valid_files[@]}" | jq -sc '
       error: ($statuses.error // 0),
       incomplete: ($statuses.incomplete // 0)
     },
-    tokens_in: ([$all[] | select(.api?.usage?) | .api.usage.input_tokens // 0] | add // 0),
-    tokens_out: ([$all[] | select(.api?.usage?) | .api.usage.output_tokens // 0] | add // 0),
+    tokens_in: ([$all[] | select(.api?.usage?) | .api.usage.prompt_tokens // 0] | add // 0),
+    tokens_out: ([$all[] | select(.api?.usage?) | .api.usage.completion_tokens // 0] | add // 0),
     tools: (
-      [$all[] | select(.type == "message" and .source == "assistant") | .payload.content[]? | select(.type == "tool_use") | .name]
+      [$all[] | select(.type == "message" and .source == "assistant") | .payload.tool_calls[]? | .function.name]
       | group_by(.) | map({name: .[0], count: length}) | sort_by(-.count)
     ),
     latencies: ([$all[] | select(.api?.latency_ms?) | .api.latency_ms])

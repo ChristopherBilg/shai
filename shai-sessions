@@ -93,7 +93,7 @@ for f in "$SESSIONS_DIR"/*.jsonl; do
   if ! metrics=$(jq -sc '{
     events: length,
     runs: ([.[] | .meta?.run_id? // empty | strings | select(length > 0)] | unique | length),
-    tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.input_tokens // 0) + (.output_tokens // 0))] | add // 0)
+    tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.prompt_tokens // 0) + (.completion_tokens // 0))] | add // 0)
   }' "$f" 2>/dev/null); then
     printf 'warning: skipping %s (parse error)\n' "$f" >&2
     continue
