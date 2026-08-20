@@ -1,0 +1,35 @@
+{
+  "name": "search_files",
+  "description": "Search for a text pattern across files in a directory tree. Returns matching lines as path:line_number: text rows, followed by a [truncated: showing first N matches] line when more matches exist than max_results. Skips binary files and the .git directory, and gives up after 30 seconds. Use this to find where a symbol is defined, which files reference a string, or whether a pattern appears anywhere in the repo — faster and more reliable than printing whole files.",
+  "capabilities": {
+    "read_only": true
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "description": "The text pattern to search for (grep basic regex)."
+      },
+      "path": {
+        "type": "string",
+        "description": "Directory or file to search. Defaults to the current working directory."
+      },
+      "glob": {
+        "type": "string",
+        "description": "Only search files matching this glob pattern (e.g. \"*.sh\", \"*.json\"). Omit to search all files."
+      },
+      "ignore_case": {
+        "type": "boolean",
+        "description": "Case-insensitive matching. Defaults to false."
+      },
+      "max_results": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 500,
+        "description": "Maximum number of matching lines to return. Defaults to 100."
+      }
+    },
+    "required": ["pattern"]
+  }
+}

@@ -286,7 +286,9 @@ as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CL
 `git` (generic Git CLI, write), `ci` (local CI checks, write), `jira_issue_view`,
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
-than the 32000-byte output cap can be read a window at a time), `sleep` (read-only),
+than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;
+grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`),
+`sleep` (read-only),
 `write_file` (write; an optional `mode` of 3-4 octal digits sets the file's permission bits — the
 only way to create an executable file, e.g. a `tools/<name>/run.sh` — and without it an existing
 file keeps its mode while a new one gets the umask), `patch_file`, `delete_file` (write). `shai-tools`
@@ -376,9 +378,9 @@ PASS/FAIL line to stderr — a liveness probe for the pipeline, meant to be run 
 (title, body, labels), derives a branch name (`shai/<number>-<slug>`), and calls `wf_llm --tools`
 with a goal-oriented prompt. The LLM clones the repo, explores the codebase, implements the
 changes, verifies them locally with the `ci` tool (or records in the PR body that the repo has no
-checks configured), commits, pushes, and creates a draft PR with `Closes #<number>` in the body. Uses
-`wf_seen`/`wf_mark` for idempotency. Exit 0 on success (including idempotent skip), 1 on failure,
-2 on usage error.
+checks configured), commits, pushes, and creates a draft PR with `Closes #<number>` in the body.
+**No idempotency** (no `wf_seen`/`wf_mark`) — safe to re-run; dedup belongs to
+`issue_dispatcher`'s label-removal pattern. Exit 0 on success, 1 on failure, 2 on usage error.
 
 **`workflows/issue_dispatcher/run.sh`** is a pure-bash dispatcher (no LLM calls — the LLM work
 happens inside `issue_worker`). It runs as a `shai-supervise` timer job, globally searching every
@@ -422,10 +424,17 @@ leading-zero guards matching `review_resolver`), calls `wf_init`, exports the co
 diff, and existing comments (all with `--paginate`), clones the repo via `git clone`, checks
 out the head branch, and reads source files around each changed area before commenting.
 Reviews use conventionalcomments.org format with severity mapping (critical/important/minor)
-and assess correctness, architecture, testing quality, and production readiness. Posts a
-GitHub review with inline comments plus a separate summary comment containing a verdict
-(Ready to merge / Ready with minor fixes / Needs changes) with finding counts. Handles
-cross-fork PRs (review proceeds but notes the PR cannot be updated). As its last step the
+and assess correctness, architecture, testing quality, and production readiness. For same-repo
+PRs, the LLM verifies test- and behaviour-related findings locally with the `ci` tool before
+posting them (with `cwd` pointed at the clone), and must re-run a failing check on the base
+branch before reporting it so pre-existing failures are not blamed on the PR; for fork PRs,
+checks are skipped because a check command runs project code the fork author controls (and the
+base-repo clone does not even contain the fork head); when no checks are configured, or a `ci`
+call errors or is denied by policy, the summary says so rather than claiming a check that never
+ran. Posts a GitHub review with inline comments plus a separate summary comment containing a
+verdict (Ready to merge / Ready with minor fixes / Needs changes) with finding counts and a
+local verification status line. Handles cross-fork PRs (review proceeds but notes the PR cannot
+be updated). As its last step the
 prompt tells the LLM to add the `shai-resolve-dispatcher` label to the PR (creating the label
 in the repo first if needed) — but only when the review posted at least one actionable inline
 comment, so a clean praise-only "Ready to merge" review does not queue a no-op
