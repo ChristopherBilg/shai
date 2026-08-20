@@ -32,6 +32,11 @@ Clone {{REPO}}, create branch `{{BRANCH_NAME}}` from the default branch, impleme
 - The PR body must include `Closes #{{NUMBER}}` so the issue auto-closes on merge.
 - Use conventional-commits style for commit messages (`fix:`, `feat:`, `chore:`, `docs:`, `refactor:`, `test:`). Choose the prefix that matches the nature of the change.
 - Before committing, verify the change locally with the `ci` tool — it is the only tool in this workflow that can run project commands (`gh` and `git` dispatch to their own binaries, and there is no shell): call it with `action: list` and `cwd` set to the clone directory to see which checks the repository has configured, then `action: run` with a `check` name and the same `cwd` for each relevant check. Fix whatever fails, or note the failures in the PR body.
+- If a check fails, reproduce it against your branch's base before blaming your change: run the
+  same check on the base (a second clone at the base ref, or after stashing your edits). An
+  identical failure on the base is pre-existing — say so in the PR body, do not attempt to fix
+  it, and do not spend fix-and-push cycles on it. Never accept a PR-body or issue claim that a
+  failure is pre-existing without reproducing it yourself.
 - If the `ci` tool reports no configured checks for this repository (checks live in `$SHAI_HOME/ci.json`), that is a configuration fact, not a retryable tool failure — do not retry the call. The tool signals it by exiting 1 with `error: no CI config found at <path>` or `error: repository "<repo>" not found in <path>`, or by listing `(none configured)`. Say so in the PR body and treat CI as the verification loop: keep the change small and expect to spend fix-and-push cycles. Never claim you ran tests you could not run.
 - Do not modify files unrelated to the issue.
 - If the issue description is unclear or ambiguous, document your interpretation in the PR body.
@@ -77,6 +82,9 @@ After creating the draft pull request, verify that CI checks pass on the branch:
       `gh run list --branch <BRANCH> --repo {{REPO}} --json headSha,databaseId,status,conclusion --limit 10`
       and use the matching run's `databaseId`.
    b. Read the failure logs: `gh run view <RUN_ID> --repo {{REPO}} --log-failed`.
-   c. Fix the failing code, re-verify locally with the `ci` tool where a check covers it, commit the fix, and push.
-   d. Return to step 2 to re-check CI (re-capture the new pushed SHA in step 1).
+   c. Apply the baseline rule from the Constraints first — re-run the failing check against the
+      branch's base; an identical failure there is pre-existing, so note it in the PR body and do
+      not spend a fix-and-push cycle on it.
+   d. Fix the failing code, re-verify locally with the `ci` tool where a check covers it, commit the fix, and push.
+   e. Return to step 2 to re-check CI (re-capture the new pushed SHA in step 1).
 8. You may attempt up to 3 fix-and-push cycles. If CI still fails after 3 attempts, update the pull request body to append a "## CI Failures" section listing each failing check, the relevant log output, and what you tried. Then stop.
