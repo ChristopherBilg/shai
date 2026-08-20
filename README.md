@@ -83,9 +83,17 @@ All five scripts accept `--json` for structured output and prefix matching on th
 
 ## Tests
 ```shell
+./tests/all.sh          # every CI check locally, in CI order — run this before pushing
 ./tests/run.sh          # all unit + integration suites, fully offline (curl + gh stubbed)
 ./tests/conventions.sh  # project standards/hygiene checks
 ```
+`./tests/all.sh` is the one pre-push command: it runs the same checks CI runs, in the same
+order — `tests/run.sh`, `conventions.sh`, `docs.sh`, the three sync checks (`tools-sync.sh`,
+`constants-sync.sh`, `doctor-sync.sh`), `validate-tool-schema.sh`, then lint. It aggregates
+everything under a single `ALL SUITES PASSED` / `N/M SUITES FAILED` banner and exits non-zero
+if any stage fails. The lint stage is skipped with a visible notice (never a failure) when the
+pinned binaries are not in `./bin` — a gitignored download, see below — so a fresh clone can
+run it with no setup.
 Linting/formatting use pinned tools fetched by `./tests/install-lint-tools.sh` (into `bin/`):
 ```shell
 ./tests/lint.sh          # ShellCheck + shfmt -d, exactly what CI runs
