@@ -148,7 +148,7 @@ if OUT=$(printf '%s' "$BODY" | jq -c --argjson latency "$LATENCY_MS" '
      payload:{content: ($msg.content // null), tool_calls: ($msg.tool_calls // null), finish_reason: .choices[0].finish_reason},
      api:{message_id: .id, model: .model, usage: .usage, latency_ms: $latency}}
     | if .payload.tool_calls == null then del(.payload.tool_calls) else . end
-    | if .payload.content == null then del(.payload.content) else . end
+    | if (.payload.content // null) == null or .payload.content == "" then del(.payload.content) else . end
   else error("unexpected response shape")
   end' 2>/dev/null) && [ -n "$OUT" ]; then
   printf '%s\n' "$OUT"
