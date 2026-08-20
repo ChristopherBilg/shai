@@ -1,7 +1,8 @@
 #!/bin/bash
 # test_ci.sh — unit tests for tools/ci/run.sh
 # Covers: tools/ci/run.sh — list/run actions, URL normalization, config lookup, cwd targeting,
-#   timeout validation, malformed config shapes, error paths, the shipped ci.json.example
+#   timeout validation, environment isolation (SHAI_* and API-key scrubbing, per-check env map),
+#   malformed config shapes, error paths, the shipped ci.json.example
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -259,6 +260,94 @@ OUT=$("$TOOL" '{"action":"list","cwd":"/nonexistent-shai-ci-dir"}' 2>&1) || true
 assert_contains "$OUT" "not a directory" "cwd: rejects a non-directory path"
 assert_exit 1 "cwd: exit 1 on a non-directory path" -- \
   "$TOOL" '{"action":"list","cwd":"/nonexistent-shai-ci-dir"}'
+
+# ===== environment isolation =====
+# The agent's own environment must not leak into the check: a workflow run exports SHAI_*
+# variables and the API keys, and shai's own test suite reads those same variables (issue #87).
+# A check must observe the checkout under test, not the agent that dispatched the tool.
+desc "environment isolation — agent SHAI_* vars and API keys are scrubbed"
+write_ci_config <<'JSON'
+{
+  "version": "1.0",
+  "repos": {
+    "github.com/owner/repo": {
+      "checks": {
+        "envprobe": {
+          "command": "echo span=${SHAI_SPAN_ID:-unset} run=${SHAI_RUN_ID:-unset} session=${SHAI_SESSION_ID:-unset} key=${DEEPSEEK_API_KEY:-unset} anthro=${ANTHROPIC_API_KEY:-unset}"
+        },
+        "envhome": {
+          "command": "echo home=${HOME:-unset} path=${PATH:-unset} lang=${LANG:-unset}"
+        },
+        "envmap": {
+          "command": "echo key=${DEEPSEEK_API_KEY:-unset} span=${SHAI_SPAN_ID:-unset} injected=${MY_CHECK_VAR:-unset}",
+          "env": { "DEEPSEEK_API_KEY": "injected-key", "MY_CHECK_VAR": "present" }
+        }
+      }
+    }
+  }
+}
+JSON
+write_remote_stub "https://github.com/owner/repo.git"
+
+OUT=$(SHAI_SPAN_ID=span_9 SHAI_RUN_ID=run_9 SHAI_SESSION_ID=sess_9 \
+  DEEPSEEK_API_KEY=agent-secret ANTHROPIC_API_KEY=agent-anthropic \
+  "$TOOL" '{"action":"run","check":"envprobe"}' 2>&1)
+RC=$?
+assert_eq "$RC" "0" "env isolation: exit 0"
+assert_contains "$OUT" "span=unset" "env isolation: SHAI_SPAN_ID scrubbed"
+assert_contains "$OUT" "run=unset" "env isolation: SHAI_RUN_ID scrubbed"
+assert_contains "$OUT" "session=unset" "env isolation: SHAI_SESSION_ID scrubbed"
+assert_contains "$OUT" "key=unset" "env isolation: DEEPSEEK_API_KEY scrubbed"
+assert_contains "$OUT" "anthro=unset" "env isolation: ANTHROPIC_API_KEY scrubbed"
+if [[ "$OUT" == *"span_9"* || "$OUT" == *"run_9"* || "$OUT" == *"sess_9"* ||
+  "$OUT" == *"agent-secret"* || "$OUT" == *"agent-anthropic"* ]]; then
+  echo -e "  ${RED}✗${NC} env isolation: agent values leaked into the check output"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} env isolation: agent values absent from check output"
+fi
+
+# PATH/HOME/LANG survive: env -i would break a check that needs a working shell
+OUT=$("$TOOL" '{"action":"run","check":"envhome"}' 2>&1)
+RC=$?
+assert_eq "$RC" "0" "env isolation: PATH/HOME/LANG survive — exit 0"
+assert_contains "$OUT" "home=$HOME" "env isolation: HOME survives"
+assert_contains "$OUT" "lang=$LANG" "env isolation: LANG survives"
+if [[ "$OUT" == *"path=unset"* || "$OUT" == *"home=unset"* || "$OUT" == *"lang=unset"* ]]; then
+  echo -e "  ${RED}✗${NC} env isolation: PATH/HOME/LANG must survive (env -i is the wrong instrument)"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} env isolation: PATH/HOME/LANG not unset"
+fi
+
+# a per-check "env" map re-injects a scrubbed variable and adds a new one
+OUT=$(DEEPSEEK_API_KEY=agent-secret SHAI_SPAN_ID=span_9 \
+  "$TOOL" '{"action":"run","check":"envmap"}' 2>&1)
+RC=$?
+assert_eq "$RC" "0" "env isolation: env map — exit 0"
+assert_contains "$OUT" "key=injected-key" "env isolation: env map re-injects DEEPSEEK_API_KEY"
+assert_contains "$OUT" "span=unset" "env isolation: env map does not un-scrub SHAI_*"
+assert_contains "$OUT" "injected=present" "env isolation: env map adds a new variable"
+
+# an "env" that is not an object is a config error, not a silent pass
+write_ci_config <<'JSON'
+{
+  "version": "1.0",
+  "repos": {
+    "github.com/owner/repo": {
+      "checks": {
+        "badenv": { "command": "echo hi", "env": "not-an-object" }
+      }
+    }
+  }
+}
+JSON
+write_remote_stub "https://github.com/owner/repo.git"
+OUT=$("$TOOL" '{"action":"run","check":"badenv"}' 2>&1) || true
+assert_contains "$OUT" "invalid \"env\"" "env isolation: non-object env rejected"
+assert_exit 1 "env isolation: non-object env exit 1" -- "$TOOL" '{"action":"run","check":"badenv"}'
+
+write_default_config
 
 # ===== URL normalization =====
 desc "URL normalization"

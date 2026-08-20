@@ -4,6 +4,9 @@
 # Reads: $1 (JSON with .action, optional .check and .cwd), $SHAI_HOME/ci.json, git remote
 # Writes: check output or check listing to stdout
 # Exit: 0 on success (including failed checks), 1 on tool-level error
+# The check runs in an environment scrubbed of every exported SHAI_* variable and the API keys
+# (PATH/HOME/LANG/TERM survive), so the repository-under-test cannot observe the agent that
+# dispatched the tool; a per-check "env" map in ci.json re-injects variables explicitly.
 set -euo pipefail
 input="$1"
 
@@ -145,13 +148,38 @@ if ! [[ "$check_timeout" =~ ^[0-9]+$ ]] || [ "$check_timeout" -eq 0 ]; then
   exit 1
 fi
 
+# Environment isolation: a check runs project code, so it must not observe the agent's own
+# state. Every exported SHAI_* variable (run/span/session ids, policy overlay, tools dir,
+# retry flag) and the API keys are scrubbed before the check starts; PATH, HOME, LANG and TERM
+# survive (env -i is the wrong instrument — a check still needs a working shell). A per-check
+# "env" map in ci.json re-injects variables explicitly, for the rare check that needs one.
+env_args=()
+while IFS='=' read -r name _; do
+  case "$name" in
+    SHAI_*) env_args+=(-u "$name") ;;
+  esac
+done < <(env)
+env_args+=(-u ANTHROPIC_API_KEY -u DEEPSEEK_API_KEY)
+
+check_env_type=$(printf '%s' "$check_cfg" | jq -r '.env | type' 2>/dev/null) || check_env_type="null"
+if [ "$check_env_type" != "null" ] && [ "$check_env_type" != "object" ]; then
+  printf 'error: check "%s" has an invalid "env" — expected an object mapping variable names to values\n' \
+    "$check"
+  exit 1
+fi
+if [ "$check_env_type" = "object" ]; then
+  while IFS=$'\t' read -r env_name env_value; do
+    env_args+=("$env_name=$env_value")
+  done < <(printf '%s' "$check_cfg" | jq -r '.env | to_entries[] | [.key, .value] | @tsv')
+fi
+
 # timeout(1) reports 124, but a check command can also exit 124 on its own, so 124 alone is
 # not enough. An in-band sentinel does not help either: bash runs EXIT traps even when it is
 # killed by SIGTERM. So require the run to have lasted about as long as the configured limit.
 # The 1s slack absorbs $SECONDS truncation; only a check that exits 124 on its own within a
 # second of its own limit stays ambiguous.
 start=$SECONDS
-output=$(timeout "${check_timeout}s" bash -c "$check_command" 2>&1) && rc=$? || rc=$?
+output=$(env "${env_args[@]}" timeout "${check_timeout}s" bash -c "$check_command" 2>&1) && rc=$? || rc=$?
 elapsed=$((SECONDS - start))
 
 if [ "$rc" -eq 124 ] && [ "$elapsed" -ge $((check_timeout - 1)) ]; then
