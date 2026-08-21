@@ -14,7 +14,7 @@ RUN="$DIR/tools/search_files/run.sh"
 
 # --- fixture tree ---
 mkdir -p "$TDIR/src" "$TDIR/lib" "$TDIR/.git"
-printf 'hello world\ngoodbye world\nhello again\n' >"$TDIR/src/main.sh"
+printf 'hello world\ngoodbye world\nhello again\npipe a|b separator\n' >"$TDIR/src/main.sh"
 printf 'HELLO UPPER\nhello lower\n' >"$TDIR/src/upper.sh"
 printf 'no match here\nnothing relevant\n' >"$TDIR/lib/util.sh"
 printf 'hello from txt\n' >"$TDIR/src/notes.txt"
@@ -53,6 +53,12 @@ OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"goodbye|no match",path:$p}')" 
 assert_eq "$?" "0" "alternation: exits 0"
 assert_contains "$OUT" "goodbye world" "alternation: matches left alternative"
 assert_contains "$OUT" "no match here" "alternation: matches right alternative"
+
+# --- literal pipe: \| escapes the alternation metacharacter (#231 review) ---
+# Documented in tool.json; assert the escape actually matches a literal pipe under -E.
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"a\\|b",path:$p}')" 2>&1)
+assert_eq "$?" "0" "literal pipe: exits 0"
+assert_contains "$OUT" "a|b separator" "literal pipe: matches the literal pipe line"
 
 # --- ignore_case ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,ignore_case:true}')" 2>&1)

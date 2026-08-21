@@ -9,7 +9,7 @@
     "properties": {
       "pattern": {
         "type": "string",
-        "description": "The text pattern to search for (grep extended regex; use | for alternation, e.g. foo|bar)."
+        "description": "The text pattern to search for (grep extended regex; use | for alternation, e.g. foo|bar; escape a literal pipe as \\|)."
       },
       "path": {
         "type": "string",
