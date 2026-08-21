@@ -115,12 +115,12 @@ CTXENVOVER=$(printf '%s\n' "$HISTB" | SHAI_MAX_CONTEXT_BYTES=1 "$DIR/shai-contex
 assert_eq "$(printf '%s' "$CTXENVOVER" | jq '.messages | length')" "6" "context: --max-bytes overrides env var"
 
 # --max-bytes with no value errors (exit 1)
-assert_exit 1 "context: --max-bytes with no value exits 1" -- bash -c 'echo "" | "'"$DIR"'/shai-context" --max-bytes'
+assert_exit 1 "context: --max-bytes with no value exits 1" -- bash -c 'echo "" | "$1/shai-context" --max-bytes' _ "$DIR"
 
 # --max-bytes / SHAI_MAX_CONTEXT_BYTES validation: non-integer and zero rejected
-assert_exit 1 "context: --max-bytes non-integer exits 1" -- bash -c 'echo "" | "'"$DIR"'/shai-context" --max-bytes abc'
-assert_exit 1 "context: --max-bytes zero exits 1" -- bash -c 'echo "" | "'"$DIR"'/shai-context" --max-bytes 0'
-assert_exit 1 "context: SHAI_MAX_CONTEXT_BYTES non-integer exits 1" -- bash -c 'echo "" | SHAI_MAX_CONTEXT_BYTES=notanumber "'"$DIR"'/shai-context"'
+assert_exit 1 "context: --max-bytes non-integer exits 1" -- bash -c 'echo "" | "$1/shai-context" --max-bytes abc' _ "$DIR"
+assert_exit 1 "context: --max-bytes zero exits 1" -- bash -c 'echo "" | "$1/shai-context" --max-bytes 0' _ "$DIR"
+assert_exit 1 "context: SHAI_MAX_CONTEXT_BYTES non-integer exits 1" -- bash -c 'echo "" | SHAI_MAX_CONTEXT_BYTES=notanumber "$1/shai-context"' _ "$DIR"
 
 # default budget keeps all turns when total is well under 1,300,000 bytes
 HISTDEF='{"type":"message","source":"user","payload":{"text":"u1"}}

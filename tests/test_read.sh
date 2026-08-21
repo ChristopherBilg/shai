@@ -60,7 +60,7 @@ assert_eq "$EXT_EMPTY" "" "read: --external empty input → empty out"
 assert_eq "$RC" "0" "read: --external empty input → exit 0"
 
 # bad flag combinations exit 2
-assert_exit 2 "read: --system + --external → exit 2" -- bash -c 'printf x | "'"$DIR"'/shai-read" --system --external s'
-assert_exit 2 "read: --external without value → exit 2" -- bash -c 'printf x | "'"$DIR"'/shai-read" --external'
+assert_exit 2 "read: --system + --external → exit 2" -- bash -c 'printf x | "$1/shai-read" --system --external s' _ "$DIR"
+assert_exit 2 "read: --external without value → exit 2" -- bash -c 'printf x | "$1/shai-read" --external' _ "$DIR"
 
 finish

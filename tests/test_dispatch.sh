@@ -206,7 +206,7 @@ assert_contains "$TROUT" '"is_error":true' "dispatch: path traversal tool name �
 assert_contains "$TROUT" 'Invalid tool name' "dispatch: path traversal tool name → clear message"
 
 # new: empty stdin → exit 0
-assert_exit 0 "dispatch: empty stdin → exit 0" -- bash -c 'printf "" | "'"$DIR"'/shai-dispatch"'
+assert_exit 0 "dispatch: empty stdin → exit 0" -- bash -c 'printf "" | "$1/shai-dispatch"' _ "$DIR"
 
 # new: tool_result content is fenced with the tool name as source ($DOUT is a gh result)
 assert_contains "$DOUT" '<external_data source=\"gh\">' "dispatch: tool_result wrapped with source"
