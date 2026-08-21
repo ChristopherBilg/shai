@@ -12,6 +12,13 @@ echo "tools/ci/run.sh"
 
 TOOL="$DIR/tools/ci/run.sh"
 
+# The tool reports its own path via readlink -f (GNU) with a fallback to the invocation path
+# (tools/ci/run.sh). Mirror that derivation here: on a checkout reached through a symlink the
+# logical $DIR path and the canonical path differ, and comparing literally would fail the
+# ci-tool assertions spuriously.
+CI_TOOL_EXPECTED="$(readlink -f "$DIR/tools/ci/run.sh" 2>/dev/null || true)"
+[ -n "$CI_TOOL_EXPECTED" ] || CI_TOOL_EXPECTED="$DIR/tools/ci/run.sh"
+
 # --- setup: temp SHAI_HOME with ci.json ---
 SHAI_HOME="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_HOME")
@@ -71,7 +78,7 @@ OUT=$("$TOOL" '{"action":"list"}')
 RC=$?
 assert_eq "$RC" "0" "list: exit 0"
 # the first line names the run.sh that orchestrated the listing (issue #157)
-assert_eq "${OUT%%$'\n'*}" "ci-tool: $DIR/tools/ci/run.sh" "list: ci-tool line is the first line"
+assert_eq "${OUT%%$'\n'*}" "ci-tool: $CI_TOOL_EXPECTED" "list: ci-tool line is the first line"
 assert_contains "$OUT" "test" "list: shows test check"
 assert_contains "$OUT" "lint" "list: shows lint check"
 assert_contains "$OUT" "slow" "list: shows slow check"
@@ -86,7 +93,7 @@ assert_contains "$OUT" "tests-passed" "run success: command output present"
 assert_contains "$OUT" "exit_code: 0" "run success: exit_code 0 reported"
 # ci-tool must lead the output: the agent needs to see which run.sh orchestrated the run
 # (issue #157), and exit_code right behind it stays inside the dispatch truncation head window.
-assert_eq "${OUT%%$'\n'*}" "ci-tool: $DIR/tools/ci/run.sh" "run success: ci-tool line is the first line"
+assert_eq "${OUT%%$'\n'*}" "ci-tool: $CI_TOOL_EXPECTED" "run success: ci-tool line is the first line"
 assert_eq "$(printf '%s\n' "$OUT" | sed -n '2p')" "exit_code: 0" "run success: exit_code is the second line"
 
 # ===== run action (command fails) =====
@@ -109,7 +116,7 @@ RC=$?
 assert_eq "$RC" "0" "run fail: tool exits 0 (not is_error)"
 assert_contains "$OUT" "failure-output" "run fail: command output present"
 assert_contains "$OUT" "exit_code: 1" "run fail: exit_code 1 reported"
-assert_eq "${OUT%%$'\n'*}" "ci-tool: $DIR/tools/ci/run.sh" "run fail: ci-tool line is the first line"
+assert_eq "${OUT%%$'\n'*}" "ci-tool: $CI_TOOL_EXPECTED" "run fail: ci-tool line is the first line"
 assert_eq "$(printf '%s\n' "$OUT" | sed -n '2p')" "exit_code: 1" "run fail: exit_code is the second line"
 
 # ===== a check that exits 124 on its own is not a timeout =====
@@ -293,7 +300,7 @@ assert_contains "$OUT" "ci-tool: $TOOLDIR/ci/run.sh" "tool_dir: ci-tool line nam
 OUT=$("$TOOL" "{\"action\":\"list\",\"tool_dir\":\"$DIR/tools\"}")
 RC=$?
 assert_eq "$RC" "0" "tool_dir self: exit 0"
-assert_eq "${OUT%%$'\n'*}" "ci-tool: $DIR/tools/ci/run.sh" "tool_dir self: ci-tool line is the first line"
+assert_eq "${OUT%%$'\n'*}" "ci-tool: $CI_TOOL_EXPECTED" "tool_dir self: ci-tool line is the first line"
 assert_contains "$OUT" "Available CI checks for github.com/owner/repo:" "tool_dir self: list still works"
 
 # a nonexistent tool_dir is a clean config error, not a silent pass
