@@ -74,10 +74,15 @@ listing `(none configured)`. Say so in the summary and focus your review on what
 verified by reading code.
 
 Before turning a failing check into a review finding, confirm the failure is attributable to
-this PR: re-run the same check on the base branch (`git -C <clone-dir> checkout <baseRefName>`,
-run the check, then `git -C <clone-dir> checkout <headRefName>`). If the check fails on the base
-too, the failure is pre-existing — mention it as context at most, never as a finding against
-this PR.
+this PR: re-run the same check on the base branch from an isolated checkout, never by checking
+the base out into the working clone — `git checkout` keeps uncommitted edits in the working
+tree, so a dirty tree would carry your changes onto the baseline and report your own breakage
+as pre-existing. Instead add a throwaway worktree for the base ref
+(`git -C <clone-dir> worktree add /tmp/base-XXXXX origin/<baseRefName>`), run the check with
+the `ci` tool and `cwd: /tmp/base-XXXXX`, and remove the worktree when done
+(`git -C <clone-dir> worktree remove --force /tmp/base-XXXXX`). The head checkout is never
+touched, so there is no restore step to forget. If the check fails on the base too, the failure
+is pre-existing — mention it as context at most, never as a finding against this PR.
 
 For fork PRs (`headRepositoryOwner.login` differs from `{{OWNER}}`), do not run checks — a check
 command runs arbitrary project code and the fork author controls it. Note also that step 4
