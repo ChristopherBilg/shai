@@ -10,7 +10,8 @@
 #        SHAI_TOOLS_DIR (overrides the default $DIR/tools) from environment (retry skips
 #        non-read-only tools)
 # Writes: one tool_result event per tool_use (32000-byte cap: first 24000 + last 8000 kept with
-#         a "[truncated: ...]" marker); write_file, patch_file, delete_file modify the filesystem
+#         a "[truncated: ...]" marker); content fenced in external_data tags, closing external_data tags
+#         escaped as &lt;/external_data&gt; (note line when any are escaped; opening tags untouched); write_file, patch_file, delete_file modify the filesystem
 # Exit: 1 if any tool ran (signals shai-repl to re-evaluate), 0 otherwise; 2 on bad constants
 set -euo pipefail
 
@@ -35,8 +36,8 @@ TOOLS_DIR="${SHAI_TOOLS_DIR:-$DIR/tools}"
 # drops exactly the part that usually carries the verdict (a `ci` exit_code line, a test
 # summary, an error tail), and silent tail loss lets the model reason from a clipped result
 # as if it were complete. Marker text stays inside the fenced content so the external_data
-# sanitization still applies to it. Here-strings (not pipes) feed head/tail so a short read
-# can never SIGPIPE the producer and take down the loop under `set -o pipefail`.
+# closing-tag escaping still applies to it. Here-strings (not pipes) feed head/tail so a short
+# read can never SIGPIPE the producer and take down the loop under `set -o pipefail`.
 truncate_output() {
   local raw="$1" total head_part tail_part head_len tail_len elided
   total=$(wc -c <<<"$raw" | tr -d ' ')
@@ -216,13 +217,18 @@ while IFS= read -r block; do
     if raw=$(run_tool "$tool_name" "$tool_input"); then is_error=false; else is_error=true; fi
   fi
   output=$(truncate_output "$raw")
+  # The fence is built with \u003c/\u003e escapes so this file keeps no literal angle-bracket
+  # external_data tags of its own (they would otherwise be escaped when read back); jq decodes
+  # them to the opening and closing fence tags at runtime.
   jq -nc --arg id "$tool_id" --arg content "$output" --arg src "$tool_name" --argjson is_error "$is_error" '
     ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
     | (if ($s0 | length) > 0 then $s0 else "tool" end) as $safe_src
-    | ($content | gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")) as $safe
+    | ($content | [scan("<\\s*/\\s*external_data\\s*>"; "i")] | length) as $n
+    | ($content | gsub("<\\s*/\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i")) as $safe
+    | (if $n > 0 then $safe + "\n[note: " + ($n|tostring) + " external_data tag(s) escaped in this content]" else $safe end) as $safe_note
     | {type:"tool_result", source:"tool",
        payload:{tool_call_id:$id,
-                content:("<external_data source=\"" + $safe_src + "\">\n" + $safe + "\n</external_data>"),
+                content:("\u003cexternal_data source=\"" + $safe_src + "\">\n" + $safe_note + "\n\u003c/external_data\u003e"),
                 is_error:$is_error}}'
 done < <(jq -c '
   select(.type=="message" and .source=="assistant")

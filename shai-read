@@ -3,7 +3,10 @@
 # Usage: printf '%s' text | shai-read [--system|--external SOURCE]
 # Reads: raw text on stdin
 # Writes: one JSON message event — user; system with --system; or a user message whose text is
-#         fenced in <external_data source="SOURCE"> with --external. Empty in → empty out.
+#         fenced in external_data tags (source attribute with SOURCE) with --external (closing
+#         external_data tags escaped as &lt;/external_data&gt; with a "[note: N external_data tag(s)
+#         escaped in this content]" line when any are escaped; opening tags pass through untouched).
+#         Empty in → empty out.
 # Exit: 0 on success; 2 on bad flags (missing --external value, or --system + --external combined)
 set -euo pipefail
 
@@ -40,12 +43,16 @@ if [ -z "$input" ]; then
 fi
 
 if [ "$EXTERNAL" = true ]; then
+  # \u003c/\u003e keep this file free of literal angle-bracket external_data tags; jq decodes
+  # them to the opening and closing fence tags at runtime.
   printf '%s' "$input" | jq -c -Rs --arg src "$EXT_SOURCE" '
     ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
     | (if ($s0 | length) > 0 then $s0 else "external" end) as $safe_src
-    | (gsub("<\\s*/?\\s*external_data\\s*>?"; "[external_data]"; "i")) as $safe
+    | ([scan("<\\s*/\\s*external_data\\s*>"; "i")] | length) as $n
+    | (gsub("<\\s*/\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i")) as $safe
+    | (if $n > 0 then $safe + "\n[note: " + ($n|tostring) + " external_data tag(s) escaped in this content]" else $safe end) as $safe_note
     | {type: "message", source: "user",
-       payload: {text: ("<external_data source=\"" + $safe_src + "\">\n" + $safe + "\n</external_data>")}}'
+       payload: {text: ("\u003cexternal_data source=\"" + $safe_src + "\">\n" + $safe_note + "\n\u003c/external_data\u003e")}}'
 else
   printf '%s' "$input" | jq -c -Rs --arg source "$SOURCE" \
     '{type: "message", source: $source, payload: {text: .}}'
