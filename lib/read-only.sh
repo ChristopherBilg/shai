@@ -37,13 +37,17 @@ RO_EXCLUDED_BASENAMES=(
   '.gnupg'       # GPG keyrings
 )
 
-# ro_component_excluded <basename>: 0 when a path component is on the exclusion list.
+# ro_component_excluded <basename>: 0 when a path component is on the exclusion list. The
+# patterns come from RO_EXCLUDED_BASENAMES — the same single source of truth the grep flags are
+# built from — so an entry added to the array is honored by the gate and the scan alike. Each
+# entry is matched as a glob (e.g. `.env.*` matches any `.env` variant).
 ro_component_excluded() {
-  local comp="$1"
-  case "$comp" in
-    .git | .ssh | .env | .env.* | node_modules | .aws | .gnupg) return 0 ;;
-    *) return 1 ;;
-  esac
+  local comp="$1" entry
+  for entry in "${RO_EXCLUDED_BASENAMES[@]}"; do
+    # shellcheck disable=SC2053  # $entry is a glob pattern (.env.*); glob matching is intended
+    [[ "$comp" == $entry ]] && return 0
+  done
+  return 1
 }
 
 # ro_path_excluded <path>: 0 when any component of <path> is on the exclusion list. Empty and
