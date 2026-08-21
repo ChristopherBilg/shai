@@ -22,7 +22,7 @@ printf 'hello from txt\n' >"$TDIR/src/notes.txt"
 printf 'hello\x00binary\x00data\n' >"$TDIR/src/blob.bin"
 # file inside .git should be excluded
 printf 'hello from git internals\n' >"$TDIR/.git/config"
-# default-excluded paths (see #118): dotenv files, .ssh, node_modules
+# default-excluded paths (see #118): dotenv files, .ssh, node_modules, $HOME credential files
 printf 'hello from dotenv\nSECRET=topsecret\n' >"$TDIR/.env"
 printf 'HELLO FROM ENV LOCAL\n' >"$TDIR/.env.local"
 printf 'hello from env example\n' >"$TDIR/.env.example"
@@ -30,6 +30,10 @@ mkdir -p "$TDIR/.ssh"
 printf 'hello from ssh key\n' >"$TDIR/.ssh/id_rsa"
 mkdir -p "$TDIR/node_modules"
 printf 'hello from deps\n' >"$TDIR/node_modules/pkg.js"
+printf 'hello from netrc\nmachine example.com login user password secret\n' >"$TDIR/.netrc"
+printf 'hello from npmrc\nauthToken=secret\n' >"$TDIR/.npmrc"
+printf 'hello from git credentials\nhttps://user:secret@github.com\n' >"$TDIR/.git-credentials"
+printf 'hello from pypirc\npassword = secret\n' >"$TDIR/.pypirc"
 
 # --- basic match ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p}')" 2>&1)
@@ -111,7 +115,7 @@ fi
 # --- default exclusions (see #118): .env, .env.*, .ssh, node_modules ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p}')" 2>&1)
 assert_eq "$?" "0" "exclusions: exits 0"
-for excluded in ".env" ".env.local" ".env.example" ".ssh/id_rsa" "node_modules/pkg.js"; do
+for excluded in ".env" ".env.local" ".env.example" ".ssh/id_rsa" "node_modules/pkg.js" ".netrc" ".npmrc" ".git-credentials" ".pypirc"; do
   if [[ "$OUT" == *"$excluded"* ]]; then
     echo -e "  ${RED}✗${NC} exclusions: should not match $excluded"
     FAILED=1

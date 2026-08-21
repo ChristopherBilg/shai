@@ -28,13 +28,17 @@ set -uo pipefail
 #
 # Each entry is a basename glob matched against every path component.
 RO_EXCLUDED_BASENAMES=(
-  '.git'         # VCS internals; config may embed remote credentials
-  '.ssh'         # private keys
-  '.env'         # dotenv files (API keys / secrets)
-  '.env.*'       # dotenv variants: .env.local, .env.production, ... (also .env.example)
-  'node_modules' # dependency noise
-  '.aws'         # AWS credentials
-  '.gnupg'       # GPG keyrings
+  '.git'             # VCS internals; config may embed remote credentials
+  '.ssh'             # private keys
+  '.env'             # dotenv files (API keys / secrets)
+  '.env.*'           # dotenv variants: .env.local, .env.production, ... (also .env.example)
+  'node_modules'     # dependency noise
+  '.aws'             # AWS credentials
+  '.gnupg'           # GPG keyrings
+  '.netrc'           # ftp/curl login credentials
+  '.git-credentials' # git credential helper store (plaintext tokens)
+  '.npmrc'           # npm registry auth tokens
+  '.pypirc'          # PyPI upload credentials
 )
 
 # ro_component_excluded <basename>: 0 when a path component is on the exclusion list. The

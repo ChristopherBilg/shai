@@ -161,9 +161,9 @@ RES=$(SHAI_HOME="$PDIR" run_check_policy "some_write_tool" '{}')
 assert_eq "$RES" "prompt" "no rule matches, no default: non-read-only → prompt"
 
 # --- default exclusions (see #118): the read-only auto-allow fallback degrades to `prompt`
-#     when the input path targets an excluded location (.git, .ssh, .env, .env.*, node_modules,
-#     .aws, .gnupg — the shared list in lib/read-only.sh). Exclusions are a default, not a
-#     boundary: an explicit rule or `default` is checked first and wins. ---
+#     when the input path targets an excluded location — any entry in RO_EXCLUDED_BASENAMES in
+#     lib/read-only.sh (credentials, VCS internals, dependency noise). Exclusions are a default,
+#     not a boundary: an explicit rule or `default` is checked first and wins. ---
 PDIR=$(empty_home)
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/repo/.env"}')
 assert_eq "$RES" "prompt" "exclusions: print_file targeting .env → prompt, not auto-allow"
@@ -179,6 +179,10 @@ RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"./proj/.env.loca
 assert_eq "$RES" "prompt" "exclusions: relative path into .env.* → prompt"
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"../.ssh/id_rsa"}')
 assert_eq "$RES" "prompt" "exclusions: relative path into .ssh → prompt"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/home/user/.netrc"}')
+assert_eq "$RES" "prompt" "exclusions: print_file on .netrc → prompt"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "search_files" '{"pattern":"x","path":"/home/user/.npmrc"}')
+assert_eq "$RES" "prompt" "exclusions: search_files targeting .npmrc → prompt"
 RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/repo/src/main.c"}')
 assert_eq "$RES" "allow" "exclusions: print_file on a plain path → still allow"
 RES=$(SHAI_HOME="$PDIR" run_check_policy "list_directory" '{"path":"/repo"}')
