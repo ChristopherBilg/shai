@@ -154,6 +154,12 @@ costs minutes and one of the three fix-and-push cycles below.
 2. Capture the pushed SHA right after the push: `git -C <clone-dir> rev-parse HEAD`.
    Do not trust `gh pr checks` alone — in the window between the push and GitHub registering
    the new run it reports the **previous** head's run, so a stale green run reads as success.
+   If you do call it, note that `gh pr checks` exits 8 while any check is pending and 1 when
+   a check has failed — the `gh` tool passes that exit code through verbatim, so in both cases
+   the call is reported to you as a tool error even though the table is complete and correct.
+   Decide from the status table, not from the error flag: a row-level `fail`/`failure` is a
+   failure, `pending` is not-yet-finished. Only follow step 3 when a row actually reports
+   failure.
    Poll SHA-aware instead, treating only entries whose `headSha` equals the relevant SHA as
    relevant:
 
