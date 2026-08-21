@@ -5,7 +5,8 @@
 # Writes: matching lines as path:line_number: text to stdout, plus a truncation marker when capped
 # Exit: 0 on success (including no matches), 1 on failure (bad input, grep error, timeout)
 set -euo pipefail
-# shellcheck source=../../lib/read-only.sh
+# The source directive is CWD-relative: tests/lint.sh invokes shellcheck from the repo root.
+# shellcheck source=lib/read-only.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." &>/dev/null && pwd)/lib/read-only.sh"
 input="$1"
 pattern=$(printf '%s' "$input" | jq -r '.pattern // empty')
