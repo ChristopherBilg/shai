@@ -55,7 +55,11 @@ count=$(OLD_STR="$old_string" awk '
   }
 ' "$path")
 if [ "$count" -eq 0 ]; then
-  printf 'old_string not found in %s' "$path"
+  if grep -Eq '<[[:space:]]*/?[[:space:]]*external_data' "$path" 2>/dev/null; then
+    printf 'old_string not found in %s (the file contains external_data tags, which are escaped in tool output — re-read and use surrounding text as the anchor)' "$path"
+  else
+    printf 'old_string not found in %s' "$path"
+  fi
   exit 1
 fi
 if [ "$count" -gt 1 ]; then

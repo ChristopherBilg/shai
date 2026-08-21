@@ -274,7 +274,7 @@ write_curl_stub 200 <<'STUB'
 {"id":"msg_ns","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 STUB
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
-  SHAI_HOME="$EVR4" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
+  env -u SHAI_SPAN_ID SHAI_HOME="$EVR4" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
 assert_eq "$([ -f "$EVR4/runs/run_nospan/span_0-response.json" ] && echo "exists")" "exists" \
   "response dump: unset span falls back to span_0"
 

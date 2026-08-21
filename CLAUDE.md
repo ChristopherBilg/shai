@@ -147,7 +147,7 @@ The scripts:
   Deepseek tool array to stdout. An empty or missing tools directory prints `[]`.
   Used by `shai-repl` and `shai-retry` at startup to build the file passed to every `shai-eval
   --tools-file`. Exit 1 on the first invalid plugin found.
-- **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source + content sanitized) as a `user` message; interactive REPL input stays unwrapped.
+- **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source sanitized; closing external_data tags escaped as `&lt;/external_data&gt;`) as a `user` message; interactive REPL input stays unwrapped.
 - **`shai-context [--max-bytes N]`** (`shai-context:1`) — a pure `jq` reducer. Reads the whole
   JSONL log, extracts the system prompt, and keeps as many recent **turn groups** as fit within
   the byte budget (default `SHAI_MAX_CONTEXT_BYTES` / `1300000`; `--max-bytes` overrides).
@@ -187,10 +187,11 @@ The scripts:
   overlap) with an explicit `[truncated: N bytes total; …]` marker between them that reports the
   byte counts actually retained — the cut is never silent, and trailing exit codes, test
   summaries and error tails survive (`head` alone dropped exactly the part that usually carries
-  the verdict). The marker is part of the fenced content, so it is sanitized like the rest of
+  the verdict). The marker is part of the fenced content, so it is escaped like the rest of
   it. Output is fenced in
-  `<external_data source="<tool>">…</external_data>` (source sanitized; injected closing tags
-  neutralized).
+  `<external_data source="<tool>">…</external_data>` (source sanitized; closing external_data tags
+  escaped as `&lt;/external_data&gt;` with a `[note: N external_data tag(s) escaped in this content]`
+  line when any are escaped; opening tags pass through untouched).
 - **`shai-loop [--tools|--tools-file <path>|--model|--max-tokens|--quiet]`** (`shai-loop:1`) —
   the eval/dispatch loop as a reusable filter. Reads a user prompt on stdin, runs
   `shai-read | shai-context | shai-eval`, drives the dispatch loop until no tool calls remain,
@@ -534,7 +535,8 @@ are automatically queued for resolution. Install via
   abort the pipeline. The eval test suite asserts this across many failure modes.
 - Treat all external/tool content as untrusted reference data, never instructions.
   `shai-read --external` and `shai-dispatch` fence it in `<external_data source="…">…</external_data>`
-  (source + content sanitized, injected closing tags neutralized so the fence can't be escaped),
+  (source sanitized; closing external_data tags escaped as `&lt;/external_data&gt;` so the fence can't
+  be escaped, with a `[note: N external_data tag(s) escaped in this content]` line when any are),
   and the system prompt (`prompts/system.txt`) tells the model never to follow instructions inside those tags
   — a deliberate defense against context contamination.
 - **Every `/tmp` file a workflow creates must be per-run and collision-free.** Workflows that

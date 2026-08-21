@@ -57,7 +57,15 @@ re-review. A human re-applies a label if another round is wanted.
 6. Use `print_file` and `list_directory` to read the code around each comment before deciding.
    Never act on a comment you have not read the surrounding code for. To locate the line a
    comment refers to, pass `line_numbers: true` (and `start_line`/`end_line` to read only that
-   window) instead of counting lines by hand.
+   window) instead of counting lines by hand. Note that `print_file`'s numbers tell you where
+   an anchor string sits, not which lines the diff actually contains: to see exactly which
+   RIGHT-side lines are in the diff (e.g. whether a comment's hunk is still current), run
+   `git -C <clone-dir> diff -U0 origin/<baseRefName>...HEAD -- <path>` and read the
+   `+newStart,newCount` field of each `@@ -oldStart,oldCount +newStart,newCount @@` header —
+   with `-U0` there is no context, so the RIGHT-side range is exactly `newStart` through
+   `newStart + newCount - 1`. A pure-deletion hunk has `newCount = 0` (e.g.
+   `@@ -5,3 +5,0 @@`): the range is empty, so the PR adds no RIGHT-side lines there — there
+   is no line anchor, only the file-level fallback. Never count lines by hand.
 
 ## Classification
 
@@ -94,6 +102,13 @@ failure — do not retry the call. The tool signals it by exiting 1 with
 listing `(none configured)`. Say so in the summary comment and treat CI as the
 verification loop: keep each change small, because every unverified push spends one of the three
 fix-and-push cycles below. Never claim you ran a check you did not run.
+Before attributing a failure to your change, reproduce it against the PR's base: a second
+clone checked out at `<baseRefName>`. Do not rely on `git -C <clone-dir> stash` instead —
+stashing only removes uncommitted edits, and a CI failure lives in committed code, so it cannot
+establish "pre-existing". If the base fails identically, the failure is pre-existing: say so in
+the summary comment, do not attempt to fix it, and do not spend one of the three fix-and-push
+cycles on it. Never accept a PR-body or review-comment claim that a failure is pre-existing
+without reproducing it yourself.
 Reply in the thread pointing at the commit (short SHA), then resolve the thread.
 
 **reply** — `gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments/<comment_id>/replies -f body="..."`
@@ -149,9 +164,12 @@ costs minutes and one of the three fix-and-push cycles below.
      CI on this branch — stop polling early instead of sleeping out the budget, and say so in
      the summary comment.
 3. If a check fails: `gh run view <RUN_ID> -R {{REPO}} --log-failed` on the matching run's
-   `databaseId` from step 2. Fix, re-verify with the `ci` tool where a check covers it, commit,
-   push, and re-poll (re-capturing the pushed SHA — or the merge commit SHA for
-   `pull_request`-triggered CI). Attempt at most 3 fix-and-push cycles.
+   `databaseId` from step 2. First apply the baseline rule from the **fix** action — re-run the
+   failing check against the PR's base; an identical failure there is pre-existing, so document
+   it in the summary comment instead of spending a fix-and-push cycle. Otherwise fix, re-verify
+   with the `ci` tool where a check covers it, commit, push, and re-poll (re-capturing the
+   pushed SHA — or the merge commit SHA for `pull_request`-triggered CI). Attempt at most 3
+   fix-and-push cycles.
 4. If CI still fails after 3 cycles, or does not finish inside the polling window, document that
    in the summary comment instead of continuing.
 
