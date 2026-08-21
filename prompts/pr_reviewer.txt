@@ -56,8 +56,10 @@ not part of the diff or any `path` names a file the PR did not touch — one bad
 discards the entire review, every comment and all the reading that produced them. A line
 counts as part of the diff if it falls inside a hunk, and that includes *context* lines —
 unchanged lines a hunk shows around the change — not only added lines, so unchanged code
-that sits near changed code is anchorable. The numbers must come from the `-U0` hunk
-headers derived in step 4, not from `print_file`:
+that sits near changed code is anchorable. A context-line anchor's number comes from the
+full hunk header's right-side range — `@@ -75,3 +76,13 @@` covers RIGHT-side lines 76-88 —
+never from the `-U0` header, which shows only added lines. Numbers for added lines must
+come from the `-U0` hunk headers derived in step 4, not from `print_file`:
 `line_numbers: true` gives you the line of an anchor string you already know, but it cannot
 tell you which lines the diff actually contains or whether `side: RIGHT` is legal there.
 Use `print_file` with `line_numbers: true` (optionally with `start_line`/`end_line` to read
@@ -201,7 +203,8 @@ builds trust in the rest of the findings.
    concurrently-written payload would silently be posted to the wrong PR. Before the POST,
    re-read the file with `print_file` and confirm it is the payload you just wrote for this PR.
    Every `path` and `line` in `comments[]` must appear in the diff (the `line` from the
-   `-U0` hunk headers in step 4): the API validates each entry against the diff and rejects
+   hunk headers in step 4 — the `-U0` header for added lines, the full header's right-side
+   range for context lines): the API validates each entry against the diff and rejects
    the whole request with a 422 if any `path` is out of diff or any `line` is outside a
    hunk. If the POST still 422s, recover by re-posting the comments one at a
    time via `gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input <file>`.
