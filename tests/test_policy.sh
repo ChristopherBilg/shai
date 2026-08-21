@@ -285,6 +285,13 @@ PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"ci","args":{"cwd":"/tmp/
 RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "ci" '{"cwd":"/elsewhere"}')
 assert_contains "$RES" 'cwd=/tmp/*,check=tests' "reason: arg-scope miss → all key=pattern pairs reported"
 
+# a deny rule with args that miss is NOT an arg-scope miss: retrying to match its pattern
+# would land on the deny rule, so report unmatched instead of suggesting a fixable retry
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"ci","args":{"cwd":"/tmp/*"},"action":"deny"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "ci" '{"cwd":"/elsewhere"}')
+assert_contains "$RES" $'prompt\tunmatched:' "reason: deny rule with args that miss → unmatched, not argscope"
+assert_contains "$RES" "$PDIR/policy.json" "reason: deny rule with args that miss → base policy named"
+
 # --- integration: the permission gate wired into run_tool, exercised through the full
 #     shai-dispatch pipeline (not the extracted functions) ---
 

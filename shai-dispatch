@@ -84,8 +84,8 @@ check_policy() {
   # string. Reasons: rule:<file>:<idx> (matched rule, 1-based index), default:<file> (the
   # policy's `.default`), readonly (read-only heuristic), nopolicy (no policy files),
   # unmatched:<overlay>:<base> (no rule matched, no default; `-` where a file is absent), and
-  # argscope:<file>:<key>=<pattern>[,...] (a rule for the tool exists but its args did not
-  # match — the one denial an agent can fix by retrying with different arguments).
+  # argscope:<file>:<key>=<pattern>[,...] (an allow rule for the tool exists but its args
+  # did not match — the one denial an agent can fix by retrying with different arguments).
   if ! "$has_base" && ! "$has_overlay"; then
     local ro
     ro=$(tool_is_read_only "$tool_name" 2>/dev/null)
@@ -153,14 +153,16 @@ check_policy() {
     return 0
   fi
 
-  # No rule matched and no default: distinguish "no rule for this tool at all" from "a rule
-  # exists but its args did not match" (arg-scope miss — the only case an agent can fix by
-  # retrying with different arguments). A same-tool rule can only fail to match when it
-  # carries args, so finding any rule for the tool means the args are the reason.
+  # No rule matched and no default: distinguish "no rule for this tool at all" from "an allow
+  # rule exists but its args did not match" (arg-scope miss — the only case an agent can fix by
+  # retrying with different arguments). Only allow rules count: retrying to match a deny rule's
+  # args would just land on the deny, so a deny rule with args that miss must not be reported
+  # as an arg-scope miss. An allow rule can only fail to match when the call's args missed its
+  # patterns, so finding one means the args are the reason.
   local scope_rule="" scope_file=""
   local scope_filter='
     .rules[]?
-    | select(.tool == $name and has("args"))
+    | select(.tool == $name and has("args") and .action == "allow")
     | .args | to_entries | map("\(.key)=\(.value)") | join(",")
   '
   if "$has_overlay"; then
@@ -242,7 +244,7 @@ run_tool() {
             for p in "${parts[@]}"; do
               pieces+=("${p%%=*} to match ${p#*=}")
             done
-            printf 'Not granted: %s — a rule for %s exists in %s but requires %s; retry with a matching argument.' \
+            printf 'Not granted: %s — an allow rule for %s exists in %s but requires %s; retry with a matching argument.' \
               "$name" "$name" "$scope_file" "$(
                 IFS=', '
                 printf '%s' "${pieces[*]}"
