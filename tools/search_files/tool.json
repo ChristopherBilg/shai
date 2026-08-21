@@ -1,6 +1,6 @@
 {
   "name": "search_files",
-  "description": "Search for a text pattern across files in a directory tree. Returns matching lines as path:line_number: text rows, followed by a [truncated: showing first N matches] line when more matches exist than max_results. Skips binary files and the .git directory, and gives up after 30 seconds. Use this to find where a symbol is defined, which files reference a string, or whether a pattern appears anywhere in the repo — faster and more reliable than printing whole files.",
+  "description": "Search for a text pattern across files in a directory tree. Returns matching lines as path:line_number: text rows, followed by a [truncated: showing first N matches] line when more matches exist than max_results. Skips binary files and default-excluded paths (.git, .ssh, .env, node_modules, ...), and gives up after 30 seconds. Use this to find where a symbol is defined, which files reference a string, or whether a pattern appears anywhere in the repo — faster and more reliable than printing whole files.",
   "capabilities": {
     "read_only": true
   },
