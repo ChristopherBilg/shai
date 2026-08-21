@@ -230,10 +230,15 @@ run_tool() {
       ;;
     prompt)
       if ! prompt_user "$name" "$input"; then
-        # Headless runs (workflows) never reach prompt_user's TTY, so prompt is always a hard
-        # deny here. Spell out which cause it was: no rule at all (retrying is futile), an
-        # arg-scope miss (retry with a matching argument — the one fixable case), or a
-        # prompt-typed policy default.
+        # prompt_user fails both for headless runs (no TTY — workflows never reach the
+        # prompt) and for an interactive user declining at a TTY; only the former is truly
+        # headless, so assert headlessness only when there is no TTY. Spell out which cause
+        # it was: no rule at all (retrying is futile), an arg-scope miss (retry with a
+        # matching argument — the one fixable case), or a prompt-typed policy default.
+        local denial_note="this run is headless, so retrying will not help."
+        if [ -t 2 ]; then
+          denial_note="the call was declined at the prompt."
+        fi
         case "$policy_reason" in
           argscope:*)
             local rest="${policy_reason#argscope:}"
@@ -255,20 +260,20 @@ run_tool() {
             local um_overlay="${um_rest%%:*}" um_base="${um_rest#*:}"
             [ "$um_overlay" = "-" ] && um_overlay="(none)"
             [ "$um_base" = "-" ] && um_base="(none)"
-            printf 'Not granted: %s — no allow rule matched in %s or %s; this run is headless, so retrying will not help.' \
-              "$name" "$um_overlay" "$um_base"
+            printf 'Not granted: %s — no allow rule matched in %s or %s; %s' \
+              "$name" "$um_overlay" "$um_base" "$denial_note"
             ;;
           nopolicy)
-            printf 'Not granted: %s — no policy file or overlay grants %s; this run is headless, so retrying will not help.' \
-              "$name" "$name"
+            printf 'Not granted: %s — no policy file or overlay grants %s; %s' \
+              "$name" "$name" "$denial_note"
             ;;
           default:*)
             local prompt_default="${policy_reason#default:}"
-            printf 'Not granted: %s — no rule matched and the policy default in %s is prompt; this run is headless, so retrying will not help.' \
-              "$name" "$prompt_default"
+            printf 'Not granted: %s — no rule matched and the policy default in %s is prompt; %s' \
+              "$name" "$prompt_default" "$denial_note"
             ;;
           *)
-            printf 'Not granted: %s — permission not granted; this run is headless, so retrying will not help.' "$name"
+            printf 'Not granted: %s — permission not granted; %s' "$name" "$denial_note"
             ;;
         esac
         return 1
