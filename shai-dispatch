@@ -89,9 +89,9 @@ read_only_fallback() {
   fi
   path=$(printf '%s' "$tool_input" | jq -r '.path // empty' 2>/dev/null) || path=""
   if ro_path_excluded "$path"; then
-    printf 'prompt'
+    printf 'prompt\treadonly'
   else
-    printf 'allow'
+    printf 'allow\treadonly'
   fi
 }
 
@@ -104,57 +104,109 @@ check_policy() {
   [ -f "$policy_file" ] && has_base=true
   [ -n "$overlay_file" ] && [ -f "$overlay_file" ] && has_overlay=true
 
+  # Every return is "<action>\t<reason>": the bare action drives run_tool's case dispatch, the
+  # reason lets a denial name the policy that decided it (rule vs default vs no rule vs
+  # arg-scope miss) instead of collapsing every cause into one indistinguishable three-word
+  # string. Reasons: rule:<file>:<idx> (matched rule, 1-based index), default:<file> (the
+  # policy's `.default`), readonly (read-only heuristic), nopolicy (no policy files),
+  # unmatched:<overlay>:<base> (no rule matched, no default; `-` where a file is absent), and
+  # argscope:<file>:<key>=<pattern>[,...] (an allow rule for the tool exists but its args
+  # did not match — the one denial an agent can fix by retrying with different arguments).
   if ! "$has_base" && ! "$has_overlay"; then
-    read_only_fallback "$tool_name" "$tool_input"
+    local ar
+    ar=$(read_only_fallback "$tool_name" "$tool_input")
+    if [ "$ar" = "prompt" ]; then
+      printf 'prompt\tnopolicy'
+    else
+      printf '%s' "$ar"
+    fi
     return 0
   fi
 
   local match_filter='
-    .rules[]?
-    | select(.tool == $name)
+    .rules | to_entries[]
+    | select(.value.tool == $name)
     | select(
-        (has("args") | not) or
-        (.args | to_entries | all(
+        (.value | has("args") | not) or
+        (.value.args | to_entries | all(
           .key as $k | .value as $v |
           ($input[$k] // "" | tostring) | test(
             "^" + ($v | gsub("(?<c>[.+?^${}()|\\[\\]])"; "\\\(.c)";"x") | gsub("\\*"; ".*")) + "$"
           )
         ))
       )
-    | .action
+    | "\(.value.action)\t\(.key + 1)"
   '
 
   # Overlay rules are checked first and intentionally supersede base rules (including deny).
-  local action=""
+  local match="" matched_file=""
 
-  if "$has_overlay" && [ -z "$action" ]; then
-    action=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" \
-      "$match_filter" "$overlay_file" 2>/dev/null | head -n 1) || action=""
+  if "$has_overlay"; then
+    match=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" \
+      "$match_filter" "$overlay_file" 2>/dev/null | head -n 1) || match=""
+    if [ -n "$match" ]; then matched_file="$overlay_file"; fi
   fi
 
-  if "$has_base" && [ -z "$action" ]; then
-    action=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" \
-      "$match_filter" "$policy_file" 2>/dev/null | head -n 1) || action=""
+  if [ -z "$match" ] && "$has_base"; then
+    match=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" \
+      "$match_filter" "$policy_file" 2>/dev/null | head -n 1) || match=""
+    if [ -n "$match" ]; then matched_file="$policy_file"; fi
   fi
 
-  if [ -n "$action" ]; then
-    printf '%s' "$action"
+  if [ -n "$match" ]; then
+    printf '%s\trule:%s:%s' "${match%%$'\t'*}" "$matched_file" "${match##*$'\t'}"
     return 0
   fi
 
-  local fallback=""
+  local fallback="" fallback_file=""
   if "$has_overlay"; then
     fallback=$(jq -r '.default // empty' "$overlay_file" 2>/dev/null) || fallback=""
+    if [ -n "$fallback" ]; then fallback_file="$overlay_file"; fi
   fi
   if [ -z "$fallback" ] && "$has_base"; then
     fallback=$(jq -r '.default // empty' "$policy_file" 2>/dev/null) || fallback=""
+    if [ -n "$fallback" ]; then fallback_file="$policy_file"; fi
   fi
   if [ -n "$fallback" ]; then
-    printf '%s' "$fallback"
+    printf '%s\tdefault:%s' "$fallback" "$fallback_file"
     return 0
   fi
 
-  read_only_fallback "$tool_name" "$tool_input"
+  local ar
+  ar=$(read_only_fallback "$tool_name" "$tool_input")
+  if [ "$ar" != "prompt" ]; then
+    printf '%s' "$ar"
+    return 0
+  fi
+
+  # No rule matched and no default: distinguish "no rule for this tool at all" from "an allow
+  # rule exists but its args did not match" (arg-scope miss — the only case an agent can fix by
+  # retrying with different arguments). Only allow rules count: retrying to match a deny rule's
+  # args would just land on the deny, so a deny rule with args that miss must not be reported
+  # as an arg-scope miss. An allow rule can only fail to match when the call's args missed its
+  # patterns, so finding one means the args are the reason.
+  local scope_rule="" scope_file=""
+  local scope_filter='
+    .rules[]?
+    | select(.tool == $name and has("args") and .action == "allow")
+    | .args | to_entries | map("\(.key)=\(.value)") | join(",")
+  '
+  if "$has_overlay"; then
+    scope_rule=$(jq -r --arg name "$tool_name" "$scope_filter" "$overlay_file" 2>/dev/null | head -n 1) || scope_rule=""
+    if [ -n "$scope_rule" ]; then scope_file="$overlay_file"; fi
+  fi
+  if [ -z "$scope_rule" ] && "$has_base"; then
+    scope_rule=$(jq -r --arg name "$tool_name" "$scope_filter" "$policy_file" 2>/dev/null | head -n 1) || scope_rule=""
+    if [ -n "$scope_rule" ]; then scope_file="$policy_file"; fi
+  fi
+  if [ -n "$scope_rule" ]; then
+    printf 'prompt\targscope:%s:%s' "$scope_file" "$scope_rule"
+  else
+    local overlay_disp="-" base_disp="-"
+    if "$has_overlay"; then overlay_disp="$overlay_file"; fi
+    if "$has_base"; then base_disp="$policy_file"; fi
+    printf 'prompt\tunmatched:%s:%s' "$overlay_disp" "$base_disp"
+  fi
 }
 
 prompt_user() {
@@ -176,17 +228,80 @@ prompt_user() {
 
 run_tool() {
   local name="$1" input="$2"
-  local policy_action
-  policy_action=$(check_policy "$name" "$input")
+  local policy_line policy_action policy_reason
+  policy_line=$(check_policy "$name" "$input")
+  policy_action="${policy_line%%$'\t'*}"
+  policy_reason="${policy_line#*$'\t'}"
   case "$policy_action" in
     allow) ;;
     deny)
-      printf 'Policy denied: %s' "$name"
+      # Denials name the deciding policy so the model can tell an explicit deny rule from a
+      # policy default that denies — and can see the file to inspect — instead of getting the
+      # same three words for every cause.
+      case "$policy_reason" in
+        rule:*)
+          local deny_file="${policy_reason#rule:}"
+          deny_file="${deny_file%:*}"
+          printf 'Policy denied: %s — deny rule in %s.' "$name" "$deny_file"
+          ;;
+        default:*)
+          local deny_default="${policy_reason#default:}"
+          printf 'Policy denied: %s — no rule matched and the policy default is deny in %s.' "$name" "$deny_default"
+          ;;
+        *)
+          printf 'Policy denied: %s.' "$name"
+          ;;
+      esac
       return 1
       ;;
     prompt)
       if ! prompt_user "$name" "$input"; then
-        printf 'Permission denied: %s' "$name"
+        # prompt_user fails both for headless runs (no TTY — workflows never reach the
+        # prompt) and for an interactive user declining at a TTY; only the former is truly
+        # headless, so assert headlessness only when there is no TTY. Spell out which cause
+        # it was: no rule at all (retrying is futile), an arg-scope miss (retry with a
+        # matching argument — the one fixable case), or a prompt-typed policy default.
+        local denial_note="this run is headless, so retrying will not help."
+        if [ -t 2 ]; then
+          denial_note="the call was declined at the prompt."
+        fi
+        case "$policy_reason" in
+          argscope:*)
+            local rest="${policy_reason#argscope:}"
+            local scope_file="${rest%%:*}"
+            local patterns="${rest#*:}"
+            local parts=() pieces=() p
+            IFS=',' read -r -a parts <<<"$patterns"
+            for p in "${parts[@]}"; do
+              pieces+=("${p%%=*} to match ${p#*=}")
+            done
+            printf 'Not granted: %s — an allow rule for %s exists in %s but requires %s; retry with a matching argument.' \
+              "$name" "$name" "$scope_file" "$(
+                IFS=', '
+                printf '%s' "${pieces[*]}"
+              )"
+            ;;
+          unmatched:*)
+            local um_rest="${policy_reason#unmatched:}"
+            local um_overlay="${um_rest%%:*}" um_base="${um_rest#*:}"
+            [ "$um_overlay" = "-" ] && um_overlay="(none)"
+            [ "$um_base" = "-" ] && um_base="(none)"
+            printf 'Not granted: %s — no allow rule matched in %s or %s; %s' \
+              "$name" "$um_overlay" "$um_base" "$denial_note"
+            ;;
+          nopolicy)
+            printf 'Not granted: %s — no policy file or overlay grants %s; %s' \
+              "$name" "$name" "$denial_note"
+            ;;
+          default:*)
+            local prompt_default="${policy_reason#default:}"
+            printf 'Not granted: %s — no rule matched and the policy default in %s is prompt; %s' \
+              "$name" "$prompt_default" "$denial_note"
+            ;;
+          *)
+            printf 'Not granted: %s — permission not granted; %s' "$name" "$denial_note"
+            ;;
+        esac
         return 1
       fi
       ;;

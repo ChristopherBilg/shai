@@ -47,10 +47,25 @@ extract_functions() {
 }
 
 run_check_policy() {
-  local tool_name="$1" tool_input="$2"
+  local tool_name="$1" tool_input="$2" out
   # shai-dispatch derives DIR from ${BASH_SOURCE[0]}, which under eval resolves to this file's
   # own directory (tests/), not shai-dispatch's — so TOOLS_DIR must be pinned explicitly here to
   # the repo's real tools/ directory; it wins over the eval'd script's own $DIR/tools default.
+  # shellcheck disable=SC2034  # consumed by the eval'd shai-dispatch code below, not directly
+  local SHAI_TOOLS_DIR="$DIR/tools"
+  eval "$(extract_functions)"
+  out=$(check_policy "$tool_name" "$tool_input")
+  # check_policy returns "<action>\t<reason>" (issue #116) so denials can name their cause; the
+  # existing assertions below check the bare action, so strip the reason here. The full line is
+  # exercised through run_check_policy_raw.
+  printf '%s' "${out%%$'\t'*}"
+}
+
+# run_check_policy_raw <tool> <input>: the full "<action>\t<reason>" line, so tests can assert
+# that a denial names the deciding policy file, distinguishes a deny rule from no rule, and
+# reports the expected arg pattern on an arg-scope miss.
+run_check_policy_raw() {
+  local tool_name="$1" tool_input="$2"
   # shellcheck disable=SC2034  # consumed by the eval'd shai-dispatch code below, not directly
   local SHAI_TOOLS_DIR="$DIR/tools"
   eval "$(extract_functions)"
@@ -271,10 +286,69 @@ ODIR5=$(setup_policy '{"rules":[{"tool":"print_file","action":"deny"}]}')
 RES=$(SHAI_HOME="$ODIR5" SHAI_POLICY_OVERLAY="/nonexistent/path.json" run_check_policy "print_file" '{}')
 assert_eq "$RES" "deny" "overlay: nonexistent overlay path ignored, base applies"
 
+# --- check_policy returns "<action>\t<reason>": denials can name the deciding source ---
+# (issue #116 — previously every denial collapsed into the same three words, so an agent could
+# not tell an explicit deny from "no rule at all" from an arg-scope miss)
+
+# matched rule → reason carries the policy file path and the 1-based rule index
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"gh","action":"deny"},{"tool":"ci","action":"allow"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "gh" '{}')
+assert_eq "$RES" "$(printf 'deny\trule:%s/policy.json:1' "$PDIR")" "reason: deny rule → deny<TAB>rule:<path>:<index>"
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "ci" '{}')
+assert_eq "$RES" "$(printf 'allow\trule:%s/policy.json:2' "$PDIR")" "reason: allow rule → allow<TAB>rule:<path>:<index>"
+
+# no rule matched, no default → unmatched reason naming every consulted file (`-` = absent)
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"gh","action":"allow"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "some_write_tool" '{}')
+assert_contains "$RES" $'prompt\tunmatched:-:' "reason: no rule → prompt<TAB>unmatched:<overlay>:<base>"
+assert_contains "$RES" "$PDIR/policy.json" "reason: no rule → base policy path named"
+RES=$(SHAI_HOME="$PDIR" SHAI_POLICY_OVERLAY="/nonexistent.json" run_check_policy_raw "some_write_tool" '{}')
+assert_contains "$RES" "unmatched:-:$PDIR/policy.json" "reason: nonexistent overlay not named as consulted"
+
+# no policy file at all → nopolicy reason (distinct from "rule exists but args missed")
+PDIR=$(empty_home)
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "some_write_tool" '{}')
+assert_eq "$RES" $'prompt\tnopolicy' "reason: no policy file → prompt<TAB>nopolicy"
+
+# policy default → default reason naming the file that set it
+PDIR=$(setup_policy '{"version":"1.0","default":"deny","rules":[]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "some_write_tool" '{}')
+assert_eq "$RES" "$(printf 'deny\tdefault:%s/policy.json' "$PDIR")" "reason: default deny → deny<TAB>default:<path>"
+PDIR=$(setup_policy '{"version":"1.0","default":"prompt","rules":[]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "some_write_tool" '{}')
+assert_eq "$RES" "$(printf 'prompt\tdefault:%s/policy.json' "$PDIR")" "reason: default prompt → prompt<TAB>default:<path>"
+
+# read-only heuristic reason
+PDIR=$(empty_home)
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "print_file" '{}')
+assert_eq "$RES" $'allow\treadonly' "reason: read-only auto-allow → allow<TAB>readonly"
+
+# arg-scope miss → argscope reason naming the file and the expected arg pattern
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"ci","args":{"cwd":"/tmp/*"},"action":"allow"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "ci" '{"cwd":"/elsewhere"}')
+assert_contains "$RES" $'prompt\targscope:' "reason: arg-scope miss → prompt<TAB>argscope:<path>:<patterns>"
+assert_contains "$RES" "$PDIR/policy.json" "reason: arg-scope miss → policy file named"
+assert_contains "$RES" 'cwd=/tmp/*' "reason: arg-scope miss → expected arg pattern reported"
+# the same call with a matching cwd still matches the rule
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "ci" '{"cwd":"/tmp/x"}')
+assert_contains "$RES" $'allow\trule:' "reason: matching cwd → allow with rule reason"
+
+# multi-arg rule: every key/pattern is reported
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"ci","args":{"cwd":"/tmp/*","check":"tests"},"action":"allow"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "ci" '{"cwd":"/elsewhere"}')
+assert_contains "$RES" 'cwd=/tmp/*,check=tests' "reason: arg-scope miss → all key=pattern pairs reported"
+
+# a deny rule with args that miss is NOT an arg-scope miss: retrying to match its pattern
+# would land on the deny rule, so report unmatched instead of suggesting a fixable retry
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"ci","args":{"cwd":"/tmp/*"},"action":"deny"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "ci" '{"cwd":"/elsewhere"}')
+assert_contains "$RES" $'prompt\tunmatched:' "reason: deny rule with args that miss → unmatched, not argscope"
+assert_contains "$RES" "$PDIR/policy.json" "reason: deny rule with args that miss → base policy named"
+
 # --- integration: the permission gate wired into run_tool, exercised through the full
 #     shai-dispatch pipeline (not the extracted functions) ---
 
-# deny produces is_error tool_result
+# deny produces is_error tool_result naming the deny rule and its policy file
 tmpdir=$(setup_policy '{"version":"1.0","default":"deny","rules":[{"tool":"list_directory","action":"deny"}]}')
 make_stub_bin
 stub_dir="$STUB"
@@ -283,8 +357,11 @@ event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"te
 result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$result" '"is_error":true' "deny → is_error true"
 assert_contains "$result" 'Policy denied' "deny → error message"
+assert_contains "$result" 'deny rule in' "deny → message names the deny rule"
+assert_contains "$result" "$tmpdir/policy.json" "deny → message names the policy file"
 
-# non-interactive prompt → fail closed
+# non-interactive prompt → fail closed with a cause-bearing Not granted (never the old
+# ambiguous "Permission denied: <tool>")
 tmpdir=$(setup_policy '{"version":"1.0","default":"prompt","rules":[]}')
 make_stub_bin
 stub_dir="$STUB"
@@ -292,7 +369,22 @@ write_gh_stub
 event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"test_prompt","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}  }],"finish_reason":"tool_calls"}}'
 result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$result" '"is_error":true' "non-interactive prompt → is_error true"
-assert_contains "$result" 'Permission denied' "non-interactive prompt → denied message"
+assert_contains "$result" 'Not granted' "non-interactive prompt → denied message"
+assert_contains "$result" 'policy default in' "non-interactive prompt → message names the deciding default"
+assert_contains "$result" "$tmpdir/policy.json" "non-interactive prompt → message names the policy file"
+
+# arg-scope miss → Not granted naming the required arg pattern, so the agent knows the retry
+# that would work (this is the case the old three-word message made undetectable)
+tmpdir=$(setup_policy '{"version":"1.0","rules":[{"tool":"ci","args":{"cwd":"/tmp/*"},"action":"allow"}]}')
+make_stub_bin
+stub_dir="$STUB"
+write_gh_stub
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"test_scope","type":"function","function":{"name":"ci","arguments":"{\"cwd\":\"/elsewhere\"}"}  }],"finish_reason":"tool_calls"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
+assert_contains "$result" '"is_error":true' "arg-scope miss → is_error true"
+assert_contains "$result" 'Not granted' "arg-scope miss → denied message"
+assert_contains "$result" 'requires cwd to match /tmp/*' "arg-scope miss → expected arg pattern reported"
+assert_contains "$result" "$tmpdir/policy.json" "arg-scope miss → message names the policy file"
 
 # allow executes tool normally
 tmpdir=$(setup_policy '{"version":"1.0","default":"deny","rules":[{"tool":"list_directory","action":"allow"}]}')
@@ -311,6 +403,6 @@ stub_dir="$STUB"
 event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"test_excl","type":"function","function":{"name":"print_file","arguments":"{\"path\":\"/repo/.env\"}"}  }],"finish_reason":"tool_calls"}}'
 result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$result" '"is_error":true' "exclusions integration: excluded path → is_error true (fail closed)"
-assert_contains "$result" 'Permission denied' "exclusions integration: excluded path → denied message, tool not executed"
+assert_contains "$result" 'Not granted' "exclusions integration: excluded path → denied message, tool not executed"
 
 finish
