@@ -2,7 +2,7 @@
 # review_resolver/run.sh — process PR review comments: classify and act on each
 # Usage: workflows/review_resolver/run.sh <repo> <number>
 # Reads: DEEPSEEK_API_KEY from environment; prompts/review_resolver.txt for LLM instructions
-# Writes: commits/replies/issues/resolved threads on GitHub; ephemeral session log (prunable)
+# Writes: commits/replies/resolved threads on GitHub; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
@@ -49,7 +49,6 @@ TYPE=$(printf '%s' "$RESULT" | jq -r '.type // empty' 2>/dev/null) || TYPE=""
 SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE=""
 
 if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
-  wf_suggest
   wf_output "resolved review comments on PR #$NUMBER on $REPO"
   exit 0
 else
