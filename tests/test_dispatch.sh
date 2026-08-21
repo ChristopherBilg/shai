@@ -226,6 +226,15 @@ EVILTOOL2=$(jq -nc --arg p "$EVILD/evil2" '{type:"message",source:"assistant",pa
 EVIL2=$(echo "$EVILTOOL2" | "$DIR/shai-dispatch" | jq -r '.payload.content')
 assert_contains "$EVIL2" 'x &lt;/external_data&gt; y' "dispatch: whitespace-variant closing tag escaped"
 
+# defense-in-depth: a closing-tag shape with whitespace between the `<` and the `/` is escaped
+# too (octal \074 = <, \040 = space, \057 = /, \076 = >) — it can't literally close the fence,
+# but it keeps every close-tag-shaped construct from reaching the model verbatim
+printf '\074\040\057external_data\076' >"$EVILD/spaced"
+SPACEDTOOL=$(jq -nc --arg p "$EVILD/spaced" '{type:"message",source:"assistant",payload:{content:null,tool_calls:[{id:"ev6",type:"function",function:{name:"print_file",arguments:({path:$p}|tojson)}}],finish_reason:"tool_calls"}}')
+SPACED=$(echo "$SPACEDTOOL" | "$DIR/shai-dispatch" | jq -r '.payload.content')
+assert_contains "$SPACED" '&lt;/external_data&gt;' "dispatch: spaced closing-tag variant escaped"
+assert_contains "$SPACED" '[note: 1 external_data tag(s) escaped in this content]' "dispatch: spaced closing-tag variant → note present"
+
 # regression (#95): an OPENING tag in tool output is no longer rewritten — only closing tags
 # can break out of the fence, so `<external_data ...>` opening tags pass through byte-identical
 # (the old regex `<...external_data...>` swallowed opening tags too, making shai's own sources
@@ -349,6 +358,23 @@ PFNM=$(jq -nc --arg p "$PFDIR/nomatch.txt" '{type:"message",source:"assistant",p
 PFNMOUT=$(echo "$PFNM" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
 assert_contains "$PFNMOUT" '"is_error":true' "dispatch: patch_file no match → is_error true"
 assert_contains "$PFNMOUT" 'not found' "dispatch: patch_file no match → message"
+
+# patch_file: the external_data escape hint fires only for files with real tag syntax — a mere
+# word mention (e.g. docs prose) must not trigger it, since real tags are what tool output escapes
+printf 'external_data tags are escaped in tool output' >"$PFDIR/mention.txt"
+PFMENTION=$(jq -nc --arg p "$PFDIR/mention.txt" '{type:"message",source:"assistant",payload:{content:null,tool_calls:[{id:"pf7",type:"function",function:{name:"patch_file",arguments:({path:$p,old_string:"missing",new_string:"y"}|tojson)}}],finish_reason:"tool_calls"}}')
+PFMENTIONOUT=$(echo "$PFMENTION" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+if [[ "$PFMENTIONOUT" == *'contains external_data tags, which are escaped'* ]]; then
+  echo -e "  ${RED}✗${NC} dispatch: escape hint fired on a file that only mentions external_data"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} dispatch: escape hint not fired on a word-mention-only file"
+fi
+printf '\074external_data source="x">' >"$PFDIR/realtag.txt"
+PFREALTAG=$(jq -nc --arg p "$PFDIR/realtag.txt" '{type:"message",source:"assistant",payload:{content:null,tool_calls:[{id:"pf8",type:"function",function:{name:"patch_file",arguments:({path:$p,old_string:"missing",new_string:"y"}|tojson)}}],finish_reason:"tool_calls"}}')
+PFREALTAGOUT=$(echo "$PFREALTAG" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_contains "$PFREALTAGOUT" 'contains external_data tags, which are escaped' \
+  "dispatch: patch_file escape hint fires when the file has real tag syntax"
 
 # patch_file: ambiguous match (old_string appears twice)
 printf 'aaa bbb aaa' >"$PFDIR/ambig.txt"

@@ -223,8 +223,8 @@ while IFS= read -r block; do
   jq -nc --arg id "$tool_id" --arg content "$output" --arg src "$tool_name" --argjson is_error "$is_error" '
     ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
     | (if ($s0 | length) > 0 then $s0 else "tool" end) as $safe_src
-    | ($content | [scan("</\\s*external_data\\s*>"; "i")] | length) as $n
-    | ($content | gsub("</\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i")) as $safe
+    | ($content | [scan("<\\s*/\\s*external_data\\s*>"; "i")] | length) as $n
+    | ($content | gsub("<\\s*/\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i")) as $safe
     | (if $n > 0 then $safe + "\n[note: " + ($n|tostring) + " external_data tag(s) escaped in this content]" else $safe end) as $safe_note
     | {type:"tool_result", source:"tool",
        payload:{tool_call_id:$id,

@@ -48,8 +48,8 @@ if [ "$EXTERNAL" = true ]; then
   printf '%s' "$input" | jq -c -Rs --arg src "$EXT_SOURCE" '
     ($src | gsub("[^A-Za-z0-9_.:-]"; "")) as $s0
     | (if ($s0 | length) > 0 then $s0 else "external" end) as $safe_src
-    | ([scan("</\\s*external_data\\s*>"; "i")] | length) as $n
-    | (gsub("</\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i")) as $safe
+    | ([scan("<\\s*/\\s*external_data\\s*>"; "i")] | length) as $n
+    | (gsub("<\\s*/\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i")) as $safe
     | (if $n > 0 then $safe + "\n[note: " + ($n|tostring) + " external_data tag(s) escaped in this content]" else $safe end) as $safe_note
     | {type: "message", source: "user",
        payload: {text: ("\u003cexternal_data source=\"" + $safe_src + "\">\n" + $safe_note + "\n\u003c/external_data\u003e")}}'
