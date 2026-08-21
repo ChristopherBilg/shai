@@ -66,6 +66,16 @@ re-review. A human re-applies a label if another round is wanted.
    `newStart + newCount - 1`. A pure-deletion hunk has `newCount = 0` (e.g.
    `@@ -5,3 +5,0 @@`): the range is empty, so the PR adds no RIGHT-side lines there — there
    is no line anchor, only the file-level fallback. Never count lines by hand.
+7. If the PR body, branch name, or comments reference a GitHub issue (`Closes #N`, `#N`, or a
+   `shai/<N>-...` branch), fetch it with `gh issue view N -R {{REPO}} --json title,body,labels,comments`
+   and read it before classifying any comment. A bare `#N` can also name a pull request (e.g.
+   "see #122") — `gh issue view N` silently returns that PR's own data for such a number, so
+   treat `#N` as an issue reference only when the context names an issue. Review comments
+   about scope or requirements alignment (e.g. "the PR drops requirement X from the issue")
+   can only be judged against the issue text, not against the PR's paraphrase of it — a
+   comment that correctly cites the issue is in scope even when the PR body describes the
+   issue differently. If a Jira key (`PROJ-123`) appears, also call `jira_issue_view` for the
+   same purpose.
 
 ## Classification
 
