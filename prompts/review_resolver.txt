@@ -112,10 +112,16 @@ failure — do not retry the call. The tool signals it by exiting 1 with
 listing `(none configured)`. Say so in the summary comment and treat CI as the
 verification loop: keep each change small, because every unverified push spends one of the three
 fix-and-push cycles below. Never claim you ran a check you did not run.
-Before attributing a failure to your change, reproduce it against the PR's base: a second
-clone checked out at `<baseRefName>`. Do not rely on `git -C <clone-dir> stash` instead —
-stashing only removes uncommitted edits, and a CI failure lives in committed code, so it cannot
-establish "pre-existing". If the base fails identically, the failure is pre-existing: say so in
+Before attributing a failure to your change, reproduce it against the PR's base from an
+isolated checkout at a fresh path, unique to this run — a leftover from an interrupted run
+makes a later `worktree add` on the same path fail with `fatal: '...' already exists`, so do
+not reuse a fixed path. Add it with `git -C <clone-dir> worktree add /tmp/base-<unique> origin/<baseRefName>`, then
+run the failing check with the `ci` tool and `cwd: /tmp/base-<unique>`; remove the worktree when
+done (`git -C <clone-dir> worktree remove --force /tmp/base-<unique>`). Do not use
+`git -C <clone-dir> checkout <baseRefName>` — it carries uncommitted edits onto the baseline,
+reporting your own changes as pre-existing — and do not rely on `git -C <clone-dir> stash`
+(stashing only removes uncommitted edits, and a CI failure lives in committed code, so it cannot
+establish "pre-existing"). If the base fails identically, the failure is pre-existing: say so in
 the summary comment, do not attempt to fix it, and do not spend one of the three fix-and-push
 cycles on it. Never accept a PR-body or review-comment claim that a failure is pre-existing
 without reproducing it yourself.
