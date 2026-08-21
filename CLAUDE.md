@@ -317,6 +317,16 @@ sync — adding a tool means adding a directory. Workflows share the same tool p
 `tool_calls` entry is dispatched through the identical `shai-dispatch` path, so the permission
 gate below applies to workflow tool calls exactly as it does to the interactive REPL.
 
+**The `gh` tool's exit codes** — `tools/gh/run.sh` runs `timeout 120s gh "${args[@]}"` and,
+under `set -euo pipefail`, `gh`'s exit code becomes the tool's exit code, so `shai-dispatch`
+marks any nonzero result `is_error: true`, and `shai-context` renders it to the agent prefixed
+with `[ERROR] `. A nonzero exit is not always a failure — some `gh` commands use the exit code
+as information. Known cases: `gh pr checks` exits 8 while any check is pending and 1 when a
+check has failed (decide from the status table, not the error flag), and `gh label create`
+exits nonzero when the label already exists (ignore that error and continue). When a prompt
+calls such a command, state the intended reading of the nonzero exit at the call site rather
+than treating every error-flagged result as a failure.
+
 **Tool-declared prerequisites** — `capabilities.requires` in a `tool.json` is the source of truth
 for what a tool needs from its environment, and `shai-doctor` reports on all of it: `tools`
 (executables on `$PATH`), `env` (`[{name, level}]`, level `core`|`conditional`), and `files`
