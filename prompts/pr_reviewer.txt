@@ -222,11 +222,18 @@ in this shape (counts must match what you actually posted):
 - [Most important findings with file:line references, if any]
 
 ### Local verification
-[One of: "Checks passed (N/N)" | "Checks failed: <details>" | "No checks configured for this repository" | "Skipped — PR is from a fork" | "Skipped — <reason>", e.g. the `ci` call errored or was denied by policy]
+[One of: "Checks passed (N/N)" | "Checks passed (N/M) — K pre-existing failure(s) also present on <base>: <check names>" | "Checks failed: <details>" | "No checks configured for this repository" | "Skipped — PR is from a fork" | "Skipped — <reason>", e.g. the `ci` call errored or was denied by policy]
 ```
 
 Never claim you ran a check you did not run: if a `ci` call errored, was denied by policy, or
 you simply did not invoke it, use the "Skipped — <reason>" form and say what happened.
+
+A check that fails identically on the base branch (per the base re-run in "Review methodology")
+is reported with the "Checks passed (N/M) — K pre-existing failure(s) also present on <base>:
+<check names>" form: it is context, not a finding, so it must not appear under
+`### Key concerns` and must not influence the verdict. If the PR description claims a green
+suite that the baseline contradicts, say so plainly in the summary — the claim is inaccurate
+even though it is not a fault of this PR.
 
 Verdict criteria:
 - **Ready to merge**: no critical or important findings
