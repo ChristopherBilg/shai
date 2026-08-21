@@ -70,6 +70,8 @@ write_remote_stub "https://github.com/owner/repo.git"
 OUT=$("$TOOL" '{"action":"list"}')
 RC=$?
 assert_eq "$RC" "0" "list: exit 0"
+# the first line names the run.sh that orchestrated the listing (issue #157)
+assert_eq "${OUT%%$'\n'*}" "ci-tool: $DIR/tools/ci/run.sh" "list: ci-tool line is the first line"
 assert_contains "$OUT" "test" "list: shows test check"
 assert_contains "$OUT" "lint" "list: shows lint check"
 assert_contains "$OUT" "slow" "list: shows slow check"
@@ -82,8 +84,10 @@ RC=$?
 assert_eq "$RC" "0" "run success: exit 0"
 assert_contains "$OUT" "tests-passed" "run success: command output present"
 assert_contains "$OUT" "exit_code: 0" "run success: exit_code 0 reported"
-# exit_code must lead the output: shai-dispatch truncates to the first 32000 bytes
-assert_eq "${OUT%%$'\n'*}" "exit_code: 0" "run success: exit_code is the first line"
+# ci-tool must lead the output: the agent needs to see which run.sh orchestrated the run
+# (issue #157), and exit_code right behind it stays inside the dispatch truncation head window.
+assert_eq "${OUT%%$'\n'*}" "ci-tool: $DIR/tools/ci/run.sh" "run success: ci-tool line is the first line"
+assert_eq "$(printf '%s\n' "$OUT" | sed -n '2p')" "exit_code: 0" "run success: exit_code is the second line"
 
 # ===== run action (command fails) =====
 desc "run action — failing check"
@@ -105,7 +109,8 @@ RC=$?
 assert_eq "$RC" "0" "run fail: tool exits 0 (not is_error)"
 assert_contains "$OUT" "failure-output" "run fail: command output present"
 assert_contains "$OUT" "exit_code: 1" "run fail: exit_code 1 reported"
-assert_eq "${OUT%%$'\n'*}" "exit_code: 1" "run fail: exit_code is the first line"
+assert_eq "${OUT%%$'\n'*}" "ci-tool: $DIR/tools/ci/run.sh" "run fail: ci-tool line is the first line"
+assert_eq "$(printf '%s\n' "$OUT" | sed -n '2p')" "exit_code: 1" "run fail: exit_code is the second line"
 
 # ===== a check that exits 124 on its own is not a timeout =====
 desc "run action — command exits 124"
@@ -261,6 +266,49 @@ OUT=$("$TOOL" '{"action":"list","cwd":"/nonexistent-shai-ci-dir"}' 2>&1) || true
 assert_contains "$OUT" "not a directory" "cwd: rejects a non-directory path"
 assert_exit 1 "cwd: exit 1 on a non-directory path" -- \
   "$TOOL" '{"action":"list","cwd":"/nonexistent-shai-ci-dir"}'
+
+# ===== tool_dir override =====
+# An explicit tool_dir execs that directory's ci/run.sh in place of the installed one, so a
+# checkout's own tool can orchestrate its checks when dogfooding a change to tools/ci/run.sh
+# (issue #157). The override is agent-invoked only and must never be derived from repo content.
+desc "tool_dir override"
+TOOLDIR="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TOOLDIR")
+mkdir -p "$TOOLDIR/ci"
+cat >"$TOOLDIR/ci/run.sh" <<EOF
+#!/bin/bash
+printf 'ci-tool: $TOOLDIR/ci/run.sh\n'
+printf 'exit_code: 0\n'
+printf 'checkout-tool-ran\n'
+EOF
+chmod +x "$TOOLDIR/ci/run.sh"
+write_remote_stub "https://github.com/owner/repo.git"
+OUT=$("$TOOL" "{\"action\":\"run\",\"check\":\"test\",\"tool_dir\":\"$TOOLDIR\"}")
+RC=$?
+assert_eq "$RC" "0" "tool_dir: exit 0"
+assert_contains "$OUT" "checkout-tool-ran" "tool_dir: the checkout's run.sh orchestrated the run"
+assert_contains "$OUT" "ci-tool: $TOOLDIR/ci/run.sh" "tool_dir: ci-tool line names the checkout's run.sh"
+
+# tool_dir pointing at the repo's own tools dir must not loop (tool_dir stripped before exec)
+OUT=$("$TOOL" "{\"action\":\"list\",\"tool_dir\":\"$DIR/tools\"}")
+RC=$?
+assert_eq "$RC" "0" "tool_dir self: exit 0"
+assert_eq "${OUT%%$'\n'*}" "ci-tool: $DIR/tools/ci/run.sh" "tool_dir self: ci-tool line is the first line"
+assert_contains "$OUT" "Available CI checks for github.com/owner/repo:" "tool_dir self: list still works"
+
+# a nonexistent tool_dir is a clean config error, not a silent pass
+OUT=$("$TOOL" '{"action":"list","tool_dir":"/nonexistent-shai-tools"}' 2>&1) || true
+assert_contains "$OUT" "not a directory" "tool_dir: rejects a non-directory path"
+assert_exit 1 "tool_dir: exit 1 on a non-directory path" -- \
+  "$TOOL" '{"action":"list","tool_dir":"/nonexistent-shai-tools"}'
+
+# a tool_dir without ci/run.sh is a clean config error naming the looked-for file
+EMPTYDIR="$(mktemp -d)"
+_CLEANUP_DIRS+=("$EMPTYDIR")
+OUT=$("$TOOL" "{\"action\":\"list\",\"tool_dir\":\"$EMPTYDIR\"}" 2>&1) || true
+assert_contains "$OUT" "ci/run.sh" "tool_dir: missing ci/run.sh named in the error"
+assert_exit 1 "tool_dir: exit 1 when ci/run.sh missing" -- \
+  "$TOOL" "{\"action\":\"list\",\"tool_dir\":\"$EMPTYDIR\"}"
 
 # ===== environment isolation =====
 # The agent's own environment must not leak into the check: a workflow run exports SHAI_*
