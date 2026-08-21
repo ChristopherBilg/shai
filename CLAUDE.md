@@ -361,13 +361,17 @@ explicit `default` is set, the fallback is per-tool: a tool whose `tool.json` de
 tools stay filesystem-wide (no root confinement: that boundary belongs to `policy.json` arg
 rules, which can deny any path). Instead, the auto-allow fallback above is narrowed by one
 shared default exclusion list in `lib/read-only.sh` (`.git`, `.ssh`, `.env`, `.env.*`,
-`node_modules`, `.aws`, `.gnupg`, matched against every path component): when a read-only
-tool's input `path` targets an excluded location, the fallback degrades from `allow` to
-`prompt` — interactive confirmation, and non-interactive runs fail closed. `search_files`
-applies the same list as grep `--exclude`/`--exclude-dir` flags, so a recursive scan never
-descends into excluded paths regardless of the input path (it also keeps defaulting `path` to
-`.`). The list is a conservative default, not a boundary: an explicit policy rule or `default`
-is checked before the fallback and wins, and it is extensible in one place.
+`node_modules`, `.aws`, `.gnupg`, plus `$HOME` credential files such as `.netrc`, `.npmrc`,
+`.git-credentials`, `.pypirc`, matched against every path component): when a read-only tool's
+input `path` targets an excluded location, the fallback degrades from `allow` to `prompt` —
+interactive confirmation, and non-interactive runs fail closed. `search_files` applies the same
+list as grep `--exclude`/`--exclude-dir` flags, so a recursive scan never descends into
+excluded paths regardless of the input path (it also keeps defaulting `path` to `.`). The list
+is a conservative default, not a boundary: an explicit policy rule or `default` is checked
+before the fallback and wins, and it is extensible in one place. Note the one asymmetry: for
+`search_files` the scan-level exclusion is a tool property, not a gate decision — an explicit
+rule can grant the tool on an excluded path, but the scan itself still never returns matches
+from those locations.
 
 **Policy overlay** — `SHAI_POLICY_OVERLAY` (env var) points to an optional overlay policy file.
 Overlay rules are checked **before** base rules and intentionally supersede them, including
