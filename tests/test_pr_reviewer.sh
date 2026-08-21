@@ -147,5 +147,9 @@ assert_eq "$RC" "0" "pr_reviewer: shai-prompt loads prompts/pr_reviewer.txt"
 assert_contains "$OUT" "{{NUMBER}}" "pr_reviewer: prompt template has a NUMBER placeholder"
 assert_contains "$OUT" "{{REPO}}" "pr_reviewer: prompt template has a REPO placeholder"
 assert_contains "$OUT" "{{OWNER}}" "pr_reviewer: prompt template has an OWNER placeholder"
+assert_contains "$OUT" "gh issue view N -R {{REPO}} --json title,body,labels,comments" \
+  "pr_reviewer: prompt instructs fetching the linked GitHub issue"
+assert_contains "$OUT" "silently returns that PR's own data" \
+  "pr_reviewer: prompt distinguishes bare-#N PR references from issue references"
 
 finish

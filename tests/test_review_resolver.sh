@@ -142,5 +142,9 @@ assert_contains "$OUT" "{{NUMBER}}" "review_resolver: prompt template has a NUMB
 assert_contains "$OUT" "{{REPO}}" "review_resolver: prompt template has a REPO placeholder"
 assert_contains "$OUT" "{{OWNER}}" "review_resolver: prompt template has an OWNER placeholder"
 assert_contains "$OUT" "{{REPO_NAME}}" "review_resolver: prompt template has a REPO_NAME placeholder"
+assert_contains "$OUT" "gh issue view N -R {{REPO}} --json title,body,labels,comments" \
+  "review_resolver: prompt instructs fetching the linked GitHub issue"
+assert_contains "$OUT" "silently returns that PR's own data" \
+  "review_resolver: prompt distinguishes bare-#N PR references from issue references"
 
 finish
