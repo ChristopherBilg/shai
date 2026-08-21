@@ -46,6 +46,14 @@ OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"zzz_no_match_zzz",path:$p}')" 
 assert_eq "$?" "0" "no match: exits 0"
 assert_eq "$OUT" "" "no match: empty output"
 
+# --- alternation: | is extended-regex alternation, not a literal pipe (#136) ---
+# With basic regex grep, "goodbye|no match" was searched for as the literal string and silently
+# matched nothing; with -E each alternative is matched independently.
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"goodbye|no match",path:$p}')" 2>&1)
+assert_eq "$?" "0" "alternation: exits 0"
+assert_contains "$OUT" "goodbye world" "alternation: matches left alternative"
+assert_contains "$OUT" "no match here" "alternation: matches right alternative"
+
 # --- ignore_case ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,ignore_case:true}')" 2>&1)
 assert_eq "$?" "0" "ignore_case: exits 0"
