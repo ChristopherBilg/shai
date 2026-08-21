@@ -6,9 +6,9 @@
 #        before base rules and intentionally supersede them, including deny; this lets
 #        workflows grant tools they need without requiring the user to modify their base
 #        policy); $TOOLS_DIR/<tool>/tool.json (capabilities.read_only) and
-#        $TOOLS_DIR/<tool>/run.sh (executed to run each tool); SHAI_RETRY_ACTIVE and
-#        SHAI_TOOLS_DIR (overrides the default $DIR/tools) from environment (retry skips
-#        non-read-only tools)
+#        $TOOLS_DIR/<tool>/run.sh (executed to run each tool); lib/read-only.sh (default
+#        exclusions for read-only auto-allow, see #118); SHAI_RETRY_ACTIVE and SHAI_TOOLS_DIR
+#        (overrides the default $DIR/tools) from environment (retry skips non-read-only tools)
 # Writes: one tool_result event per tool_use (32000-byte cap: first 24000 + last 8000 kept with
 #         a "[truncated: ...]" marker); content fenced in external_data tags, closing external_data tags
 #         escaped as &lt;/external_data&gt; (note line when any are escaped; opening tags untouched); write_file, patch_file, delete_file modify the filesystem
@@ -29,6 +29,8 @@ fi
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 TOOLS_DIR="${SHAI_TOOLS_DIR:-$DIR/tools}"
+# shellcheck source=lib/read-only.sh
+source "$DIR/lib/read-only.sh"
 
 # truncate_output <raw>: echo tool output bounded to MAX_BYTES payload bytes.
 # Under the cap the bytes pass through unchanged (no marker). Over the cap, keep the first
@@ -69,6 +71,30 @@ tool_is_read_only() {
   jq -r '.capabilities.read_only // false' "$tool_json" 2>/dev/null || printf 'false'
 }
 
+# read_only_fallback <tool_name> <tool_input>: the per-tool fallback used when no policy rule
+# matches and no `default` is set. A read-only tool is auto-allowed EXCEPT when its input
+# targets an excluded path (the shared list in lib/read-only.sh, see #118) — then it degrades
+# to `prompt` (interactive confirmation; non-interactive runs fail closed), so credential-
+# adjacent paths are never auto-allowed. The exclusion list is a default, not a boundary: a
+# matching policy rule (allow/deny) or an explicit `default` is checked before this fallback
+# and wins. Only `.path` is consulted — the path-bearing read-only tools all use that field,
+# and path-less read-only tools (sleep, jira_issue_view) have no input path to exclude.
+read_only_fallback() {
+  local tool_name="$1" tool_input="$2"
+  local ro path
+  ro=$(tool_is_read_only "$tool_name" 2>/dev/null)
+  if [ "$ro" != "true" ]; then
+    printf 'prompt'
+    return 0
+  fi
+  path=$(printf '%s' "$tool_input" | jq -r '.path // empty' 2>/dev/null) || path=""
+  if ro_path_excluded "$path"; then
+    printf 'prompt\treadonly'
+  else
+    printf 'allow\treadonly'
+  fi
+}
+
 check_policy() {
   local tool_name="$1" tool_input="$2"
   local policy_file="$STATE_DIR/policy.json"
@@ -87,12 +113,12 @@ check_policy() {
   # argscope:<file>:<key>=<pattern>[,...] (an allow rule for the tool exists but its args
   # did not match — the one denial an agent can fix by retrying with different arguments).
   if ! "$has_base" && ! "$has_overlay"; then
-    local ro
-    ro=$(tool_is_read_only "$tool_name" 2>/dev/null)
-    if [ "$ro" = "true" ]; then
-      printf 'allow\treadonly'
-    else
+    local ar
+    ar=$(read_only_fallback "$tool_name" "$tool_input")
+    if [ "$ar" = "prompt" ]; then
       printf 'prompt\tnopolicy'
+    else
+      printf '%s' "$ar"
     fi
     return 0
   fi
@@ -146,10 +172,10 @@ check_policy() {
     return 0
   fi
 
-  local ro
-  ro=$(tool_is_read_only "$tool_name" 2>/dev/null)
-  if [ "$ro" = "true" ]; then
-    printf 'allow\treadonly'
+  local ar
+  ar=$(read_only_fallback "$tool_name" "$tool_input")
+  if [ "$ar" != "prompt" ]; then
+    printf '%s' "$ar"
     return 0
   fi
 

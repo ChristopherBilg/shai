@@ -304,7 +304,8 @@ as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CL
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
 than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;
-grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`),
+grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`,
+skipping default-excluded paths — see the permission-gate note below),
 `sleep` (read-only),
 `write_file` (write; an optional `mode` of 3-4 octal digits sets the file's permission bits — the
 only way to create an executable file, e.g. a `tools/<name>/run.sh` — and without it an existing
@@ -316,6 +317,16 @@ sync — adding a tool means adding a directory. Workflows share the same tool p
 `wf_llm --tools` generates the tool array via `shai-tools` internally, and any resulting
 `tool_calls` entry is dispatched through the identical `shai-dispatch` path, so the permission
 gate below applies to workflow tool calls exactly as it does to the interactive REPL.
+
+**The `gh` tool's exit codes** — `tools/gh/run.sh` runs `timeout 120s gh "${args[@]}"` and,
+under `set -euo pipefail`, `gh`'s exit code becomes the tool's exit code, so `shai-dispatch`
+marks any nonzero result `is_error: true`, and `shai-context` renders it to the agent prefixed
+with `[ERROR] `. A nonzero exit is not always a failure — some `gh` commands use the exit code
+as information. Known cases: `gh pr checks` exits 8 while any check is pending and 1 when a
+check has failed (decide from the status table, not the error flag), and `gh label create`
+exits nonzero when the label already exists (ignore that error and continue). When a prompt
+calls such a command, state the intended reading of the nonzero exit at the call site rather
+than treating every error-flagged result as a failure.
 
 **Tool-declared prerequisites** — `capabilities.requires` in a `tool.json` is the source of truth
 for what a tool needs from its environment, and `shai-doctor` reports on all of it: `tools`
@@ -356,6 +367,22 @@ closed as error event), `deny` (error event, never execute). When no rule matche
 explicit `default` is set, the fallback is per-tool: a tool whose `tool.json` declares
 `capabilities.read_only: true` is auto-allowed, and everything else defaults to `prompt`.
 
+**Default exclusions for auto-allowed read-only tools** (decision from #118) — the read-only
+tools stay filesystem-wide (no root confinement: that boundary belongs to `policy.json` arg
+rules, which can deny any path). Instead, the auto-allow fallback above is narrowed by one
+shared default exclusion list in `lib/read-only.sh` (`.git`, `.ssh`, `.env`, `.env.*`,
+`node_modules`, `.aws`, `.gnupg`, plus `$HOME` credential files such as `.netrc`, `.npmrc`,
+`.git-credentials`, `.pypirc`, matched against every path component): when a read-only tool's
+input `path` targets an excluded location, the fallback degrades from `allow` to `prompt` —
+interactive confirmation, and non-interactive runs fail closed. `search_files` applies the same
+list as grep `--exclude`/`--exclude-dir` flags, so a recursive scan never descends into
+excluded paths regardless of the input path (it also keeps defaulting `path` to `.`). The list
+is a conservative default, not a boundary: an explicit policy rule or `default` is checked
+before the fallback and wins, and it is extensible in one place. Note the one asymmetry: for
+`search_files` the scan-level exclusion is a tool property, not a gate decision — an explicit
+rule can grant the tool on an excluded path, but the scan itself still never returns matches
+from those locations.
+
 **Policy overlay** — `SHAI_POLICY_OVERLAY` (env var) points to an optional overlay policy file.
 Overlay rules are checked **before** base rules and intentionally supersede them, including
 `deny`. This lets workflows grant the tools they need without requiring the user to modify their
@@ -375,8 +402,8 @@ primary task completes, using `prompts/suggest.txt`. The LLM reviews the session
 may create GitHub issues on the shai repo labeled `shai-suggestion` for improvement
 opportunities (conventions, bugs, enhancements, refactoring, testing gaps, docs), at most two
 per run. Dedup is prompt-driven: the LLM checks existing open `shai-suggestion` issues before
-creating new ones. Called by `issue_worker`, `pr_reviewer`, and `review_resolver` after their
-primary task succeeds. Deliberately **not** called by `release_notes`: its primary call runs
+creating new ones. Called by `issue_worker` after its primary task succeeds. Deliberately
+**not** called by `release_notes`: its primary call runs
 tool-less over a session containing untrusted external data, and its stdout is the generated
 markdown.
 
@@ -484,8 +511,7 @@ review_resolver`). It validates the repo/number, calls `wf_init`, exports the co
 `pulls/<n>/comments`, top-level via `pulls/<n>/reviews`, conversation via `issues/<n>/comments`,
 plus GraphQL `reviewThreads` for thread node IDs and `isResolved`), clones the repo, checks out
 the head branch, and classifies each unresolved thread as `fix` (edit, commit, push),
-`followup` (open a `--assignee @me` issue with **no** `shai-issue-dispatcher` label, so it needs
-manual triage), `reply` (post into the thread), `resolve` (acknowledge then
+`reply` (post into the thread), `resolve` (acknowledge then
 `resolveReviewThread` via GraphQL), or `noop`. `pr_reviewer`'s conventionalcomments.org labels
 are hints only — the prompt tells the model to read the content, and to use judgment on comments
 against outdated diff hunks. Before committing a `fix` the prompt requires local verification via
