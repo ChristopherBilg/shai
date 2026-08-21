@@ -5,6 +5,8 @@
 # Writes: matching lines as path:line_number: text to stdout, plus a truncation marker when capped
 # Exit: 0 on success (including no matches), 1 on failure (bad input, grep error, timeout)
 set -euo pipefail
+# shellcheck source=../../lib/read-only.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." &>/dev/null && pwd)/lib/read-only.sh"
 input="$1"
 pattern=$(printf '%s' "$input" | jq -r '.pattern // empty')
 path=$(printf '%s' "$input" | jq -r '.path // empty')
@@ -41,16 +43,22 @@ else
   max_results=100
 fi
 
-# -H so a single-file path is prefixed like a recursive hit; -I skips binaries, --exclude-dir=.git
-# keeps repository internals out of the results.
-args=(-rnIH --exclude-dir=.git)
+# -H so a single-file path is prefixed like a recursive hit; -I skips binaries; the
+# --exclude/--exclude-dir flags from lib/read-only.sh keep VCS internals, credential paths and
+# dependency noise out of the scan (see #118) — .git was the original --exclude-dir, now the
+# shared list owns it alongside .ssh, .env, node_modules, ...
+# Ordering matters: --include must come before --exclude. With GNU grep 3.11 an --exclude flag
+# listed first disables the include filter entirely (a non-globbed search still honors every
+# exclusion), so the glob is pushed to the front of the argument array.
+args=(-rnIH)
+if [ -n "$glob" ]; then
+  args+=(--include="$glob")
+fi
+mapfile -t exclude_args < <(ro_grep_exclude_args)
+args+=("${exclude_args[@]}")
 
 if [ "$ignore_case" = "true" ]; then
   args+=(-i)
-fi
-
-if [ -n "$glob" ]; then
-  args+=(--include="$glob")
 fi
 
 args+=(-- "$pattern" "$path")

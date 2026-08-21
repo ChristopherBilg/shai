@@ -22,6 +22,14 @@ printf 'hello from txt\n' >"$TDIR/src/notes.txt"
 printf 'hello\x00binary\x00data\n' >"$TDIR/src/blob.bin"
 # file inside .git should be excluded
 printf 'hello from git internals\n' >"$TDIR/.git/config"
+# default-excluded paths (see #118): dotenv files, .ssh, node_modules
+printf 'hello from dotenv\nSECRET=topsecret\n' >"$TDIR/.env"
+printf 'HELLO FROM ENV LOCAL\n' >"$TDIR/.env.local"
+printf 'hello from env example\n' >"$TDIR/.env.example"
+mkdir -p "$TDIR/.ssh"
+printf 'hello from ssh key\n' >"$TDIR/.ssh/id_rsa"
+mkdir -p "$TDIR/node_modules"
+printf 'hello from deps\n' >"$TDIR/node_modules/pkg.js"
 
 # --- basic match ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p}')" 2>&1)
@@ -99,6 +107,23 @@ if [[ "$OUT" == *".git/config"* ]]; then
 else
   echo -e "  ${GREEN}✓${NC} .git exclusion: .git/ excluded"
 fi
+
+# --- default exclusions (see #118): .env, .env.*, .ssh, node_modules ---
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p}')" 2>&1)
+assert_eq "$?" "0" "exclusions: exits 0"
+for excluded in ".env" ".env.local" ".env.example" ".ssh/id_rsa" "node_modules/pkg.js"; do
+  if [[ "$OUT" == *"$excluded"* ]]; then
+    echo -e "  ${RED}✗${NC} exclusions: should not match $excluded"
+    FAILED=1
+  else
+    echo -e "  ${GREEN}✓${NC} exclusions: $excluded excluded from results"
+  fi
+done
+
+# a pattern that only exists inside an excluded file must yield no results from it
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"HELLO FROM ENV LOCAL",path:$p}')" 2>&1)
+assert_eq "$?" "0" "exclusions: exclusive pattern exits 0"
+assert_eq "$OUT" "" "exclusions: pattern inside excluded .env.local is not found"
 
 # --- missing path → exit 1 ---
 OUT=$("$RUN" "$(jq -nc '{pattern:"hello",path:"/no/such/dir"}')" 2>&1)

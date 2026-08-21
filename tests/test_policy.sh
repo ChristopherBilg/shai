@@ -39,7 +39,11 @@ mapfile -t READ_ONLY_TOOLS < <(
 # Every test below passes an explicit temp-dir SHAI_HOME, so no test ever touches a real
 # ~/.shai or hits the network.
 extract_functions() {
-  sed -n '1,/^tool_calls=/p' "$DIR/shai-dispatch" | head -n -1
+  # shai-dispatch sources lib/read-only.sh via its own $DIR, which under eval resolves to this
+  # test's directory (tests/) — rewrite the source path to the real repo lib so the eval'd
+  # check_policy can use the shared exclusion list (see #118).
+  sed -n '1,/^tool_calls=/p' "$DIR/shai-dispatch" | head -n -1 |
+    sed "s|\$DIR/lib/read-only.sh|$DIR/lib/read-only.sh|g"
 }
 
 run_check_policy() {
@@ -156,6 +160,51 @@ assert_eq "$RES" "allow" "no rule matches, no default: read-only → allow"
 RES=$(SHAI_HOME="$PDIR" run_check_policy "some_write_tool" '{}')
 assert_eq "$RES" "prompt" "no rule matches, no default: non-read-only → prompt"
 
+# --- default exclusions (see #118): the read-only auto-allow fallback degrades to `prompt`
+#     when the input path targets an excluded location (.git, .ssh, .env, .env.*, node_modules,
+#     .aws, .gnupg — the shared list in lib/read-only.sh). Exclusions are a default, not a
+#     boundary: an explicit rule or `default` is checked first and wins. ---
+PDIR=$(empty_home)
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/repo/.env"}')
+assert_eq "$RES" "prompt" "exclusions: print_file targeting .env → prompt, not auto-allow"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/home/user/.ssh/id_rsa"}')
+assert_eq "$RES" "prompt" "exclusions: print_file under .ssh → prompt"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/repo/node_modules/pkg/index.js"}')
+assert_eq "$RES" "prompt" "exclusions: print_file under node_modules → prompt"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "list_directory" '{"path":"/repo/.git"}')
+assert_eq "$RES" "prompt" "exclusions: list_directory .git → prompt"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "search_files" '{"pattern":"x","path":"/home/user/.aws"}')
+assert_eq "$RES" "prompt" "exclusions: search_files targeting .aws → prompt"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"./proj/.env.local"}')
+assert_eq "$RES" "prompt" "exclusions: relative path into .env.* → prompt"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"../.ssh/id_rsa"}')
+assert_eq "$RES" "prompt" "exclusions: relative path into .ssh → prompt"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/repo/src/main.c"}')
+assert_eq "$RES" "allow" "exclusions: print_file on a plain path → still allow"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "list_directory" '{"path":"/repo"}')
+assert_eq "$RES" "allow" "exclusions: list_directory on a plain path → still allow"
+RES=$(SHAI_HOME="$PDIR" run_check_policy "search_files" '{"pattern":"x","path":"/repo"}')
+assert_eq "$RES" "allow" "exclusions: search_files on a plain path → still allow"
+# search_files defaults path to . — the caller's working tree, never excluded
+RES=$(SHAI_HOME="$PDIR" run_check_policy "search_files" '{"pattern":"x"}')
+assert_eq "$RES" "allow" "exclusions: search_files default path (.) → allow"
+# path-less read-only tools are unaffected
+RES=$(SHAI_HOME="$PDIR" run_check_policy "sleep" '{"seconds":1}')
+assert_eq "$RES" "allow" "exclusions: sleep (no path) → allow"
+
+# an explicit policy rule wins over the exclusion default (rules are checked before the fallback)
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"print_file","args":{"path":"/repo/.env"},"action":"allow"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/repo/.env"}')
+assert_eq "$RES" "allow" "exclusions: explicit allow rule beats the exclusion default"
+# a deny rule still denies (it is a rule, checked before the fallback)
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"print_file","args":{"path":"/repo/src/*"},"action":"deny"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/repo/src/main.c"}')
+assert_eq "$RES" "deny" "exclusions: explicit deny rule still denies"
+# an explicit default wins over the exclusion default
+PDIR=$(setup_policy '{"version":"1.0","default":"allow","rules":[]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy "print_file" '{"path":"/repo/.env"}')
+assert_eq "$RES" "allow" "exclusions: explicit default beats the exclusion default"
+
 # --- hermeticity: the overlay is pinned per call, never inherited from the caller ---
 # A workflow running the suite exports SHAI_POLICY_OVERLAY, and overlay rules are
 # checked before base rules and supersede them, including deny — so a leaked overlay
@@ -249,5 +298,15 @@ write_gh_stub
 event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"test_allow","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\"'"$tmpdir"'\"}"}  }],"finish_reason":"tool_calls"}}'
 result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
 assert_contains "$result" '"is_error":false' "allow → executes, is_error false"
+
+# read-only exclusion (see #118): with no policy file, an excluded path degrades the auto-allow
+# to prompt, and a non-interactive prompt fails closed — the tool never executes
+tmpdir=$(empty_home)
+make_stub_bin
+stub_dir="$STUB"
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"test_excl","type":"function","function":{"name":"print_file","arguments":"{\"path\":\"/repo/.env\"}"}  }],"finish_reason":"tool_calls"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bash "$DIR/shai-dispatch" 2>/dev/null) || true
+assert_contains "$result" '"is_error":true' "exclusions integration: excluded path → is_error true (fail closed)"
+assert_contains "$result" 'Permission denied' "exclusions integration: excluded path → denied message, tool not executed"
 
 finish
