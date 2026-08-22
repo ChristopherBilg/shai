@@ -44,6 +44,16 @@ else
   max_results=100
 fi
 
+# GNU grep's --include matches against the file's base name only, so a directory-prefixed glob
+# like "tests/*.sh" matches nothing even when matching files exist — a silent false negative
+# that reads as "the symbol is absent from the tree" (see #161). Reject it loudly instead of
+# returning a misleading zero-match: restrict to a directory with the path parameter, or use a
+# basename-only glob like "*.sh".
+if [ -n "$glob" ] && [[ "$glob" == */* ]]; then
+  printf 'error: glob is matched against file base names only (grep --include semantics), so a directory-prefixed glob like "%s" matches nothing. Use the path parameter to restrict to a directory, or use a basename-only glob (e.g. "*.sh").\n' "$glob"
+  exit 1
+fi
+
 # -H so a single-file path is prefixed like a recursive hit; -I skips binaries; the
 # --exclude/--exclude-dir flags from lib/read-only.sh keep VCS internals, credential paths and
 # dependency noise out of the scan (see #118) — .git was the original --exclude-dir, now the
