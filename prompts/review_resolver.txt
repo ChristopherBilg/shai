@@ -100,7 +100,8 @@ before deciding, and say which it is in your reply or summary.
 
 ## Actions
 
-**fix** — Edit the files in the clone, then commit with conventional-commits style, e.g.
+**fix** — Edit the files in the clone with `write_file`, `patch_file`, or `delete_file`,
+then commit with conventional-commits style, e.g.
 `fix: address review comment — <short description>`. Group related fixes into logical commits.
 Verify locally before committing with the `ci` tool — it is the only tool in this workflow that can
 run project commands (`gh` and `git` dispatch to their own binaries, and there is no shell): call it

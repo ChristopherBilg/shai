@@ -43,6 +43,7 @@ Clone {{REPO}}, create branch `{{BRANCH_NAME}}` from the default branch, impleme
 - Do not modify files unrelated to the issue.
 - If the issue description is unclear or ambiguous, document your interpretation in the PR body.
 - Clone the repository into /tmp/ with a randomly generated directory name to avoid collisions (e.g. /tmp/issue-worker-XXXXX).
+- Explore and edit inside the clone: `list_directory` and `print_file` to read, `write_file`, `patch_file`, or `delete_file` to change files (the workflow policy grants all five under /tmp/).
 
 ## Continuous Integration
 
