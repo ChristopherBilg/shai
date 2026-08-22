@@ -51,7 +51,10 @@ fi
 # Ordering matters: --include must come before --exclude. With GNU grep 3.11 an --exclude flag
 # listed first disables the include filter entirely (a non-globbed search still honors every
 # exclusion), so the glob is pushed to the front of the argument array.
-args=(-rnIH)
+# -E selects extended regex: without it, basic regex treats `|` as a literal character, so an
+# alternation like `foo|bar` silently searches for the literal pipe and returns zero matches
+# (see #136). With -E, `foo|bar` means alternation, which is what agents mean when they write it.
+args=(-rnIH -E)
 if [ -n "$glob" ]; then
   args+=(--include="$glob")
 fi
