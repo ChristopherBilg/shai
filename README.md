@@ -61,6 +61,8 @@ mkdir -p ~/.shai && cp ci.json.example ~/.shai/ci.json
 
 Then edit the `repos` map, keyed by normalized git remote URL (no scheme, no credentials, no trailing `.git`), with a `command` (and optional `timeout` in seconds, default 120) per check. The config stays user-owned under `$SHAI_HOME` on purpose: it is never read from a cloned repo, since `command` runs through `bash -c` and repo-local config would be arbitrary code execution. `shai-doctor` reports whether the file exists, parses, and which repo keys it covers — as a warning, never fatal.
 
+Every `ci` list/run output begins with a `ci-tool: <path>` line naming the `run.sh` that orchestrated it, so when the repo under test is shai itself you can see whether the installed tool or a checkout's tool ran. Pass `tool_dir` (e.g. `/tmp/clone/tools`) to explicitly have that directory's `ci/run.sh` drive the run — the override is only honored when given, never derived from repo content.
+
 ## Observability
 Inspect sessions, runs, and aggregate metrics from the terminal:
 ```shell
