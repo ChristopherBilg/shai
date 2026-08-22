@@ -80,13 +80,16 @@ trap "rm -f '$err'" EXIT
 # directories — while still printing the matches it found in readable subtrees, so status 2 is
 # handled as a partial search (see #169), not a hard failure: matches are kept, a note counts the
 # skipped paths, and only a real grep error (e.g. an invalid regex) fails the whole search.
+# LC_ALL=C is pinned on the grep invocation so its diagnostics are always English: the status-2
+# per-path classification below matches `Permission denied` / `No such file or directory`, which a
+# non-English locale would localize into text the classifier would not recognize.
 # `timeout 30s` matches the other read-only tools so a huge tree cannot stall the agent loop.
 # One row past the cap is read so a full page can be told apart from an exact fit; awk does the
 # clipping rather than `head` because awk drains grep instead of closing the pipe on it, which
 # would surface as a SIGPIPE status indistinguishable from a genuine grep failure.
 status=0
 matches=$(
-  timeout 30s grep "${args[@]}" 2>"$err" | awk -v n="$((max_results + 1))" 'NR <= n'
+  LC_ALL=C timeout 30s grep "${args[@]}" 2>"$err" | awk -v n="$((max_results + 1))" 'NR <= n'
   exit "${PIPESTATUS[0]}"
 ) || status=$?
 
