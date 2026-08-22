@@ -151,5 +151,11 @@ assert_contains "$OUT" "gh issue view N -R {{REPO}} --json title,body,labels,com
   "pr_reviewer: prompt instructs fetching the linked GitHub issue"
 assert_contains "$OUT" "silently returns that PR's own data" \
   "pr_reviewer: prompt distinguishes bare-#N PR references from issue references"
+assert_contains "$OUT" "gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input <file>" \
+  "pr_reviewer: prompt documents the one-at-a-time 422-recovery re-post"
+assert_contains "$OUT" '"commit_id": "<head SHA>"' \
+  "pr_reviewer: 422-recovery payload adds commit_id (the PR head SHA)"
+assert_contains "$OUT" '"subject_type": "file"' \
+  "pr_reviewer: prompt documents the file-level comment fallback with no line"
 
 finish
