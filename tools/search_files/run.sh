@@ -126,7 +126,10 @@ case "$status" in
       while IFS= read -r line; do
         case "$line" in
           grep:\ *:\ *Permission\ denied | grep:\ *:\ *No\ such\ file\ or\ directory) ;;
-          *) per_path_only=0; break ;;
+          *)
+            per_path_only=0
+            break
+            ;;
         esac
       done <"$err"
     else
