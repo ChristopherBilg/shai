@@ -213,8 +213,9 @@ if [ "$(id -u)" -ne 0 ]; then
   printf 'hello from locked\n' >"$TDIR/locked/secret.txt"
   chmod 000 "$TDIR/locked"
   OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p}')" 2>&1)
+  rc=$?
   chmod 755 "$TDIR/locked"
-  assert_eq "$?" "0" "real unreadable dir: exits 0 with matches kept"
+  assert_eq "$rc" "0" "real unreadable dir: exits 0 with matches kept"
   assert_contains "$OUT" "readable/ok.txt" "real unreadable dir: match from readable subtree kept"
   assert_contains "$OUT" "search incomplete" "real unreadable dir: emits incomplete note"
   if [[ "$OUT" == *"locked/secret.txt"* ]]; then
