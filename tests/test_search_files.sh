@@ -88,6 +88,20 @@ else
   echo -e "  ${GREEN}✓${NC} glob: excludes .txt files"
 fi
 
+# --- directory-prefixed glob is rejected, never a silent zero-match (#161) ---
+# grep --include matches against file base names only, so "src/*.sh" previously returned a
+# silent zero-match even though src/main.sh matches; the tool now errors loudly so a
+# zero-match can never be misread as the symbol being absent from the tree.
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,glob:"src/*.sh"}')" 2>&1)
+assert_eq "$?" "1" "dir-prefixed glob: exits 1"
+assert_contains "$OUT" "error:" "dir-prefixed glob: reports an error"
+assert_contains "$OUT" "base name" "dir-prefixed glob: explains base-name matching"
+assert_contains "$OUT" "path parameter" "dir-prefixed glob: points at the path parameter"
+
+# a multi-component directory-prefixed glob is rejected the same way (e.g. tools/*/tool.json)
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,glob:"src/*/tool.json"}')" 2>&1)
+assert_eq "$?" "1" "multi-component dir-prefixed glob: exits 1"
+
 # --- max_results cap + truncation marker ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,max_results:2}')" 2>&1)
 assert_eq "$?" "0" "max_results: exits 0"

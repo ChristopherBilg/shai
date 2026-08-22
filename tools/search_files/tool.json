@@ -17,7 +17,7 @@
       },
       "glob": {
         "type": "string",
-        "description": "Only search files matching this glob pattern (e.g. \"*.sh\", \"*.json\"). Omit to search all files."
+        "description": "Only search files whose base name matches this glob pattern (e.g. \"*.sh\", \"*.json\"). The glob is matched against file base names only (grep --include semantics), so a directory-prefixed glob like \"tests/*.sh\" is rejected with an error — use the path parameter to restrict to a directory instead. Omit to search all files."
       },
       "ignore_case": {
         "type": "boolean",
