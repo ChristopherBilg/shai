@@ -235,6 +235,10 @@ is reported with the "Checks passed (N/M) — K pre-existing failure(s) also pre
 suite that the baseline contradicts, say so plainly in the summary — the claim is inaccurate
 even though it is not a fault of this PR.
 
+If a run has both pre-existing failures and failures caused by this PR, use the
+"Checks failed: <details>" form and say in <details> which checks also fail on <base>
+(context, not findings) and which are new to this PR (findings).
+
 Verdict criteria:
 - **Ready to merge**: no critical or important findings
 - **Ready with minor fixes**: no critical findings, important findings are straightforward
