@@ -112,6 +112,12 @@ failure — do not retry the call. The tool signals it by exiting 1 with
 listing `(none configured)`. Say so in the summary comment and treat CI as the
 verification loop: keep each change small, because every unverified push spends one of the three
 fix-and-push cycles below. Never claim you ran a check you did not run.
+When the change touches a shai tool itself (e.g. `tools/ci/run.sh`), remember the `ci` tool may
+orchestrate with the installed implementation rather than the checkout's: every `ci` output
+begins with a `ci-tool: <path>` line naming the run.sh that ran, and a path outside the clone
+means the change was not exercised — do not claim it verified. Pass `tool_dir` pointing at the
+checkout's `tools/` directory (e.g. `tool_dir: /tmp/clone/tools`) to have the checkout's
+`ci/run.sh` drive the run.
 Before attributing a failure to your change, reproduce it against the PR's base from an
 isolated checkout at a fresh path, unique to this run — a leftover from an interrupted run
 makes a later `worktree add` on the same path fail with `fatal: '...' already exists`, so do

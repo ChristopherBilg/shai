@@ -1,7 +1,7 @@
 #!/bin/bash
 # ci/run.sh — run a configured CI check for a repository
 # Usage: run.sh '<json input>'
-# Reads: $1 (JSON with .action, optional .check and .cwd), $SHAI_HOME/ci.json, git remote
+# Reads: $1 (JSON with .action, optional .check, .cwd and .tool_dir), $SHAI_HOME/ci.json, git remote
 # Writes: check output or check listing to stdout
 # Exit: 0 on success (including failed checks), 1 on tool-level error
 # The check runs in an environment scrubbed of every exported SHAI_* variable and the API keys
@@ -15,6 +15,36 @@ input="$1"
 action=$(printf '%s' "$input" | jq -r '.action // empty' 2>/dev/null) || action=""
 check=$(printf '%s' "$input" | jq -r '.check // empty' 2>/dev/null) || check=""
 cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null) || cwd=""
+tool_dir=$(printf '%s' "$input" | jq -r '.tool_dir // empty' 2>/dev/null) || tool_dir=""
+
+# Resolve this script's canonical path. The agent needs to see which run.sh is orchestrating
+# the checks: when the repo under test is shai itself, the ci tool can be the *installed*
+# implementation rather than a checkout's, and a dogfooded change to tools/ci/run.sh would
+# silently not be exercised (issue #157). readlink -f is GNU-only; fall back to the invocation
+# path where it is unavailable (e.g. macOS), which still shows where the tool came from.
+ci_tool="$(readlink -f "$0" 2>/dev/null || true)"
+[ -n "$ci_tool" ] || ci_tool="$0"
+
+# Explicit tools-dir override (issue #157): when given, exec that directory's ci/run.sh with
+# the same input minus tool_dir, so the *checkout's* tool — not the installed one — drives the
+# run (e.g. verifying a change to tools/ci/run.sh in a clone). The override is only ever
+# agent-invoked; it is never derived from repo content, which would be arbitrary code
+# execution (the same rule ci.json already follows).
+if [ -n "$tool_dir" ]; then
+  if [ ! -d "$tool_dir" ]; then
+    printf 'error: tool_dir "%s" is not a directory\n' "$tool_dir"
+    exit 1
+  fi
+  child_run="$tool_dir/ci/run.sh"
+  if [ ! -f "$child_run" ]; then
+    printf 'error: tool_dir "%s" has no ci/run.sh (looked for %s)\n' "$tool_dir" "$child_run"
+    exit 1
+  fi
+  # Strip tool_dir so the child cannot re-exec itself into a loop; the child's own ci-tool:
+  # line then names the checkout's run.sh, which is exactly the signal the agent needs.
+  stripped_input=$(printf '%s' "$input" | jq 'del(.tool_dir)')
+  exec bash "$child_run" "$stripped_input"
+fi
 
 if [ "$action" != "list" ] && [ "$action" != "run" ]; then
   printf 'error: action must be "list" or "run" (got "%s")\n' "$action"
@@ -105,6 +135,7 @@ if [ "$checks_type" != "object" ]; then
 fi
 
 if [ "$action" = "list" ]; then
+  printf 'ci-tool: %s\n' "$ci_tool"
   printf 'Available CI checks for %s:\n' "$repo_key"
   printf '%s' "$repo_cfg" | jq -r '
     .checks
@@ -204,9 +235,12 @@ if [ "$rc" -eq 124 ] && [ "$elapsed" -ge $((check_timeout - 1)) ]; then
   exit 1
 fi
 
-# exit_code goes first: shai-dispatch caps tool output at 32000 bytes, keeping the head and
-# the tail with an explicit truncation marker in between. Leading with the status line keeps
-# it inside the head window no matter how verbose the check is.
+# ci-tool goes first: the agent must see which run.sh orchestrated the run, especially when
+# the repo under test is shai itself (issue #157). exit_code right behind it stays inside the
+# head window — shai-dispatch caps tool output at 32000 bytes, keeping the head and the tail
+# with an explicit truncation marker in between, so a verbose check cannot push the status
+# line out of the head.
+printf 'ci-tool: %s\n' "$ci_tool"
 printf 'exit_code: %d\n' "$rc"
 if [ -n "$output" ]; then printf '%s\n' "$output"; fi
 exit 0
