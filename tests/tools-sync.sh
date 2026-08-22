@@ -109,6 +109,39 @@ for policy in workflows/*/policy.json; do
     note "$prompt names ${#ungranted[@]} tool(s) $policy does not grant: ${ungranted[*]}"
   fi
 done
+
+# Reverse pass — a workflow prompt must name every tool its own policy.json grants, not just
+# avoid naming the ones it denies (see issue #176): a granted-but-unnamed tool is invisible to
+# the agent, which is how #110's "the fix step never names the ci tool" half shipped while this
+# check reported OK. "Granted" here means an explicit `allow` rule (the read-only auto-allow
+# fallback from the forward pass is not a grant a prompt must advertise); policies with
+# `"default": "allow"` grant every tool at dispatch time, so they stay exempt as above, and
+# workflows with no prompt file (the pure-bash dispatchers) are skipped. The match is the same
+# bare word match as the forward pass, with the same arg-scoping blind spot: a rule like
+# `write_file` with `args.path: "/tmp/*"` counts as an unconditional grant.
+for policy in workflows/*/policy.json; do
+  [ -f "$policy" ] || continue
+  wf="$(basename "$(dirname "$policy")")"
+  prompt="prompts/$wf.txt"
+  [ -f "$prompt" ] || continue
+  if ! jq empty "$policy" >/dev/null 2>&1; then
+    continue # invalid JSON already reported by the forward pass
+  fi
+  policy_default="$(jq -r '.default // ""' "$policy")" || policy_default=""
+  if [ "$policy_default" = "allow" ]; then
+    continue # "default": "allow" exemption already reported by the forward pass
+  fi
+  unnamed=()
+  while IFS= read -r tool; do
+    [ -n "$tool" ] || continue
+    grep -qw -- "$tool" "$prompt" || unnamed+=("$tool")
+  done < <(jq -r '[.rules[]? | select(.action == "allow") | .tool] | unique[]' "$policy")
+  if [ "${#unnamed[@]}" -eq 0 ]; then
+    ok "$prompt names every tool $policy grants"
+  else
+    note "$prompt does not name granted tool(s): ${unnamed[*]}"
+  fi
+done
 if [ "$found_policy" -eq 0 ]; then
   ok "no workflow policies to check"
 fi

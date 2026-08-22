@@ -1,7 +1,8 @@
 #!/bin/bash
 # test_search_files.sh — unit tests for the search_files tool
 # Covers: tools/search_files/run.sh — match, no-match, ignore_case, glob, max_results cap and
-# truncation marker, binary skip, missing path, default path, single-file path, grep failure modes
+# truncation marker, binary skip, missing path, default path, single-file path, grep failure modes,
+# unreadable paths (grep exit 2) kept as a partial search with an incomplete note
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -215,5 +216,69 @@ if [[ "$OUT" == *"upper.sh"* ]]; then
 else
   echo -e "  ${GREEN}✓${NC} single file: only the named file is searched"
 fi
+
+# --- unreadable paths: grep exit 2 with matches is a partial search, not a hard failure (#169) ---
+# Two layers: a real chmod-000 directory exercises GNU grep's actual status-2 + matches behavior
+# (skipped when running as root, where chmod 000 is not an obstacle), and a stub grep pins the
+# tool's status-2 interpretation deterministically in any environment.
+if [ "$(id -u)" -ne 0 ]; then
+  mkdir -p "$TDIR/locked" "$TDIR/readable"
+  printf 'hello from readable\n' >"$TDIR/readable/ok.txt"
+  printf 'hello from locked\n' >"$TDIR/locked/secret.txt"
+  chmod 000 "$TDIR/locked"
+  OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p}')" 2>&1)
+  rc=$?
+  chmod 755 "$TDIR/locked"
+  assert_eq "$rc" "0" "real unreadable dir: exits 0 with matches kept"
+  assert_contains "$OUT" "readable/ok.txt" "real unreadable dir: match from readable subtree kept"
+  assert_contains "$OUT" "search incomplete" "real unreadable dir: emits incomplete note"
+  if [[ "$OUT" == *"locked/secret.txt"* ]]; then
+    echo -e "  ${RED}✗${NC} real unreadable dir: must not contain matches from the locked dir"
+    FAILED=1
+  else
+    echo -e "  ${GREEN}✓${NC} real unreadable dir: locked dir not searched"
+  fi
+else
+  echo -e "  ${GREEN}✓${NC} real unreadable dir: skipped (running as root)"
+fi
+
+make_stub_bin
+
+# stub grep: ignores its real args, emits the fixture stdout/stderr, exits with $FAKE_GREP_STATUS
+cat >"$STUB/grep" <<'EOF'
+#!/bin/bash
+if [ -n "${FAKE_GREP_STDOUT:-}" ]; then printf '%s\n' "$FAKE_GREP_STDOUT"; fi
+if [ -n "${FAKE_GREP_STDERR:-}" ]; then printf '%s\n' "$FAKE_GREP_STDERR" >&2; fi
+exit "${FAKE_GREP_STATUS:-2}"
+EOF
+chmod +x "$STUB/grep"
+
+# status 2 + matches + per-path diagnostics → keep the matches, append the note, exit 0
+export FAKE_GREP_STATUS=2
+export FAKE_GREP_STDOUT="locked-parent/ok.txt:1:hello from readable file"
+export FAKE_GREP_STDERR="grep: $TDIR/locked: Permission denied"
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p}')" 2>&1)
+assert_eq "$?" "0" "unreadable with matches: exits 0"
+assert_contains "$OUT" "hello from readable file" "unreadable with matches: match from readable subtree kept"
+assert_contains "$OUT" "[note: search incomplete — 1 unreadable path(s) skipped]" "unreadable with matches: emits incomplete note with count"
+
+# status 2 + no matches + per-path diagnostics → clear "search incomplete" error, exit 1
+export FAKE_GREP_STATUS=2
+export FAKE_GREP_STDOUT=""
+export FAKE_GREP_STDERR="grep: $TDIR/locked: Permission denied
+grep: $TDIR/gone: No such file or directory"
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"zzz_no_match_zzz",path:$p}')" 2>&1)
+assert_eq "$?" "1" "unreadable no matches: exits 1"
+assert_contains "$OUT" "search incomplete" "unreadable no matches: says search incomplete, not generic failure"
+assert_contains "$OUT" "2 unreadable path(s)" "unreadable no matches: counts the skipped paths"
+assert_contains "$OUT" "Permission denied" "unreadable no matches: surfaces the grep diagnostics"
+
+# status 2 + no matches + a real grep error (invalid regex, no path in the message) → hard failure
+export FAKE_GREP_STATUS=2
+export FAKE_GREP_STDOUT=""
+export FAKE_GREP_STDERR="grep: Unmatched [, [^, [:, [., or [="
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"[",path:$p}')" 2>&1)
+assert_eq "$?" "1" "real grep error: exits 1"
+assert_contains "$OUT" "search failed (exit 2)" "real grep error: keeps the generic failure message"
 
 finish
