@@ -522,5 +522,13 @@ assert_exit 0 "example: every check has a non-empty command string" -- jq -e '
       (.value.command | type == "string" and length > 0)
       and ((.value.timeout // 1) | type == "number" and . > 0 and floor == .)))
 ' "$EXAMPLE"
+# The all aggregate must cover lint: a green all means lint ran. Without this, a future
+# edit dropping "&& ./tests/lint.sh" from the all command would silently re-introduce
+# the exact false green the example exists to prevent.
+assert_exit 0 "example: all check command covers lint" -- jq -e '
+  .repos | to_entries | length > 0 and all(.[];
+    .value.checks | to_entries | any(.[];
+      .key == "all" and (.value.command | contains("./tests/lint.sh"))))
+' "$EXAMPLE"
 
 finish
