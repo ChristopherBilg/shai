@@ -360,6 +360,16 @@ makes a local `ci` run trustworthy: `cwd` already points the tool at a `/tmp` cl
 environment now points at the checkout too — repository-under-test and environment-under-test
 agree.
 
+**Dogfooding the `ci` tool itself** (decision from #157) — when the repo under test is shai
+and the change touches a tool (e.g. `tools/ci/run.sh`), the `ci` tool orchestrates with the
+*installed* implementation unless told otherwise, so a "verified" dogfooded tool change can be
+a false green. Every `list`/`run` output therefore begins with a `ci-tool: <resolved path>`
+line naming the run.sh that orchestrated it — an installed path outside the clone is the tell.
+Pass `tool_dir` (e.g. `/tmp/clone/tools`) to have that directory's `ci/run.sh` exec'd in place
+of the installed one (input is forwarded minus `tool_dir`, so no loop). The override is
+explicit agent input only and is never derived from repo content — the same rule `ci.json`
+follows.
+
 **Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
 Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:
 `allow` (execute silently), `prompt` (interactive Y/N on `/dev/tty`; non-interactive → fail
