@@ -117,6 +117,31 @@ OUT="$(bash "$DIR/tests/tools-sync.sh" "$WF" 2>&1)"
 assert_eq "$?" "1" "read-only tool under default deny → exit 1"
 assert_contains "$OUT" "does not grant: gamma" "default deny → read-only tool reported"
 
+# --- reverse pass: every policy grant must be named by the prompt (issue #176) ---
+# Restore wfro's read-only fallback first so the reverse-pass cases below run against a clean
+# fixture (the default-deny case above intentionally left it failing).
+echo '{"rules":[]}' >"$WF/workflows/wfro/policy.json"
+
+# a granted tool the prompt never names → fail
+mkdir -p "$WF/workflows/wfrevbad"
+echo '{"rules":[{"tool":"gamma","action":"allow"}]}' >"$WF/workflows/wfrevbad/policy.json"
+echo 'Read the file carefully.' >"$WF/prompts/wfrevbad.txt"
+OUT="$(bash "$DIR/tests/tools-sync.sh" "$WF" 2>&1)"
+assert_eq "$?" "1" "granted tool not named in prompt → exit 1"
+assert_contains "$OUT" "does not name granted tool(s)" "granted tool not named → reverse note line"
+assert_contains "$OUT" "wfrevbad" "granted tool not named → names the prompt"
+assert_contains "$OUT" "gamma" "granted tool not named → names the tool"
+rm -rf "$WF/workflows/wfrevbad" "$WF/prompts/wfrevbad.txt"
+
+# a granted tool the prompt does name → ok
+mkdir -p "$WF/workflows/wfrevok"
+echo '{"rules":[{"tool":"gamma","action":"allow"}]}' >"$WF/workflows/wfrevok/policy.json"
+echo 'Call the gamma tool to read the file.' >"$WF/prompts/wfrevok.txt"
+OUT="$(bash "$DIR/tests/tools-sync.sh" "$WF" 2>&1)"
+assert_eq "$?" "0" "granted tool named in prompt → exit 0"
+assert_contains "$OUT" "wfrevok.txt names every tool" "granted tool named → reverse ok line"
+rm -rf "$WF/workflows/wfrevok" "$WF/prompts/wfrevok.txt"
+
 # --- the real repo satisfies the invariant ---
 OUT="$(bash "$DIR/tests/tools-sync.sh" 2>&1)"
 assert_eq "$?" "0" "repo: docs and workflow prompts are in sync"
