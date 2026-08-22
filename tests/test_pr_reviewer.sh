@@ -151,5 +151,7 @@ assert_contains "$OUT" "gh issue view N -R {{REPO}} --json title,body,labels,com
   "pr_reviewer: prompt instructs fetching the linked GitHub issue"
 assert_contains "$OUT" "silently returns that PR's own data" \
   "pr_reviewer: prompt distinguishes bare-#N PR references from issue references"
+assert_contains "$OUT" "headRefOid" \
+  "pr_reviewer: prompt verifies the clone is at the PR head SHA (headRefOid)"
 
 finish

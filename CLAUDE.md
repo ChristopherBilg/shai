@@ -493,7 +493,9 @@ leading-zero guards matching `review_resolver`), calls `wf_init`, exports the co
 `policy.json` overlay, and hands `prompts/pr_reviewer.txt` (with `{{REPO}}`/`{{NUMBER}}`/
 `{{OWNER}}` substituted) to `wf_llm --tools`. The LLM reads the PR metadata,
 diff, and existing comments (all with `--paginate`), clones the repo via `git clone`, checks
-out the head branch, and reads source files around each changed area before commenting.
+out the head branch, verifies the clone is at the PR head SHA (`headRefOid` from the PR
+metadata — hard-resetting after a fetch on mismatch, so a leftover stale clone is never
+reviewed), and reads source files around each changed area before commenting.
 Reviews use conventionalcomments.org format with severity mapping (critical/important/minor)
 and assess correctness, architecture, testing quality, and production readiness. For same-repo
 PRs, the LLM verifies test- and behaviour-related findings locally with the `ci` tool before
