@@ -3,7 +3,10 @@
 # Usage: run.sh '<json input>'
 # Reads: $1 (JSON with .pattern, optional .path, .glob, .ignore_case, .max_results)
 # Writes: matching lines as path:line_number: text to stdout, plus a truncation marker when capped
-# Exit: 0 on success (including no matches), 1 on failure (bad input, grep error, timeout)
+#         and a [note: search incomplete — N unreadable path(s) skipped] line when unreadable
+#         paths were skipped
+# Exit: 0 on success (including no matches, and partial success where unreadable paths were
+#       skipped), 1 on failure (bad input, grep error, timeout)
 set -euo pipefail
 # The source directive is CWD-relative: tests/lint.sh invokes shellcheck from the repo root.
 # shellcheck source=lib/read-only.sh
@@ -73,21 +76,75 @@ trap "rm -f '$err'" EXIT
 
 # grep's diagnostics go to a file rather than being folded into the result rows with 2>&1, and its
 # status is inspected instead of being discarded with `|| true`: 0 (matches) and 1 (no matches) are
-# both successful searches, anything higher is a real error (invalid regex, unreadable directory).
+# both successful searches. GNU grep exits 2 when ANY error occurred — including unreadable
+# directories — while still printing the matches it found in readable subtrees, so status 2 is
+# handled as a partial search (see #169), not a hard failure: matches are kept, a note counts the
+# skipped paths, and only a real grep error (e.g. an invalid regex) fails the whole search.
+# LC_ALL=C is pinned on the grep invocation so its diagnostics are always English: the status-2
+# per-path classification below matches `Permission denied` / `No such file or directory`, which a
+# non-English locale would localize into text the classifier would not recognize.
 # `timeout 30s` matches the other read-only tools so a huge tree cannot stall the agent loop.
 # One row past the cap is read so a full page can be told apart from an exact fit; awk does the
 # clipping rather than `head` because awk drains grep instead of closing the pipe on it, which
 # would surface as a SIGPIPE status indistinguishable from a genuine grep failure.
 status=0
 matches=$(
-  timeout 30s grep "${args[@]}" 2>"$err" | awk -v n="$((max_results + 1))" 'NR <= n'
+  LC_ALL=C timeout 30s grep "${args[@]}" 2>"$err" | awk -v n="$((max_results + 1))" 'NR <= n'
   exit "${PIPESTATUS[0]}"
 ) || status=$?
+
+# print_matches: emit the captured rows, capped at max_results with the truncation marker
+print_matches() {
+  if [ "$(printf '%s\n' "$matches" | wc -l)" -gt "$max_results" ]; then
+    printf '%s\n' "$matches" | awk -v n="$max_results" 'NR <= n'
+    printf '[truncated: showing first %s matches]\n' "$max_results"
+  else
+    printf '%s\n' "$matches"
+  fi
+}
 
 case "$status" in
   0 | 1) ;;
   124)
     printf 'error: search timed out after 30s: %s\n' "$path"
+    exit 1
+    ;;
+  2)
+    # A tree with an unreadable directory makes GNU grep exit 2, but it still prints the matches
+    # from readable subtrees. Keep them — the old behavior discarded them, turning one unreadable
+    # dir into a permanently broken search with zero matches and no way to tell "nothing matched"
+    # from "search failed" (see #169).
+    if [ -n "$matches" ]; then
+      print_matches
+      printf '[note: search incomplete — %s unreadable path(s) skipped]\n' "$(wc -l <"$err")"
+      exit 0
+    fi
+    # No matches: tell unreadable paths apart from a real grep error. Every line of $err being a
+    # per-path diagnostic (`grep: <path>: Permission denied` / `No such file or directory`) means
+    # the scan was incomplete, so report that instead of the generic "search failed (exit 2)".
+    # Anything else (e.g. an invalid-regex message, which has no path) falls through to the hard
+    # failure below.
+    per_path_only=1
+    if [ -s "$err" ]; then
+      while IFS= read -r line; do
+        case "$line" in
+          grep:\ *:\ *Permission\ denied | grep:\ *:\ *No\ such\ file\ or\ directory) ;;
+          *)
+            per_path_only=0
+            break
+            ;;
+        esac
+      done <"$err"
+    else
+      per_path_only=0
+    fi
+    if [ "$per_path_only" -eq 1 ]; then
+      printf 'error: search incomplete — %s unreadable path(s) could not be searched\n' "$(wc -l <"$err")"
+      if [ -s "$err" ]; then cat -- "$err"; fi
+      exit 1
+    fi
+    printf 'error: search failed (exit %s)\n' "$status"
+    if [ -s "$err" ]; then cat -- "$err"; fi
     exit 1
     ;;
   *)
@@ -98,10 +155,4 @@ case "$status" in
 esac
 
 [ -n "$matches" ] || exit 0
-
-if [ "$(printf '%s\n' "$matches" | wc -l)" -gt "$max_results" ]; then
-  printf '%s\n' "$matches" | awk -v n="$max_results" 'NR <= n'
-  printf '[truncated: showing first %s matches]\n' "$max_results"
-else
-  printf '%s\n' "$matches"
-fi
+print_matches
