@@ -83,6 +83,26 @@ while IFS= read -r f; do
   if [ -s "$f" ] && [ -n "$(tail -c1 "$f")" ]; then note "no final newline: $f"; fi
 done < <(git ls-files)
 
+# 7. No outer-shell variable splices into bash -c bodies (see #154). The quote-splice
+# `"'"$VAR"'"` interpolates the outer shell's value into the -c string, which the inner
+# shell then re-parses — a checkout path containing shell metacharacters (e.g.
+# /tmp/issue-worker-$$) is re-expanded and the command stops resolving (exit 127).
+# Pass values positionally instead: `bash -c '...' _ "$DIR"`. The splice always contains
+# the byte sequence `"'"$` (body close, splice open, `$`); inner-shell positional refs
+# (`"$1"`) and the `'"'"'` single-quote idiom never do.
+splice_bad=0
+while IFS= read -r f; do
+  while IFS= read -r line; do
+    case "$line" in
+      *"bash -c"*"'"\$*)
+        note "bash -c body splices an outer-shell variable (see #154): $f: $line"
+        splice_bad=1
+        ;;
+    esac
+  done <"$f"
+done < <(git ls-files 'tests/*.sh')
+if [ "$splice_bad" -eq 0 ]; then ok "no outer-shell splices into bash -c bodies"; fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo -e "${GREEN}CONVENTIONS OK${NC}"

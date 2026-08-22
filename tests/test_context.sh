@@ -115,12 +115,23 @@ CTXENVOVER=$(printf '%s\n' "$HISTB" | SHAI_MAX_CONTEXT_BYTES=1 "$DIR/shai-contex
 assert_eq "$(printf '%s' "$CTXENVOVER" | jq '.messages | length')" "6" "context: --max-bytes overrides env var"
 
 # --max-bytes with no value errors (exit 1)
-assert_exit 1 "context: --max-bytes with no value exits 1" -- bash -c 'echo "" | "'"$DIR"'/shai-context" --max-bytes'
+assert_exit 1 "context: --max-bytes with no value exits 1" -- bash -c 'echo "" | "$1/shai-context" --max-bytes' _ "$DIR"
 
 # --max-bytes / SHAI_MAX_CONTEXT_BYTES validation: non-integer and zero rejected
-assert_exit 1 "context: --max-bytes non-integer exits 1" -- bash -c 'echo "" | "'"$DIR"'/shai-context" --max-bytes abc'
-assert_exit 1 "context: --max-bytes zero exits 1" -- bash -c 'echo "" | "'"$DIR"'/shai-context" --max-bytes 0'
-assert_exit 1 "context: SHAI_MAX_CONTEXT_BYTES non-integer exits 1" -- bash -c 'echo "" | SHAI_MAX_CONTEXT_BYTES=notanumber "'"$DIR"'/shai-context"'
+assert_exit 1 "context: --max-bytes non-integer exits 1" -- bash -c 'echo "" | "$1/shai-context" --max-bytes abc' _ "$DIR"
+assert_exit 1 "context: --max-bytes zero exits 1" -- bash -c 'echo "" | "$1/shai-context" --max-bytes 0' _ "$DIR"
+assert_exit 1 "context: SHAI_MAX_CONTEXT_BYTES non-integer exits 1" -- bash -c 'echo "" | SHAI_MAX_CONTEXT_BYTES=notanumber "$1/shai-context"' _ "$DIR"
+
+# regression (#154): a checkout path containing shell metacharacters must survive the
+# bash -c boundary. The path is passed positionally so the inner shell never re-expands
+# it; with the old string-splice, a literal `$$` in the path became a PID, the script
+# path stopped resolving, and the suite failed with 127 instead of the expected 1.
+META_DIR="$(mktemp -d)"
+_CLEANUP_DIRS+=("$META_DIR")
+META_PATH="$META_DIR/issue-worker-\$\$"
+mkdir -p "$META_PATH"
+ln -s "$DIR/shai-context" "$META_PATH/shai-context"
+assert_exit 1 "context: metacharacter path survives bash -c boundary (exit 1, not 127)" -- bash -c 'echo "" | "$1/shai-context" --max-bytes' _ "$META_PATH"
 
 # default budget keeps all turns when total is well under 1,300,000 bytes
 HISTDEF='{"type":"message","source":"user","payload":{"text":"u1"}}
