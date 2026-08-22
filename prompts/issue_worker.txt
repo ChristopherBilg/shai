@@ -58,8 +58,10 @@ After creating the draft pull request, verify that CI checks pass on the branch:
    `gh run list --branch <BRANCH> --repo {{REPO}} --json headSha,databaseId,status,conclusion --limit 10`
    For repos whose CI triggers on `pull_request` rather than `push`, runs execute against the
    merge commit (`refs/pull/N/merge`), so their `headSha` is the merge commit, never the pushed
-   head SHA — compare against the PR's merge commit SHA instead, fetched with
-   `gh api repos/{{REPO}}/pulls/{{NUMBER}} --jq .merge_commit_sha`.
+   head SHA — compare against the merge commit SHA of the pull request you just created instead.
+   `<PR_NUMBER>` is that PR's number (parse it from the `gh pr create` output URL, or
+   `gh pr view {{BRANCH_NAME}} --json number`), NOT the issue number `{{NUMBER}}`:
+   `gh api repos/{{REPO}}/pulls/<PR_NUMBER> --jq .merge_commit_sha`.
 3. No entry with `headSha` == the relevant SHA (pushed SHA, or merge commit SHA for
    `pull_request`-triggered CI) means pending — CI has not started yet. If the branch has no
    runs at all (empty list), do not conclude "no CI" immediately: `gh run list` can be
