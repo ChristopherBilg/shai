@@ -63,8 +63,10 @@ OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"zzz_no_match_zzz",path:$p}')" 
 assert_eq "$?" "0" "zero-match literal: exits 0"
 assert_eq "$OUT" "" "zero-match literal: no note for a plain literal pattern"
 
-# an over-special ERE pattern (like #232's `C++`) also gets the note on zero matches
-OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"foo+",path:$p}')" 2>&1)
+# an over-special ERE pattern (like #232's `C++`) also gets the note on zero matches. The
+# pattern must genuinely match nothing in the fixture — `foo+` would match the "foo" inside
+# "foo? question" (a fixture line added by #251), so use a never-present word.
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"zzz_never+",path:$p}')" 2>&1)
 assert_eq "$?" "0" "zero-match ERE metachar: exits 0"
 assert_contains "$OUT" "0 matches" "zero-match ERE metachar: note for +"
 
