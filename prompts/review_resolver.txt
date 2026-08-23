@@ -70,7 +70,10 @@ re-review. A human re-applies a label if another round is wanted.
    `shai/<N>-...` branch), fetch it with `gh issue view N -R {{REPO}} --json title,body,labels,comments`
    and read it before classifying any comment. A bare `#N` can also name a pull request (e.g.
    "see #122") — `gh issue view N` silently returns that PR's own data for such a number, so
-   treat `#N` as an issue reference only when the context names an issue. Review comments
+   confirm `#N` is an issue, not a PR, before trusting the fetched data:
+   `gh api repos/{{REPO}}/issues/N --jq 'has("pull_request")'` prints `true` when the
+   number is a PR — then the "issue" is the PR's own self-description: skip it as
+   requirements context and say so (e.g. in the summary). Review comments
    about scope or requirements alignment (e.g. "the PR drops requirement X from the issue")
    can only be judged against the issue text, not against the PR's paraphrase of it — a
    comment that correctly cites the issue is in scope even when the PR body describes the
