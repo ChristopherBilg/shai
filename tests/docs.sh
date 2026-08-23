@@ -162,7 +162,13 @@ check_file() {
       return
       ;;
     tools/*/tool.json)
-      if tool_json_ok "$f"; then ok "tool schema: $f"; else note "tool schema missing description(s): $f"; fi
+      if tool_json_ok "$f"; then
+        ok "tool schema: $f"
+      elif jq -e 'type == "object" and ((.description // "") | length) > 0 and (.parameters.properties | type != "object" or length == 0)' "$f" >/dev/null 2>&1; then
+        note "tool schema parameters.properties missing or empty (renamed or absent parameters/properties key?): $f"
+      else
+        note "tool schema missing description(s): $f"
+      fi
       return
       ;;
     workflows/*/policy.json)
@@ -182,7 +188,13 @@ check_file() {
       return
       ;;
     *.json)
-      if json_ok "$f"; then ok "json descriptions: $f"; else note "json missing description(s): $f"; fi
+      if json_ok "$f"; then
+        ok "json descriptions: $f"
+      elif jq -e 'type == "array" and length > 0 and all(.[]; (.description // "" | length) > 0) and any(.[]; (.parameters.properties | type != "object" or length == 0))' "$f" >/dev/null 2>&1; then
+        note "json parameters.properties missing or empty (renamed or absent parameters/properties key?): $f"
+      else
+        note "json missing description(s): $f"
+      fi
       return
       ;;
     *.yml | *.yaml)
