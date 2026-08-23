@@ -186,11 +186,12 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
         printf '  [OK]   search_files alternation (grep -E)\n' >&2
       else
         printf '  [WARN] search_files alternation (grep -E)\n' >&2
-        printf '         search_files returned no matches for the alternation "alpha|beta" on\n' >&2
-        printf '         a probe fixture. A stale install predating the #136 -E fix silently\n' >&2
-        printf '         searches for a literal pipe, so "foo|bar" finds nothing. Reinstall\n' >&2
-        printf '         shai (or update the installed tools) so alternation works as\n' >&2
-        printf '         documented.\n' >&2
+        printf '         could not confirm alternation works: "alpha|beta" returned no matches\n' >&2
+        printf '         on a probe fixture. A stale install predating the #136 -E fix (which\n' >&2
+        printf '         silently searches for a literal pipe, so "foo|bar" finds nothing) is\n' >&2
+        printf '         the usual cause, but a missing timeout/grep or any run failure looks\n' >&2
+        printf '         the same. Reinstall shai (or update the installed tools) so\n' >&2
+        printf '         alternation works as documented.\n' >&2
         WARNINGS=$((WARNINGS + 1))
       fi
     fi

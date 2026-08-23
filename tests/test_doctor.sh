@@ -34,6 +34,22 @@ run_doctor() {
   )
 }
 
+# The doctor's behavior probe (Test 12's subject) shells out to run.sh, which wraps grep in
+# `timeout 30s`. run_doctor's command-override makes `command -v timeout` always succeed, so the
+# probe runs in every test — and it must not depend on the host's real `timeout` (absent on stock
+# macOS), or the exact-count assertions in Tests 6 and 9 would pick up a spurious probe WARN.
+# Stub `timeout` as a passthrough so the probe's shell-out is deterministic on every host; grep
+# stays real, since ERE alternation works on every platform.
+make_stub_bin
+cat >"$STUB/timeout" <<'EOF'
+#!/bin/bash
+# passthrough: drop the duration argument and exec the wrapped command — the probe's 30s cap is
+# not under test
+shift
+exec "$@"
+EOF
+chmod +x "$STUB/timeout"
+
 # shai-doctor also checks the config files tools declare via capabilities.requires.files
 # (today: the ci tool's $SHAI_HOME/ci.json), so pin SHAI_HOME to a fixture holding a valid
 # config — otherwise the host's real ~/.shai would leak into the exact warning counts below.
@@ -179,7 +195,7 @@ SHAI_HOME="$FIX/home"
 # probes the local run.sh with an alternation pattern on a two-file fixture and warns when
 # both alternatives do not match, so a stale/broken search_files is visible instead of
 # silently producing empty search results.
-make_stub_bin
+# (the $STUB bin set up at the top of this file already holds the timeout passthrough stub)
 cat >"$STUB/grep" <<'EOF'
 #!/bin/bash
 # stale pre-#136 behavior: no -E, so "alpha|beta" is searched for as a literal pipe → no match
