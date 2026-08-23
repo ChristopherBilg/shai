@@ -108,6 +108,28 @@ For each changed file:
    where the highest-value findings live.
 5. Only then form your assessment.
 
+When the PR under review modifies a built-in tool (a file under `tools/<name>/`), your own
+`search_files`/`print_file`/`list_directory` calls run the *installed* implementation of that
+tool — the release you are running on — never the checkout, so they reflect the installed
+release, not the PR. A behavioral probe of a changed tool through your own instance therefore
+exercises pre-PR behavior: for example, PR #208 changed `tools/search_files/run.sh` to exclude
+`.env`/`.ssh`/`node_modules`/..., and the reviewer's own `search_files` on a fixture `.env`
+file returned its contents — the exact opposite of the PR's new behavior — with no indication
+that the probe was stale. Never probe a changed tool through your own instance: you have no
+shell, and `ci` (below) only runs the fixed checks configured in `$SHAI_HOME/ci.json`, so you
+cannot run `tools/<name>/run.sh '<input>'` with an arbitrary input directly. The runnable
+mechanism is a user-configured probe check: call `ci` with `action: list` and `cwd` set to the
+clone, and if the repository's checks include one that executes the changed tool against the
+relevant input (a probe check whose command is e.g. `./tools/<name>/run.sh '<input>'`), run it
+and judge the output against the PR's change. Such a probe is only meaningful when the clone is
+verified at the PR head (step 4). If no configured check exercises the changed tool with the
+input in question — the usual case — do not improvise: say in the summary that behavior could
+not be probed against the PR's code, as with a fork PR whose head is not in the base clone.
+Reading the changed source and running the test suite (via the `ci` tool below) do not replace
+the probe: a behavioral claim about a built-in tool must be verified against the checkout's
+`tools/<name>/run.sh` through a configured check, and the summary should note when a probe used
+the installed release instead.
+
 For same-repo PRs (where `headRepositoryOwner.login` matches `{{OWNER}}`), verify test- and
 behaviour-related findings locally with the `ci` tool before posting them — it is the only tool
 in this workflow that can run project commands (`gh` and `git` dispatch to their own binaries,
