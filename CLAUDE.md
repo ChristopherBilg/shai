@@ -304,7 +304,10 @@ as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CL
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
 than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;
-grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`,
+grep-based pattern search across a directory tree with `glob`, `ignore_case`, `literal`
+(exact-string mode, no regex metacharacters), and `max_results`; the pattern is grep extended
+regex, so `|` alternates and the other metacharacters `+ ? ( ) { } [ ] . * ^ $` must be
+backslash-escaped for a literal match (e.g. `C\+\+`) unless `literal: true` is set —
 skipping default-excluded paths — see the permission-gate note below),
 `sleep` (read-only),
 `write_file` (write; an optional `mode` of 3-4 octal digits sets the file's permission bits — the

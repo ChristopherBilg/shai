@@ -9,7 +9,7 @@
     "properties": {
       "pattern": {
         "type": "string",
-        "description": "The text pattern to search for (grep extended regex; use | for alternation, e.g. foo|bar; escape a literal pipe as \\|)."
+        "description": "The text pattern to search for (grep extended regex; use | for alternation, e.g. foo|bar; every ERE metacharacter + ? ( ) { } [ ] . * ^ $ is special, so backslash-escape each for a literal match, e.g. C\\+\\+, foo\\?, v1\\.0, x\\[0\\]). For an exact literal search with no metacharacter meaning at all, set literal to true instead of escaping."
       },
       "path": {
         "type": "string",
@@ -22,6 +22,10 @@
       "ignore_case": {
         "type": "boolean",
         "description": "Case-insensitive matching. Defaults to false."
+      },
+      "literal": {
+        "type": "boolean",
+        "description": "Treat the pattern as a fixed string (grep -F) instead of an extended regex: metacharacters like + ? ( ) { } [ ] . * ^ $ are matched verbatim, so a search for e.g. C++ finds the literal text with no escaping needed. Defaults to false."
       },
       "max_results": {
         "type": "integer",

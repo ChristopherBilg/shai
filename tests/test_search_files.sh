@@ -1,8 +1,9 @@
 #!/bin/bash
 # test_search_files.sh — unit tests for the search_files tool
-# Covers: tools/search_files/run.sh — match, no-match, ignore_case, glob, max_results cap and
-# truncation marker, binary skip, missing path, default path, single-file path, grep failure modes,
-# unreadable paths (grep exit 2) kept as a partial search with an incomplete note
+# Covers: tools/search_files/run.sh — match, no-match, ignore_case, literal mode, escaped ERE
+# metacharacters, glob, max_results cap and truncation marker, binary skip, missing path, default
+# path, single-file path, grep failure modes, unreadable paths (grep exit 2) kept as a partial
+# search with an incomplete note
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -15,7 +16,7 @@ RUN="$DIR/tools/search_files/run.sh"
 
 # --- fixture tree ---
 mkdir -p "$TDIR/src" "$TDIR/lib" "$TDIR/.git"
-printf 'hello world\ngoodbye world\nhello again\npipe a|b separator\n' >"$TDIR/src/main.sh"
+printf 'hello world\ngoodbye world\nhello again\npipe a|b separator\nC++ code here\nversion v1.0\nfoo? question\nx[0] index\n' >"$TDIR/src/main.sh"
 printf 'HELLO UPPER\nhello lower\n' >"$TDIR/src/upper.sh"
 printf 'no match here\nnothing relevant\n' >"$TDIR/lib/util.sh"
 printf 'hello from txt\n' >"$TDIR/src/notes.txt"
@@ -60,6 +61,47 @@ assert_contains "$OUT" "no match here" "alternation: matches right alternative"
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"a\\|b",path:$p}')" 2>&1)
 assert_eq "$?" "0" "literal pipe: exits 0"
 assert_contains "$OUT" "a|b separator" "literal pipe: matches the literal pipe line"
+
+# --- ERE metacharacters are special; backslash-escape for a literal match (#232) ---
+# The -E switch (#136) made + ? ( ) { } [ ] . * ^ $ all special: "C++" now means "C followed by
+# one or more C's" and never matches the literal text, "v1.0" also matches "v1x0", etc. Escaping
+# each metacharacter pins the literal meaning — the contract documented in tool.json.
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"C\\+\\+",path:$p}')" 2>&1)
+assert_eq "$?" "0" "escaped plus: exits 0"
+assert_contains "$OUT" "C++ code here" "escaped plus: matches the literal C++ text"
+
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"v1\\.0",path:$p}')" 2>&1)
+assert_eq "$?" "0" "escaped dot: exits 0"
+assert_contains "$OUT" "version v1.0" "escaped dot: matches the literal v1.0 text"
+
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"foo\\?",path:$p}')" 2>&1)
+assert_eq "$?" "0" "escaped question mark: exits 0"
+assert_contains "$OUT" "foo? question" "escaped question mark: matches the literal foo? text"
+
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"x\\[0\\]",path:$p}')" 2>&1)
+assert_eq "$?" "0" "escaped brackets: exits 0"
+assert_contains "$OUT" "x[0] index" "escaped brackets: matches the literal x[0] text"
+
+# --- literal mode: literal:true switches grep to -F, every metacharacter is verbatim (#232) ---
+# The proper fix deferred from #135: an exact-string search is correct regardless of
+# metacharacters, with no escaping needed.
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"C++",path:$p,literal:true}')" 2>&1)
+assert_eq "$?" "0" "literal mode plus: exits 0"
+assert_contains "$OUT" "C++ code here" "literal mode plus: matches the literal C++ text"
+
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"v1.0",path:$p,literal:true}')" 2>&1)
+assert_eq "$?" "0" "literal mode dot: exits 0"
+assert_contains "$OUT" "version v1.0" "literal mode dot: matches the literal v1.0 text"
+
+# literal mode matches the alternation-looking string verbatim instead of either alternative
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"a|b",path:$p,literal:true}')" 2>&1)
+assert_eq "$?" "0" "literal mode pipe: exits 0"
+assert_contains "$OUT" "a|b separator" "literal mode pipe: matches the literal pipe line"
+
+# --- literal must be a boolean (JSON string "true" rejected, like ignore_case) ---
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,literal:"true"}')" 2>&1)
+assert_eq "$?" "1" "non-boolean literal: exits 1"
+assert_contains "$OUT" "literal must be a boolean" "non-boolean literal: explains why"
 
 # --- ignore_case ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,ignore_case:true}')" 2>&1)
