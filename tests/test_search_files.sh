@@ -98,6 +98,11 @@ OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"a|b",path:$p,literal:true}')" 
 assert_eq "$?" "0" "literal mode pipe: exits 0"
 assert_contains "$OUT" "a|b separator" "literal mode pipe: matches the literal pipe line"
 
+# literal mode combines with ignore_case (grep -Fi) — the common exact-string invocation
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"c++ code",path:$p,literal:true,ignore_case:true}')" 2>&1)
+assert_eq "$?" "0" "literal+ignore_case: exits 0"
+assert_contains "$OUT" "C++ code here" "literal+ignore_case: fixed string matched case-insensitively"
+
 # --- literal must be a boolean (JSON string "true" rejected, like ignore_case) ---
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"hello",path:$p,literal:"true"}')" 2>&1)
 assert_eq "$?" "1" "non-boolean literal: exits 1"
