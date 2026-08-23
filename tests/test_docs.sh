@@ -72,6 +72,15 @@ printf '# Title Here\n\nbody\n' >"$FIX/doc.md"
 printf '## Subheading only\n\nx\n' >"$FIX/bad.md"
 printf '[{"name":"t","description":"a tool","parameters":{"properties":{"p":{"description":"a param"}}}}]\n' >"$FIX/tools.json"
 printf '[{"name":"t","description":"","parameters":{"properties":{}}}]\n' >"$FIX/bad.json"
+printf '[]\n' >"$FIX/empty-array.json"
+printf '[{"name":"t","description":"a tool","input_schema":{"properties":{"p":{"description":"a param"}}}}]\n' >"$FIX/renamed-key.json"
+printf '[{"name":"t","description":"a tool"}]\n' >"$FIX/no-parameters.json"
+mkdir -p "$FIX/tools/renamed-key"
+printf '{"name":"t","description":"a tool","input_schema":{"properties":{"p":{"description":"a param"}}}}\n' >"$FIX/tools/renamed-key/tool.json"
+mkdir -p "$FIX/tools/no-parameters"
+printf '{"name":"t","description":"a tool"}\n' >"$FIX/tools/no-parameters/tool.json"
+mkdir -p "$FIX/tools/empty-properties"
+printf '{"name":"t","description":"a tool","parameters":{"properties":{}}}\n' >"$FIX/tools/empty-properties/tool.json"
 printf '{"_comment":"copy me to $SHAI_HOME/thing.json and edit","repos":{}}\n' >"$FIX/good.json.example"
 printf '{"repos":{}}\n' >"$FIX/bad.json.example"
 printf '{"_comment":"short","repos":{}}\n' >"$FIX/terse.json.example"
@@ -153,6 +162,26 @@ run_docs tools.json
 assert_eq "$RC" "0" "json: all descriptions present passes"
 run_docs bad.json
 assert_eq "$RC" "1" "json: empty description fails"
+
+# Anti-vacuous regression (#236): a renamed/missing parameters key or an empty
+# array must FAIL, not pass via jq's all(empty; ...) being vacuously true.
+run_docs empty-array.json
+assert_eq "$RC" "1" "json: empty array fails instead of vacuous pass"
+run_docs renamed-key.json
+assert_eq "$RC" "1" "json: renamed parameters key fails instead of vacuous pass"
+assert_contains "$OUT" "json parameters.properties missing or empty" "json: renamed-key names the schema problem"
+run_docs no-parameters.json
+assert_eq "$RC" "1" "json: missing parameters key fails instead of vacuous pass"
+assert_contains "$OUT" "json parameters.properties missing or empty" "json: no-parameters names the schema problem"
+run_docs tools/renamed-key/tool.json
+assert_eq "$RC" "1" "tool schema: renamed parameters key fails instead of vacuous pass"
+assert_contains "$OUT" "tool schema parameters.properties missing or empty" "tool schema: renamed-key names the schema problem"
+run_docs tools/no-parameters/tool.json
+assert_eq "$RC" "1" "tool schema: missing parameters key fails instead of vacuous pass"
+assert_contains "$OUT" "tool schema parameters.properties missing or empty" "tool schema: no-parameters names the schema problem"
+run_docs tools/empty-properties/tool.json
+assert_eq "$RC" "1" "tool schema: empty properties object fails instead of vacuous pass"
+assert_contains "$OUT" "tool schema parameters.properties missing or empty" "tool schema: empty-properties names the schema problem"
 
 run_docs good.json.example
 assert_eq "$RC" "0" "json example: _comment present passes"
