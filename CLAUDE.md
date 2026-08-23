@@ -507,9 +507,12 @@ branch before reporting it so pre-existing failures are not blamed on the PR; fo
 checks are skipped because a check command runs project code the fork author controls (and the
 base-repo clone does not even contain the fork head); when no checks are configured, or a `ci`
 call errors or is denied by policy, the summary says so rather than claiming a check that never
-ran. Posts a GitHub review with inline comments plus a separate summary comment containing a
-verdict (Ready to merge / Ready with minor fixes / Needs changes) with finding counts and a
-local verification status line. Handles cross-fork PRs (review proceeds but notes the PR cannot
+ran. Posts each inline comment as its own `pulls/<n>/comments` call (with `commit_id`, after
+mechanically verifying the anchor line against the `-U0` diff ranges) plus a separate summary
+comment containing a verdict (Ready to merge / Ready with minor fixes / Needs changes) with
+finding counts and a local verification status line — never one bulk `POST /reviews` payload,
+so a single bad anchor costs one comment instead of discarding the whole review. Handles
+cross-fork PRs (review proceeds but notes the PR cannot
 be updated). As its last step the
 prompt tells the LLM to add the `shai-resolve-dispatcher` label to the PR (creating the label
 in the repo first if needed) — but only when the review posted at least one actionable inline
@@ -586,9 +589,10 @@ are automatically queued for resolution. Install via
   `/tmp/review-resolver-XXXXX`, `/tmp/issue-worker-XXXXX`) precisely so concurrent runs cannot
   collide; payloads staged for a side-effecting `gh ... --input` must follow the same rule —
   write them inside that run's unique directory with the target in the name (e.g.
-  `/tmp/pr-review-XXXXX/review-{{NUMBER}}.json`), and re-read the file with `print_file` before
-  POSTing it to confirm it is the payload just written. Never reuse a fixed `/tmp` filename: a
-  stale or concurrently-written payload can silently land on the wrong PR (see #106).
+  `/tmp/pr-review-XXXXX/comment-{{NUMBER}}-<k>.json`, one file per inline comment), and re-read
+  each file with `print_file` before POSTing it to confirm it is the payload just written. Never
+  reuse a fixed `/tmp` filename: a stale or concurrently-written payload can silently land on the
+  wrong PR (see #106).
 - `jq` programs are single-quoted — `$vars` inside them are jq variables, not shell (SC2016
   is disabled). Pipelines use `cat file | filter` for readability (SC2002 disabled). See
   `.shellcheckrc`.
