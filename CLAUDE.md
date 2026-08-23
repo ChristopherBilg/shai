@@ -304,7 +304,10 @@ as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CL
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
 than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;
-grep-based pattern search across a directory tree with `glob`, `ignore_case`, and `max_results`,
+grep-based pattern search across a directory tree with `glob`, `ignore_case`, `literal`
+(exact-string mode, no regex metacharacters), and `max_results`; the pattern is grep extended
+regex, so `|` alternates and the other metacharacters `+ ? ( ) { } [ ] . * ^ $` must be
+backslash-escaped for a literal match (e.g. `C\+\+`) unless `literal: true` is set —
 skipping default-excluded paths — see the permission-gate note below),
 `sleep` (read-only),
 `write_file` (write; an optional `mode` of 3-4 octal digits sets the file's permission bits — the
@@ -504,9 +507,12 @@ branch before reporting it so pre-existing failures are not blamed on the PR; fo
 checks are skipped because a check command runs project code the fork author controls (and the
 base-repo clone does not even contain the fork head); when no checks are configured, or a `ci`
 call errors or is denied by policy, the summary says so rather than claiming a check that never
-ran. Posts a GitHub review with inline comments plus a separate summary comment containing a
-verdict (Ready to merge / Ready with minor fixes / Needs changes) with finding counts and a
-local verification status line. Handles cross-fork PRs (review proceeds but notes the PR cannot
+ran. Posts each inline comment as its own `pulls/<n>/comments` call (with `commit_id`, after
+mechanically verifying the anchor line against the `-U0` diff ranges) plus a separate summary
+comment containing a verdict (Ready to merge / Ready with minor fixes / Needs changes) with
+finding counts and a local verification status line — never one bulk `POST /reviews` payload,
+so a single bad anchor costs one comment instead of discarding the whole review. Handles
+cross-fork PRs (review proceeds but notes the PR cannot
 be updated). As its last step the
 prompt tells the LLM to add the `shai-resolve-dispatcher` label to the PR (creating the label
 in the repo first if needed) — but only when the review posted at least one actionable inline
@@ -583,9 +589,10 @@ are automatically queued for resolution. Install via
   `/tmp/review-resolver-XXXXX`, `/tmp/issue-worker-XXXXX`) precisely so concurrent runs cannot
   collide; payloads staged for a side-effecting `gh ... --input` must follow the same rule —
   write them inside that run's unique directory with the target in the name (e.g.
-  `/tmp/pr-review-XXXXX/review-{{NUMBER}}.json`), and re-read the file with `print_file` before
-  POSTing it to confirm it is the payload just written. Never reuse a fixed `/tmp` filename: a
-  stale or concurrently-written payload can silently land on the wrong PR (see #106).
+  `/tmp/pr-review-XXXXX/comment-{{NUMBER}}-<k>.json`, one file per inline comment), and re-read
+  each file with `print_file` before POSTing it to confirm it is the payload just written. Never
+  reuse a fixed `/tmp` filename: a stale or concurrently-written payload can silently land on the
+  wrong PR (see #106).
 - `jq` programs are single-quoted — `$vars` inside them are jq variables, not shell (SC2016
   is disabled). Pipelines use `cat file | filter` for readability (SC2002 disabled). See
   `.shellcheckrc`.
