@@ -222,10 +222,13 @@ builds trust in the rest of the findings.
      "body": "**issue (critical):** ..."
    }
    ```
-   `commit_id` is required for every comment — it is the PR head SHA from
-   `git -C <clone-dir> rev-parse HEAD` (or `gh pr view {{NUMBER}} -R {{REPO}} --json headRefOid`);
-   without it the POST itself 422s. Verdicts go in the summary comment below. Write each
-   payload to a temp file first with `write_file`, then pass it via `--input`.
+   `commit_id` is required for every comment — it is the PR head SHA, `headRefOid` from
+   step 1 (`gh pr view {{NUMBER}} -R {{REPO}} --json headRefOid`). For a same-repo PR the
+   clone is at the head, so `git -C <clone-dir> rev-parse HEAD` equals it; for a fork PR the
+   clone holds base code (step 4) and `rev-parse HEAD` yields the base SHA, which 422s every
+   POST — so always source `commit_id` from `headRefOid`, never from the clone's HEAD.
+   Without `commit_id` the POST itself 422s. Verdicts go in the summary comment below. Write
+   each payload to a temp file first with `write_file`, then pass it via `--input`.
    Stage each payload inside the unique clone directory from step 4 (`/tmp/pr-review-XXXXX`,
    the same random suffix), naming the files `comment-{{NUMBER}}-<k>.json` (k = 1, 2, ...) —
    the filename must contain the PR number and the clone's random suffix so concurrent or

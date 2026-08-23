@@ -159,6 +159,10 @@ assert_contains "$OUT" "gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method
   "pr_reviewer: prompt posts each inline comment via pulls/N/comments (one POST per comment)"
 assert_contains "$OUT" '"commit_id": "<head SHA>"' \
   "pr_reviewer: every per-comment payload adds commit_id (the PR head SHA)"
+assert_contains "$OUT" "headRefOid" \
+  "pr_reviewer: commit_id sources from headRefOid (step 1), never the clone's HEAD"
+assert_contains "$OUT" "yields the base SHA" \
+  "pr_reviewer: prompt warns that rev-parse HEAD on a fork clone yields the base SHA"
 assert_contains "$OUT" '"subject_type": "file"' \
   "pr_reviewer: prompt documents the file-level comment fallback with no line"
 assert_contains "$OUT" "newStart + newCount - 1" \
