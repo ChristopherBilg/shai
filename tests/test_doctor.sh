@@ -34,6 +34,22 @@ run_doctor() {
   )
 }
 
+# The doctor's behavior probe (Test 12's subject) shells out to run.sh, which wraps grep in
+# `timeout 30s`. run_doctor's command-override makes `command -v timeout` always succeed, so the
+# probe runs in every test — and it must not depend on the host's real `timeout` (absent on stock
+# macOS), or the exact-count assertions in Tests 6 and 9 would pick up a spurious probe WARN.
+# Stub `timeout` as a passthrough so the probe's shell-out is deterministic on every host; grep
+# stays real, since ERE alternation works on every platform.
+make_stub_bin
+cat >"$STUB/timeout" <<'EOF'
+#!/bin/bash
+# passthrough: drop the duration argument and exec the wrapped command — the probe's 30s cap is
+# not under test
+shift
+exec "$@"
+EOF
+chmod +x "$STUB/timeout"
+
 # shai-doctor also checks the config files tools declare via capabilities.requires.files
 # (today: the ci tool's $SHAI_HOME/ci.json), so pin SHAI_HOME to a fixture holding a valid
 # config — otherwise the host's real ~/.shai would leak into the exact warning counts below.
@@ -172,5 +188,27 @@ assert_contains "$OUT" '[OK]   $SHAI_HOME/ci.json' "doctor: empty repos map stil
 assert_contains "$OUT" "no repos entries" "doctor: reports an empty repos map"
 
 SHAI_HOME="$FIX/home"
+
+# --- Test 12: stale search_files (no -E) surfaces as a WARN, never a silent pass (#246) ---
+# The #136 -E fix makes `foo|bar` mean alternation; a stale install predating it silently
+# searches for a literal pipe and returns zero matches for every alternation. shai-doctor
+# probes the local run.sh with an alternation pattern on a two-file fixture and warns when
+# both alternatives do not match, so a stale/broken search_files is visible instead of
+# silently producing empty search results.
+# (the $STUB bin set up at the top of this file already holds the timeout passthrough stub)
+cat >"$STUB/grep" <<'EOF'
+#!/bin/bash
+# stale pre-#136 behavior: no -E, so "alpha|beta" is searched for as a literal pipe → no match
+exit 1
+EOF
+chmod +x "$STUB/grep"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: stale search_files → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" "Tool behavior self-checks:" "doctor: prints the behavior self-check section"
+assert_contains "$OUT" "[WARN] search_files alternation" "doctor: stale search_files shows WARN"
+assert_contains "$OUT" "literal pipe" "doctor: stale search_files names the literal-pipe misread"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: stale search_files is the only warning"
 
 finish
