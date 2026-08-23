@@ -155,5 +155,11 @@ assert_contains "$OUT" "rev-parse HEAD" \
   "pr_reviewer: prompt verifies the clone is at the PR head SHA"
 assert_contains "$OUT" "reset --hard <headRefOid>" \
   "pr_reviewer: prompt hard-resets a stale clone to the PR head SHA"
+assert_contains "$OUT" "gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input <file>" \
+  "pr_reviewer: prompt documents the one-at-a-time 422-recovery re-post"
+assert_contains "$OUT" '"commit_id": "<head SHA>"' \
+  "pr_reviewer: 422-recovery payload adds commit_id (the PR head SHA)"
+assert_contains "$OUT" '"subject_type": "file"' \
+  "pr_reviewer: prompt documents the file-level comment fallback with no line"
 
 finish

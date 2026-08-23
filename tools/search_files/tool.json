@@ -1,6 +1,6 @@
 {
   "name": "search_files",
-  "description": "Search for a text pattern across files in a directory tree. Returns matching lines as path:line_number: text rows, followed by a [truncated: showing first N matches] line when more matches exist than max_results. Skips binary files and default-excluded paths (.git, .ssh, .env, node_modules, ...), and gives up after 30 seconds. Use this to find where a symbol is defined, which files reference a string, or whether a pattern appears anywhere in the repo — faster and more reliable than printing whole files.",
+  "description": "Search for a text pattern across files in a directory tree. Returns matching lines as path:line_number: text rows, followed by a [truncated: showing first N matches] line when more matches exist than max_results. Skips binary files, default-excluded paths (.git, .ssh, .env, node_modules, ...), and unreadable files/directories — if any paths cannot be read, the matches that were found are still returned with a [note: search incomplete — N unreadable path(s) skipped] line. Gives up after 30 seconds. Use this to find where a symbol is defined, which files reference a string, or whether a pattern appears anywhere in the repo — faster and more reliable than printing whole files.",
   "capabilities": {
     "read_only": true
   },
@@ -17,7 +17,7 @@
       },
       "glob": {
         "type": "string",
-        "description": "Only search files matching this glob pattern (e.g. \"*.sh\", \"*.json\"). Omit to search all files."
+        "description": "Only search files whose base name matches this glob pattern (e.g. \"*.sh\", \"*.json\"). The glob is matched against file base names only (grep --include semantics), so a directory-prefixed glob like \"tests/*.sh\" is rejected with an error — use the path parameter to restrict to a directory instead. Omit to search all files."
       },
       "ignore_case": {
         "type": "boolean",
