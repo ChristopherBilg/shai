@@ -175,7 +175,7 @@ esac
 # zero-match search is still a successful search.
 if [ -z "$matches" ]; then
   case "$pattern" in
-    *'|'* | *'('* | *')'* | *'+'* | *'?'* | *'{'* | *'}'* | *'['* | *']'* | *'\'*)
+    *'|'* | *'('* | *')'* | *'+'* | *'?'* | *'{'* | *'}'* | *'['* | *']'* | *\\*)
       printf '[note: 0 matches for pattern %s — the pattern contains regex metacharacters (| ( ) + ? { } [ ] \\); if you meant alternation, "foo|bar" matches either word; to match the literal characters, escape them (e.g. "\\|" for a pipe).]\n' "$pattern"
       ;;
   esac

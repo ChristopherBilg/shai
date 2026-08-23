@@ -72,6 +72,12 @@ OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"qqq_never|zzz_never",path:$p}'
 assert_eq "$?" "0" "zero-match names pattern: exits 0"
 assert_contains "$OUT" "qqq_never|zzz_never" "zero-match names pattern: note includes the pattern"
 
+# a zero-match pattern containing a backslash (ERE: \\ is a literal backslash) also gets the
+# note — the \ branch of the metacharacter check
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" --arg pat 'foo\\bar' '{pattern:$pat,path:$p}')" 2>&1)
+assert_eq "$?" "0" "zero-match backslash: exits 0"
+assert_contains "$OUT" "0 matches" "zero-match backslash: note for backslash"
+
 # a metacharacter pattern that DOES match returns the matches and no note — the note only
 # fires on zero matches
 OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"goodbye|no match",path:$p}')" 2>&1)
