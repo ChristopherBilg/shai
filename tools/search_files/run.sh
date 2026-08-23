@@ -1,7 +1,7 @@
 #!/bin/bash
 # search_files/run.sh — search for a text pattern across files in a directory tree
 # Usage: run.sh '<json input>'
-# Reads: $1 (JSON with .pattern, optional .path, .glob, .ignore_case, .max_results)
+# Reads: $1 (JSON with .pattern, optional .path, .glob, .ignore_case, .literal, .max_results)
 # Writes: matching lines as path:line_number: text to stdout, plus a truncation marker when capped
 #         and a [note: search incomplete — N unreadable path(s) skipped] line when unreadable
 #         paths were skipped
@@ -19,6 +19,7 @@ glob=$(printf '%s' "$input" | jq -r '.glob // empty')
 # `"true"` (quoted) and is rejected below, whereas -r would stringify it into a value that passes
 # the boolean check. Same for max_results — the string "5" is not an integer.
 ignore_case=$(printf '%s' "$input" | jq -c '.ignore_case // false')
+literal=$(printf '%s' "$input" | jq -c '.literal // false')
 max_results=$(printf '%s' "$input" | jq -c '.max_results // empty')
 
 if [ -z "$pattern" ]; then
@@ -28,6 +29,11 @@ fi
 
 if [ "$ignore_case" != "true" ] && [ "$ignore_case" != "false" ]; then
   printf 'error: ignore_case must be a boolean (got %s)\n' "$ignore_case"
+  exit 1
+fi
+
+if [ "$literal" != "true" ] && [ "$literal" != "false" ]; then
+  printf 'error: literal must be a boolean (got %s)\n' "$literal"
   exit 1
 fi
 
@@ -67,7 +73,15 @@ fi
 # -E selects extended regex: without it, basic regex treats `|` as a literal character, so an
 # alternation like `foo|bar` silently searches for the literal pipe and returns zero matches
 # (see #136). With -E, `foo|bar` means alternation, which is what agents mean when they write it.
-args=(-rnIH -E)
+# The trade-off: every other ERE metacharacter (+ ? ( ) { } [ ] . * ^ $) is special too, so a
+# literal search for e.g. "C++" silently matches "CC…" and never the literal text (see #232).
+# Two ways out: backslash-escape each metacharacter (C\+\+) in the pattern, or set literal:true,
+# which flips to -F so the whole pattern is matched verbatim with no metacharacter meaning at all.
+if [ "$literal" = "true" ]; then
+  args=(-rnIH -F)
+else
+  args=(-rnIH -E)
+fi
 if [ -n "$glob" ]; then
   args+=(--include="$glob")
 fi
