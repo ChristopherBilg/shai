@@ -274,7 +274,7 @@ assert_contains "$PROMPT_OUT" "at least one actionable" \
 # /tmp/review.json --input path, and must stay inside the per-run clone dir with the PR number.
 assert_eq "$(printf '%s' "$PROMPT_OUT" | grep -cF -- '--input /tmp/review.json' || true)" "0" \
   "pr_reviewer prompt: no fixed /tmp/review.json payload path"
-assert_contains "$PROMPT_OUT" "/tmp/pr-review-XXXXX/review-{{NUMBER}}.json" \
-  "pr_reviewer prompt: stages the payload inside the per-run clone dir with the PR number"
+assert_contains "$PROMPT_OUT" "/tmp/pr-review-XXXXX/comment-{{NUMBER}}-<k>.json" \
+  "pr_reviewer prompt: stages each per-comment payload inside the per-run clone dir with the PR number"
 
 finish
