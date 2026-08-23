@@ -173,4 +173,26 @@ assert_contains "$OUT" "no repos entries" "doctor: reports an empty repos map"
 
 SHAI_HOME="$FIX/home"
 
+# --- Test 12: stale search_files (no -E) surfaces as a WARN, never a silent pass (#246) ---
+# The #136 -E fix makes `foo|bar` mean alternation; a stale install predating it silently
+# searches for a literal pipe and returns zero matches for every alternation. shai-doctor
+# probes the local run.sh with an alternation pattern on a two-file fixture and warns when
+# both alternatives do not match, so a stale/broken search_files is visible instead of
+# silently producing empty search results.
+make_stub_bin
+cat >"$STUB/grep" <<'EOF'
+#!/bin/bash
+# stale pre-#136 behavior: no -E, so "alpha|beta" is searched for as a literal pipe → no match
+exit 1
+EOF
+chmod +x "$STUB/grep"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: stale search_files → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" "Tool behavior self-checks:" "doctor: prints the behavior self-check section"
+assert_contains "$OUT" "[WARN] search_files alternation" "doctor: stale search_files shows WARN"
+assert_contains "$OUT" "literal pipe" "doctor: stale search_files names the literal-pipe misread"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: stale search_files is the only warning"
+
 finish

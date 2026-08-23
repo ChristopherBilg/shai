@@ -47,6 +47,43 @@ OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"zzz_no_match_zzz",path:$p}')" 
 assert_eq "$?" "0" "no match: exits 0"
 assert_eq "$OUT" "" "no match: empty output"
 
+# --- zero matches + regex metacharacters → diagnostic note, never a silent empty result (#246) ---
+# A zero-match is ambiguous when the pattern carries regex metacharacters: under basic regex a
+# bare `|` was searched for as a literal pipe and silently matched nothing (#136); under
+# extended regex an over-special pattern like `foo?` means regex, not the literal text (#232).
+# The tool says so instead of returning a bare empty result that reads as "not found anywhere".
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"zzz_no_match_zzz|qqq",path:$p}')" 2>&1)
+assert_eq "$?" "0" "zero-match metachar: exits 0"
+assert_contains "$OUT" "0 matches" "zero-match metachar: emits the 0-matches note"
+assert_contains "$OUT" "regex metacharacters" "zero-match metachar: names regex metacharacters"
+
+# a zero-match without metacharacters stays a bare empty result — no noise for plain literals
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"zzz_no_match_zzz",path:$p}')" 2>&1)
+assert_eq "$?" "0" "zero-match literal: exits 0"
+assert_eq "$OUT" "" "zero-match literal: no note for a plain literal pattern"
+
+# an over-special ERE pattern (like #232's `C++`) also gets the note on zero matches
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"foo+",path:$p}')" 2>&1)
+assert_eq "$?" "0" "zero-match ERE metachar: exits 0"
+assert_contains "$OUT" "0 matches" "zero-match ERE metachar: note for +"
+
+# the note names the pattern so the agent can see which search came back empty
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"qqq_never|zzz_never",path:$p}')" 2>&1)
+assert_eq "$?" "0" "zero-match names pattern: exits 0"
+assert_contains "$OUT" "qqq_never|zzz_never" "zero-match names pattern: note includes the pattern"
+
+# a metacharacter pattern that DOES match returns the matches and no note — the note only
+# fires on zero matches
+OUT=$("$RUN" "$(jq -nc --arg p "$TDIR" '{pattern:"goodbye|no match",path:$p}')" 2>&1)
+assert_eq "$?" "0" "metachar with matches: exits 0"
+assert_contains "$OUT" "goodbye world" "metachar with matches: matches still returned"
+if [[ "$OUT" == *"0 matches"* ]]; then
+  echo -e "  ${RED}✗${NC} metachar with matches: note must not fire when matches exist"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} metachar with matches: no note when matches exist"
+fi
+
 # --- alternation: | is extended-regex alternation, not a literal pipe (#136) ---
 # With basic regex grep, "goodbye|no match" was searched for as the literal string and silently
 # matched nothing; with -E each alternative is matched independently.

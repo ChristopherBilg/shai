@@ -164,5 +164,21 @@ case "$status" in
     ;;
 esac
 
-[ -n "$matches" ] || exit 0
+# A zero-match result is ambiguous when the pattern carries regex metacharacters: under basic
+# regex a bare `|` was searched for as a literal pipe, so `foo|bar` silently returned zero
+# matches (see #136); under extended regex an over-special pattern like `C++` or `foo?` means
+# regex, not the literal text (see #232). Emit a diagnostic note so a zero-match is never
+# silently read as "the symbol does not exist anywhere" (see #246). Only the documented
+# metacharacter set (| ( ) + ? { } [ ] \) triggers it: a plain literal pattern like `foo`
+# cannot be misread, and `*`/`.` are deliberately not flagged because they are too common in
+# literal searches (e.g. `config.*`) to be worth the noise. The exit code is unchanged — a
+# zero-match search is still a successful search.
+if [ -z "$matches" ]; then
+  case "$pattern" in
+    *'|'* | *'('* | *')'* | *'+'* | *'?'* | *'{'* | *'}'* | *'['* | *']'* | *'\'*)
+      printf '[note: 0 matches for pattern %s — the pattern contains regex metacharacters (| ( ) + ? { } [ ] \\); if you meant alternation, "foo|bar" matches either word; to match the literal characters, escape them (e.g. "\\|" for a pipe).]\n' "$pattern"
+      ;;
+  esac
+  exit 0
+fi
 print_matches

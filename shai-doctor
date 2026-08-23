@@ -162,6 +162,39 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
       check_config_file "$file_path" "$file_level" "$file_format" "$file_keys" "$file_hint"
     done < <(jq -c '.capabilities.requires.files // [] | .[]' "$tj" 2>/dev/null)
   done
+
+  # Tool behavior self-checks: probe an installed tool's actual behavior against its tool.json
+  # contract instead of trusting that the shipped file is what runs. search_files documents
+  # "grep extended regex; use | for alternation" (ERE) — the -E flag shipped in #136 — but a
+  # stale install predating that fix silently searches for a literal pipe and returns zero
+  # matches for every alternation (see #246, filed against exactly such a stale installed
+  # copy; #232 shows installed copies diverge). The probe runs the local run.sh on a
+  # two-file fixture and requires both alternatives to match, so a zero-match cannot be
+  # mistaken for success. WARN, not FAIL: the environment is degraded (alternation searches
+  # return wrong results) but shai still launches, so this gets the same degraded-but-usable
+  # treatment as a conditional dependency.
+  printf '\nTool behavior self-checks:\n' >&2
+  if [ -x "$DIR/tools/search_files/run.sh" ] && command -v timeout >/dev/null 2>&1; then
+    probe=$(mktemp -d) || true
+    if [ -n "$probe" ]; then
+      printf 'alpha one\n' >"$probe/a.txt"
+      printf 'beta two\n' >"$probe/b.txt"
+      out=$(bash "$DIR/tools/search_files/run.sh" \
+        "$(jq -nc --arg p "$probe" '{pattern:"alpha|beta",path:$p}')" 2>&1) || true
+      rm -rf "$probe"
+      if [[ "$out" == *"alpha one"* && "$out" == *"beta two"* ]]; then
+        printf '  [OK]   search_files alternation (grep -E)\n' >&2
+      else
+        printf '  [WARN] search_files alternation (grep -E)\n' >&2
+        printf '         search_files returned no matches for the alternation "alpha|beta" on\n' >&2
+        printf '         a probe fixture. A stale install predating the #136 -E fix silently\n' >&2
+        printf '         searches for a literal pipe, so "foo|bar" finds nothing. Reinstall\n' >&2
+        printf '         shai (or update the installed tools) so alternation works as\n' >&2
+        printf '         documented.\n' >&2
+        WARNINGS=$((WARNINGS + 1))
+      fi
+    fi
+  fi
 fi
 
 printf '\n%d error%s, %d warning%s\n' \
