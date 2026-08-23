@@ -69,15 +69,17 @@ Before posting any comment on a changed area, you MUST read the actual source fi
 that area using `print_file`. Never comment on code you have not read. The diff alone is
 not sufficient — you need the surrounding context to judge correctness.
 Inline comments need a `path` and an exact RIGHT-side `line`, and both must appear in the
-diff: the review API rejects the whole `POST /reviews` call with a 422 if any `line` is
-not part of the diff or any `path` names a file the PR did not touch — one bad anchor
-discards the entire review, every comment and all the reading that produced them. A line
-counts as part of the diff if it falls inside a hunk, and that includes *context* lines —
-unchanged lines a hunk shows around the change — not only added lines, so unchanged code
-that sits near changed code is anchorable. A context-line anchor's number comes from the
-full hunk header's right-side range — `@@ -75,3 +76,13 @@` covers RIGHT-side lines 76-88 —
-never from the `-U0` header, which shows only added lines. Numbers for added lines must
-come from the `-U0` hunk headers derived in step 4, not from `print_file`:
+diff: the API rejects the POST with a 422 if the `line` is not part of the diff or the
+`path` names a file the PR did not touch. Step 7 posts each comment as its own
+`pulls/{{NUMBER}}/comments` call, so one bad anchor costs that comment alone, never the
+whole review — but verify anchors mechanically against the hunk headers before posting
+anyway, so a bad anchor costs nothing. A line counts as part of the diff if it falls
+inside a hunk, and that includes *context* lines — unchanged lines a hunk shows around the
+change — not only added lines, so unchanged code that sits near changed code is
+anchorable. A context-line anchor's number comes from the full hunk header's right-side
+range — `@@ -75,3 +76,13 @@` covers RIGHT-side lines 76-88 — never from the `-U0` header,
+which shows only added lines. Numbers for added lines must come from the `-U0` hunk
+headers derived in step 4, not from `print_file`:
 `line_numbers: true` gives you the line of an anchor string you already know, but it cannot
 tell you which lines the diff actually contains or whether `side: RIGHT` is legal there.
 Use `print_file` with `line_numbers: true` (optionally with `start_line`/`end_line` to read
@@ -87,8 +89,9 @@ code.
 
 For a finding whose file has no hunk at all — the defect lives in code the PR did not
 touch, which is where rename/migration bugs live — there is no in-diff anchor in that file.
-Do not improvise a `path`; an out-of-diff path rejects the whole review payload, not just
-that comment. Instead use one of two prescribed forms:
+Do not improvise a `path`; an out-of-diff path 422s that one POST and the comment is lost
+(each comment posts separately, so the rest of the review is unaffected, but the comment
+still does not land). Instead use one of two prescribed forms:
 - Anchor the comment on the nearest in-diff line that *causes* the problem (e.g. the
   renamed identifier in another file) and name the real `file:line` of the defect in the
   comment body; or
@@ -104,6 +107,28 @@ For each changed file:
    was updated — the missed caller is usually in a file the PR did not touch, and that is
    where the highest-value findings live.
 5. Only then form your assessment.
+
+When the PR under review modifies a built-in tool (a file under `tools/<name>/`), your own
+`search_files`/`print_file`/`list_directory` calls run the *installed* implementation of that
+tool — the release you are running on — never the checkout, so they reflect the installed
+release, not the PR. A behavioral probe of a changed tool through your own instance therefore
+exercises pre-PR behavior: for example, PR #208 changed `tools/search_files/run.sh` to exclude
+`.env`/`.ssh`/`node_modules`/..., and the reviewer's own `search_files` on a fixture `.env`
+file returned its contents — the exact opposite of the PR's new behavior — with no indication
+that the probe was stale. Never probe a changed tool through your own instance: you have no
+shell, and `ci` (below) only runs the fixed checks configured in `$SHAI_HOME/ci.json`, so you
+cannot run `tools/<name>/run.sh '<input>'` with an arbitrary input directly. The runnable
+mechanism is a user-configured probe check: call `ci` with `action: list` and `cwd` set to the
+clone, and if the repository's checks include one that executes the changed tool against the
+relevant input (a probe check whose command is e.g. `./tools/<name>/run.sh '<input>'`), run it
+and judge the output against the PR's change. Such a probe is only meaningful when the clone is
+verified at the PR head (step 4). If no configured check exercises the changed tool with the
+input in question — the usual case — do not improvise: say in the summary that behavior could
+not be probed against the PR's code, as with a fork PR whose head is not in the base clone.
+Reading the changed source and running the test suite (via the `ci` tool below) do not replace
+the probe: a behavioral claim about a built-in tool must be verified against the checkout's
+`tools/<name>/run.sh` through a configured check, and the summary should note when a probe used
+the installed release instead.
 
 For same-repo PRs (where `headRepositoryOwner.login` matches `{{OWNER}}`), verify test- and
 behaviour-related findings locally with the `ci` tool before posting them — it is the only tool
@@ -200,41 +225,50 @@ builds trust in the rest of the findings.
 ## Posting the review
 
 6. Read source files around every changed area before forming any comments.
-7. Post a GitHub review with inline comments using `gh api`:
+7. Post each inline comment as its own call to the pull-request review-comments endpoint —
+   never assemble them into one bulk `POST /pulls/{{NUMBER}}/reviews` payload. A bulk call
+   makes every comment hostage to every other: the API validates each `line` against the
+   diff and rejects the entire payload with a 422 if any one anchor is wrong, discarding
+   every comment and all the reading that produced them in a single call. One comment per
+   POST means a bad anchor costs exactly that comment:
    ```
-   gh api repos/{{REPO}}/pulls/{{NUMBER}}/reviews --method POST --input /tmp/pr-review-XXXXX/review-{{NUMBER}}.json
+   gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input /tmp/pr-review-XXXXX/comment-{{NUMBER}}-<k>.json
    ```
-   where `/tmp/pr-review-XXXXX/review-{{NUMBER}}.json` contains:
+   where each payload file contains:
    ```json
    {
-     "event": "COMMENT",
-     "comments": [
-       { "path": "file.sh", "line": 42, "side": "RIGHT", "body": "**issue (critical):** ..." }
-     ]
+     "commit_id": "<head SHA>",
+     "path": "file.sh",
+     "line": 42,
+     "side": "RIGHT",
+     "body": "**issue (critical):** ..."
    }
    ```
-   Use `COMMENT` as the event — not `APPROVE` or `REQUEST_CHANGES`. Verdicts go in the
-   summary comment below. Write the JSON to a temp file first with `write_file`, then pass it
-   via `--input`.
-   Stage the payload inside the unique clone directory from step 4 (`/tmp/pr-review-XXXXX`,
-   the same random suffix), naming the file `review-{{NUMBER}}.json` — the filename must
-   contain the PR number and the clone's random suffix so concurrent or leftover runs can
-   never share it. Never use a fixed path like `/tmp/review.json`: a stale or
-   concurrently-written payload would silently be posted to the wrong PR. Before the POST,
-   re-read the file with `print_file` and confirm it is the payload you just wrote for this PR.
-   Every `path` and `line` in `comments[]` must appear in the diff (the `line` from the
-   hunk headers in step 4 — the `-U0` header for added lines, the full header's right-side
-   range for context lines): the API validates each entry against the diff and rejects
-   the whole request with a 422 if any `path` is out of diff or any `line` is outside a
-   hunk. If the POST still 422s, recover by re-posting the comments one at a
-   time via `gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input <file>`.
-   The review payload's `comments[]` objects are not accepted as-is: this endpoint requires
-   a `commit_id` for every comment, so each recovered payload must add
-   `"commit_id": "<head SHA>"` (get it from `git -C <clone-dir> rev-parse HEAD`) — without
-   it the recovery POST itself 422s. A single bad anchor then costs one comment instead of
-   the review. When a finding cannot be pinned to a diff line with confidence, prefer a
+   `commit_id` is required for every comment — it is the PR head SHA, `headRefOid` from
+   step 1 (`gh pr view {{NUMBER}} -R {{REPO}} --json headRefOid`). For a same-repo PR the
+   clone is at the head, so `git -C <clone-dir> rev-parse HEAD` equals it; for a fork PR the
+   clone holds base code (step 4) and `rev-parse HEAD` yields the base SHA, which 422s every
+   POST — so always source `commit_id` from `headRefOid`, never from the clone's HEAD.
+   Without `commit_id` the POST itself 422s. Verdicts go in the summary comment below. Write
+   each payload to a temp file first with `write_file`, then pass it via `--input`.
+   Stage each payload inside the unique clone directory from step 4 (`/tmp/pr-review-XXXXX`,
+   the same random suffix), naming the files `comment-{{NUMBER}}-<k>.json` (k = 1, 2, ...) —
+   the filename must contain the PR number and the clone's random suffix so concurrent or
+   leftover runs can never share it. Never use a fixed path like `/tmp/review.json`: a stale
+   or concurrently-written payload would silently be posted to the wrong PR.
+   Mechanically verify every payload before POSTing — do not trust hand-derived anchors.
+   For each comment, re-run `git -C <clone-dir> diff -U0 origin/<baseRefName>...HEAD -- <path>`
+   for its file and check the payload's `line` against the hunk headers you derived in step 4:
+   an added-line anchor must fall inside the `-U0` RIGHT-side range `newStart` through
+   `newStart + newCount - 1`; a context-line anchor must fall inside the full hunk header's
+   right-side range. This is single-line arithmetic over a header, not hand-counting.
+   When a finding cannot be pinned to a verified in-diff line with confidence, prefer a
    file-level comment — `"subject_type": "file"`, no `line`, still with `commit_id` — as the
-   documented fallback instead of guessing a number.
+   documented fallback instead of guessing a number. Before each POST, re-read the payload
+   file with `print_file` and confirm it is the payload you just wrote for this PR.
+   If a single POST still 422s, do not stop and do not re-post the whole review: the other
+   comments are already posted or unaffected — note the failed comment in the summary and
+   continue with the rest.
 8. Post a separate summary comment with your verdict:
    `gh pr comment {{NUMBER}} -R {{REPO}} --body "..."`
 

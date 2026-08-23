@@ -155,11 +155,23 @@ assert_contains "$OUT" "rev-parse HEAD" \
   "pr_reviewer: prompt verifies the clone is at the PR head SHA"
 assert_contains "$OUT" "reset --hard <headRefOid>" \
   "pr_reviewer: prompt hard-resets a stale clone to the PR head SHA"
-assert_contains "$OUT" "gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input <file>" \
-  "pr_reviewer: prompt documents the one-at-a-time 422-recovery re-post"
+assert_contains "$OUT" "gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --method POST --input /tmp/pr-review-XXXXX/comment-{{NUMBER}}-<k>.json" \
+  "pr_reviewer: prompt posts each inline comment via pulls/N/comments (one POST per comment)"
 assert_contains "$OUT" '"commit_id": "<head SHA>"' \
-  "pr_reviewer: 422-recovery payload adds commit_id (the PR head SHA)"
+  "pr_reviewer: every per-comment payload adds commit_id (the PR head SHA)"
+assert_contains "$OUT" "headRefOid" \
+  "pr_reviewer: commit_id sources from headRefOid (step 1), never the clone's HEAD"
+assert_contains "$OUT" "yields the base SHA" \
+  "pr_reviewer: prompt warns that rev-parse HEAD on a fork clone yields the base SHA"
 assert_contains "$OUT" '"subject_type": "file"' \
   "pr_reviewer: prompt documents the file-level comment fallback with no line"
+assert_contains "$OUT" "newStart + newCount - 1" \
+  "pr_reviewer: prompt instructs verifying each line against the -U0 right-side ranges"
+if [[ "$OUT" == *"pulls/{{NUMBER}}/reviews --method POST"* ]]; then
+  echo -e "  ${RED}✗${NC} pr_reviewer: prompt still assembles the whole review into one bulk POST /reviews payload"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} pr_reviewer: prompt posts comments individually, not one bulk /reviews payload"
+fi
 
 finish
