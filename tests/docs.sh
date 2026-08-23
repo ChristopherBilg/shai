@@ -69,12 +69,14 @@ comment_hdr_ok() { # first non-blank line is `#` + >= 8 chars of text
   [ "${#text}" -ge 8 ]
 }
 
-json_ok() { # valid array; every tool and every input property has a non-empty description
+json_ok() { # valid non-empty array; every tool and every input property has a non-empty description
   jq -e '
     type == "array"
+    and length > 0
     and all(.[];
       (.description // "" | length) > 0
-      and all((.parameters.properties // {})[]; (.description // "" | length) > 0)
+      and (.parameters.properties | type == "object" and length > 0)
+      and all(.parameters.properties[]; (.description // "" | length) > 0)
     )
   ' "$1" >/dev/null 2>&1
 }
@@ -88,7 +90,8 @@ tool_json_ok() { # single tool object; tool + every input property has a non-emp
   jq -e '
     type == "object"
     and ((.description // "") | length) > 0
-    and all((.parameters.properties // {})[]; (.description // "") | length > 0)
+    and (.parameters.properties | type == "object" and length > 0)
+    and all(.parameters.properties[]; (.description // "" | length) > 0)
   ' "$1" >/dev/null 2>&1
 }
 
