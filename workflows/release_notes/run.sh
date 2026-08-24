@@ -101,10 +101,6 @@ if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
     printf '\n## Contributors\n\n%s\n' "$CONTRIBUTORS"
   fi
   wf_output "generated release notes for $REPO ($BASE...$HEAD)" >&2
-  # No wf_suggest here: this workflow's primary LLM call runs deliberately tool-less over a
-  # session that already contains untrusted external data (PR titles, bodies), and it has no
-  # policy overlay — granting one just to file suggestion issues would hand gh write access
-  # to that session. stdout is also the release-notes markdown, so it must stay clean.
   exit 0
 else
   PAYLOAD_TEXT=$(printf '%s' "$RESULT" | jq -r '.payload.text // empty' 2>/dev/null) || PAYLOAD_TEXT=""
