@@ -37,6 +37,40 @@ NOTOOL='{"type":"message","source":"assistant","payload":{"content":"hi","finish
 echo "$NOTOOL" | "$DIR/shai-dispatch" >/dev/null
 assert_eq "$?" "0" "dispatch: no-tool exit 0"
 
+# --- exit-code contract (#257): a missing lib/read-only.sh is a dispatch failure (exit 3),
+#     NOT "a tool ran" (exit 1). A bare `source` failure would abort with status 1 and
+#     shai-loop would read "a tool ran" and re-evaluate forever; the pre-flight check must
+#     make it exit 3 with an explicit message instead. Run a copy of shai-dispatch from a dir
+#     with no lib/ so the real repo tree stays untouched.
+MISSINGLIB_DIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$MISSINGLIB_DIR")
+cp "$DIR/shai-dispatch" "$MISSINGLIB_DIR/shai-dispatch"
+chmod +x "$MISSINGLIB_DIR/shai-dispatch"
+MLOUT=$(echo "$NOTOOL" | "$MISSINGLIB_DIR/shai-dispatch" 2>&1)
+MLRC=$?
+assert_eq "$MLRC" "3" "dispatch: missing lib/read-only.sh → exit 3 (dispatch failed, not a tool ran)"
+assert_contains "$MLOUT" "install incomplete" "dispatch: missing lib/read-only.sh → clear error message"
+assert_contains "$MLOUT" "exit 3" "dispatch: missing lib/read-only.sh → error names the exit code"
+
+# --- exit-code contract (#257): the ERR trap itself needs a direct test — the pre-flight check
+#     above covers the explicit `exit 3`, but the trap is what normalizes an unexpected set -e
+#     abort (any failure that is not a deliberate `exit`) to 3. Cheap trigger: a copy of
+#     shai-dispatch whose lib/read-only.sh is readable but fails at runtime when sourced (a
+#     top-level command that exits non-zero), so the pre-flight readability check passes and
+#     the ERR trap must catch the abort. (A *syntax* error does not exercise the trap: bash
+#     reports a parse error in sourced code as a non-trap exit 2, so the fixture has to be a
+#     runtime failure.)
+TRAPDIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$TRAPDIR")
+cp "$DIR/shai-dispatch" "$TRAPDIR/shai-dispatch"
+chmod +x "$TRAPDIR/shai-dispatch"
+mkdir -p "$TRAPDIR/lib"
+printf 'false\n' >"$TRAPDIR/lib/read-only.sh"
+TROUT=$(echo "$NOTOOL" | "$TRAPDIR/shai-dispatch" 2>&1)
+TRRC=$?
+assert_eq "$TRRC" "3" "dispatch: runtime failure in lib/read-only.sh → ERR trap, exit 3"
+assert_contains "$TROUT" "dispatch failed" "dispatch: runtime failure → ERR trap message names the failure"
+
 TOOL='{"type":"message","source":"assistant","payload":{"content":null,"tool_calls":[{"id":"t1","type":"function","function":{"name":"gh","arguments":"{\"args\":[\"pr\",\"view\",\"123\"]}"}}],"finish_reason":"tool_calls"}}'
 DOUT=$(echo "$TOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
 DRC=$?
