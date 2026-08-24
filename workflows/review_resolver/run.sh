@@ -49,6 +49,7 @@ TYPE=$(printf '%s' "$RESULT" | jq -r '.type // empty' 2>/dev/null) || TYPE=""
 SOURCE=$(printf '%s' "$RESULT" | jq -r '.source // empty' 2>/dev/null) || SOURCE=""
 
 if [ "$TYPE" = "message" ] && [ "$SOURCE" = "assistant" ]; then
+  wf_suggest
   wf_output "resolved review comments on PR #$NUMBER on $REPO"
   exit 0
 else

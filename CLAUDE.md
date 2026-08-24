@@ -423,8 +423,8 @@ primary task completes, using `prompts/suggest.txt`. The LLM reviews the session
 may create GitHub issues on the shai repo labeled `shai-suggestion` for improvement
 opportunities (conventions, bugs, enhancements, refactoring, testing gaps, docs), at most two
 per run. Dedup is prompt-driven: the LLM checks existing open `shai-suggestion` issues before
-creating new ones. Called by `issue_worker` after its primary task succeeds. Deliberately
-**not** called by `release_notes`: its primary call runs
+creating new ones. Called by `issue_worker`, `pr_reviewer`, and `review_resolver` after their
+primary tasks succeed. Deliberately **not** called by `release_notes`: its primary call runs
 tool-less over a session containing untrusted external data, and its stdout is the generated
 markdown.
 
