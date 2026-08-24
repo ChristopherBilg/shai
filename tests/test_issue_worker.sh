@@ -284,7 +284,11 @@ assert_contains "$OUT" "implemented issue #210" "issue_worker: succeeds normally
 
 # --- robustness regression (finding 3): issue body is size-bounded before reaching the prompt ---
 desc "issue body truncation"
-LONG_BODY=$(head -c 40000 /dev/zero | tr '\0' 'A')
+# 100 KB, well past the 32000-byte cap: the old `printf | head -c` pipeline aborts with
+# SIGPIPE (exit 141) under `set -o pipefail` on any body this large, so this case is a
+# deterministic regression test for #261 rather than the intermittent flake the old
+# 40000-byte size produced (near the pipe-buffer boundary).
+LONG_BODY=$(head -c 100000 /dev/zero | tr '\0' 'A')
 write_issue_worker_gh_stub "Body Truncation Test" "$LONG_BODY"
 printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"done."},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200

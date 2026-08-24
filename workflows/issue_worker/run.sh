@@ -52,7 +52,7 @@ BRANCH_NAME="shai/${NUMBER}-${SLUG}"
 # non-default `patsub_replacement` shopt is enabled), which would otherwise corrupt the
 # escaped form into the {{ISSUE_BODY}} placeholder itself; `\&` renders a literal `&`
 # on every bash version, so the escaping is cheap insurance across environments.
-ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | head -c 32000)
+ISSUE_BODY=$(head -c 32000 <<<"$ISSUE_BODY")
 
 ISSUE_TITLE=$(printf '%s' "$ISSUE_TITLE" | jq -Rrs 'gsub("<\\s*/\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i") | gsub("&"; "\\&")')
 ISSUE_BODY=$(printf '%s' "$ISSUE_BODY" | jq -Rrs 'gsub("<\\s*/\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i") | gsub("&"; "\\&")')
