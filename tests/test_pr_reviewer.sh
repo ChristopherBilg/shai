@@ -14,18 +14,17 @@ TMP="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP")
 export SHAI_HOME="$TMP"
 
-REQ="$TMP/request.json"
 ENVF="$TMP/env.txt"
 
-# write_capture_curl_stub <http_code>: like write_curl_stub, but also records the request
-# body and the SHAI_POLICY_OVERLAY value curl was invoked with (curl inherits the workflow's
-# exported environment through shai-loop → shai-eval).
-write_capture_curl_stub() {
+# write_env_curl_stub <http_code>: like write_curl_stub, but also records the
+# SHAI_POLICY_OVERLAY value curl was invoked with. Request inspection uses
+# per-span dump files ($SHAI_HOME/runs/*/span_1-request.json) instead.
+write_env_curl_stub() {
   local code="$1"
   cat >"$STUB/.curl_body"
   {
     printf '#!/bin/bash\n'
-    printf 'cat > "%s"\n' "$REQ"
+    printf 'cat > /dev/null\n'
     printf 'printf "SHAI_POLICY_OVERLAY=%%s\\n" "${SHAI_POLICY_OVERLAY:-}" > "%s"\n' "$ENVF"
     printf 'cat "%s/.curl_body"\n' "$STUB"
     printf 'printf "\\n"\n'
@@ -87,9 +86,13 @@ assert_eq "$RC" "2" "pr_reviewer: exit 2 on leading-zero PR number"
 # --- success case: valid assistant response ---
 desc "happy path"
 printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"Review complete."},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
-  write_capture_curl_stub 200
+  write_env_curl_stub 200
+rm -rf "$SHAI_HOME/runs"
 
-OUT=$("$DIR/workflows/pr_reviewer/run.sh" owner/repo 42 2>&1)
+# SHAI_SUGGEST=0: wf_suggest's second LLM call would mint a second runs/* dir, so the
+# span_1-request.json glob in the prompt-substitution section below would concatenate
+# the primary and suggest request dumps. Disabling it keeps that glob deterministic.
+OUT=$(SHAI_SUGGEST=0 "$DIR/workflows/pr_reviewer/run.sh" owner/repo 42 2>&1)
 RC=$?
 assert_eq "$RC" "0" "pr_reviewer: exit 0 on valid assistant response"
 assert_contains "$OUT" "reviewed PR #42" "pr_reviewer: output includes PR number"
@@ -97,7 +100,7 @@ assert_contains "$OUT" "owner/repo" "pr_reviewer: output includes repo"
 
 # --- prompt substitution: placeholders replaced in the request sent to the API ---
 desc "prompt substitution"
-REQ_BODY="$(cat "$REQ" 2>/dev/null)"
+REQ_BODY="$(cat "$SHAI_HOME"/runs/*/span_1-request.json 2>/dev/null)"
 assert_contains "$REQ_BODY" "owner/repo" "pr_reviewer: {{REPO}} substituted into the prompt"
 assert_contains "$REQ_BODY" "pull request #42" "pr_reviewer: {{NUMBER}} substituted into the prompt"
 if [[ "$REQ_BODY" == *'{{REPO}}'* ]] || [[ "$REQ_BODY" == *'{{NUMBER}}'* ]] ||
@@ -132,7 +135,7 @@ assert_eq "$(test -e "$SHAI_HOME/ledgers/pr_reviewer.jsonl" && echo yes || echo 
 # --- fail case: error response from the API ---
 desc "LLM failure"
 printf '{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}' |
-  write_capture_curl_stub 529
+  write_curl_stub 529
 
 OUT=$("$DIR/workflows/pr_reviewer/run.sh" owner/repo 42 2>&1)
 RC=$?

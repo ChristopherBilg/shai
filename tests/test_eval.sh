@@ -31,6 +31,8 @@ DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/
 assert_contains "$DRY" "\"model\":\"$DEFAULT_MODEL\"" "eval: default model"
 assert_contains "$DRY" "\"max_tokens\":$DEFAULT_MAX_TOKENS" "eval: default max_tokens"
 assert_contains "$DRY" '"gh"' "eval: tools included with --tools-file"
+assert_contains "$DRY" '"thinking":{"type":"enabled"}' "eval: thinking enabled in payload"
+assert_contains "$DRY" '"reasoning_effort":"max"' "eval: reasoning_effort max in payload"
 
 NOTOOLS=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run)
 assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tools without --tools-file"
