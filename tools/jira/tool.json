@@ -1,0 +1,26 @@
+{
+  "name": "jira",
+  "description": "Run a Jira CLI (jira) command. Pass the subcommand and arguments as an array of strings.",
+  "capabilities": {
+    "read_only": false,
+    "requires": {
+      "tools": ["jira"],
+      "env": [
+        { "name": "JIRA_BASE_URL", "level": "conditional" },
+        { "name": "JIRA_USER_EMAIL", "level": "conditional" },
+        { "name": "JIRA_API_TOKEN", "level": "conditional" }
+      ]
+    }
+  },
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "args": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Arguments to pass to jira, e.g. [\"issue\", \"list\"]."
+      }
+    },
+    "required": ["args"]
+  }
+}

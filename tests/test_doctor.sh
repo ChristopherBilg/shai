@@ -125,9 +125,12 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   # 'od' (not 'jq') stands in for the failing core tool here: jq gates the tool.json
   # dependency scan below, so failing jq would also suppress the gh/JIRA checks this
   # test relies on (see Test 7 for that scenario).
+  # Warning count: gh (1) + the two unset JIRA vars, each counted once per declaring tool
+  # (jira_issue_view and jira both declare JIRA_BASE_URL/JIRA_USER_EMAIL) = 5. shai-doctor
+  # counts env vars per declaring tool, so a var shared by N tools yields N WARN lines.
   OUT=$(run_doctor od gh)
   SUMMARY=$(printf '%s' "$OUT" | tail -n1)
-  assert_eq "$SUMMARY" "1 error, 3 warnings" "doctor: summary line exact match"
+  assert_eq "$SUMMARY" "1 error, 5 warnings" "doctor: summary line exact match"
   exit "$FAILED"
 ) || FAILED=1
 
