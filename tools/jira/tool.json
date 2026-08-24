@@ -6,6 +6,8 @@
     "requires": {
       "tools": ["jira"],
       "env": [
+        { "name": "JIRA_BASE_URL", "level": "conditional" },
+        { "name": "JIRA_USER_EMAIL", "level": "conditional" },
         { "name": "JIRA_API_TOKEN", "level": "conditional" }
       ]
     }
