@@ -193,9 +193,10 @@ printf '{"version":"1.0","repos":{}}\n' >"$FAKE_HOME7/.shai/ci.json"
 OUT=$(HOME="$FAKE_HOME7" SHAI_HOME="$FAKE_HOME7/.shai" SHAI_VERSION="v2026.04.10" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1)
 if [[ "$OUT" == *"ci.json.example"* ]]; then
-  assert_eq "note-shown" "note-hidden" "install: no ci note when a config already exists"
+  echo -e "  ${RED}✗${NC} install: no ci note when a config already exists (note still shown)"
+  FAILED=1
 else
-  assert_eq "0" "0" "install: no ci note when a config already exists"
+  echo -e "  ${GREEN}✓${NC} install: no ci note when a config already exists"
 fi
 
 finish
