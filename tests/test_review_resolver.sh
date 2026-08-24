@@ -83,7 +83,10 @@ printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content
   write_env_curl_stub 200
 rm -rf "$SHAI_HOME/runs"
 
-OUT=$("$DIR/workflows/review_resolver/run.sh" owner/repo 42 2>&1)
+# SHAI_SUGGEST=0: wf_suggest's second LLM call would mint a second runs/* dir, so the
+# span_1-request.json glob in the prompt-substitution section below would concatenate
+# the primary and suggest request dumps. Disabling it keeps that glob deterministic.
+OUT=$(SHAI_SUGGEST=0 "$DIR/workflows/review_resolver/run.sh" owner/repo 42 2>&1)
 RC=$?
 assert_eq "$RC" "0" "review_resolver: exit 0 on valid assistant response"
 assert_contains "$OUT" "PR #42" "review_resolver: output includes PR number"
