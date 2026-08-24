@@ -181,4 +181,54 @@ RC12=$?
 assert_eq "$RC12" "2" "loop: --max-tokens without value exits 2"
 assert_contains "$MTNOVAL" "--max-tokens requires a value" "loop: --max-tokens without value → clear message"
 
+# --- dispatch failure is terminal, not a re-eval signal (#257) ---
+# The issue's repro: an install tree missing lib/read-only.sh. shai-dispatch's pre-flight
+# check exits 3 ("dispatch failed"), and shai-loop must treat that as terminal — stop and emit
+# an error event — instead of reading it as "a tool ran" and re-evaluating forever. Mirror the
+# repo layout in a scratch dir (like test_heartbeat.sh) with the runtime scripts shai-loop
+# shells out to, but deliberately no lib/ and no tools/.
+TOOLCALL_JSON='{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tl1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
+
+TMPMISS="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMPMISS")
+mkdir -p "$TMPMISS/sessions"
+printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMPMISS/sessions/test.jsonl"
+: >"$TMPMISS/sessions/test.latest.json"
+
+FAKE_INSTALL="$(mktemp -d)"
+_CLEANUP_DIRS+=("$FAKE_INSTALL")
+cp "$DIR/shai-loop" "$DIR/shai-dispatch" "$DIR/shai-context" "$DIR/shai-eval" \
+  "$DIR/shai-read" "$DIR/shai-stamp" "$DIR/shai-print" "$FAKE_INSTALL/"
+chmod +x "$FAKE_INSTALL"/shai-*
+
+printf '%s\n' "$TOOLCALL_JSON" | write_curl_stub 200
+
+# timeout guards the assertion itself: if the fix regresses, the loop hangs and the suite
+# fails fast (timeout exits 124 on a hang) instead of burning the whole CI window.
+MISSOUT=$(printf 'list' | timeout 30 env PATH="$STUB:$PATH" SHAI_HOME="$TMPMISS" SHAI_SESSION_ID=test "$FAKE_INSTALL/shai-loop" 2>/dev/null)
+MISSRC=$?
+assert_eq "$MISSRC" "0" "loop: dispatch failure (missing lib) → loop stops, exit 0"
+assert_contains "$MISSOUT" '"type":"error"' "loop: dispatch failure → error event emitted"
+assert_contains "$MISSOUT" 'shai-dispatch failed (exit 3)' "loop: dispatch failure → error event names dispatch exit 3"
+MISSRUNLOG=$(find "$TMPMISS/runs" -name events.jsonl 2>/dev/null | head -n1)
+assert_contains "$(cat "$MISSRUNLOG" 2>/dev/null)" '"type":"error"' "loop: dispatch failure recorded in run log"
+
+# --- re-eval loop bound (#257): a dispatch that reports exit 1 every round (a tool ran every
+#     time) is capped, so even a failure that violates the exit-code contract degrades to a
+#     stopped run with an error event instead of an unbounded spin. SHAI_MAX_DISPATCH_ROUNDS
+#     lowers the bound so the test stays fast. ---
+TMPBOUND="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMPBOUND")
+mkdir -p "$TMPBOUND/sessions"
+printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMPBOUND/sessions/test.jsonl"
+: >"$TMPBOUND/sessions/test.latest.json"
+
+printf '%s\n' "$TOOLCALL_JSON" | write_curl_stub 200
+
+BOUT=$(printf 'loop' | timeout 60 env SHAI_MAX_DISPATCH_ROUNDS=3 PATH="$STUB:$PATH" SHAI_HOME="$TMPBOUND" SHAI_SESSION_ID=test "$DIR/shai-loop" 2>/dev/null)
+BRC=$?
+assert_eq "$BRC" "0" "loop: dispatch loop bound → loop stops, exit 0"
+assert_contains "$BOUT" '"type":"error"' "loop: dispatch loop bound → error event emitted"
+assert_contains "$BOUT" 're-eval loop exceeded 3 dispatch rounds' "loop: dispatch loop bound → error names the bound"
+
 finish
