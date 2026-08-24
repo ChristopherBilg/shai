@@ -1,6 +1,6 @@
 #!/bin/bash
 # shai-runs -- list runs with span count, tool count, status, and token totals
-# Usage: shai-runs [--session ID] [--recent N] [--failed] [--json]
+# Usage: shai-runs [--session ID] [--recent N] [--failed] [--after DATE] [--before DATE] [--json]
 # Reads: $SHAI_HOME/runs/*/events.jsonl or $SHAI_HOME/sessions/<id>.jsonl
 # Writes: stdout (run listing)
 # Exit: 0 on success; 1 on invalid arguments or no match
@@ -10,7 +10,7 @@ STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 SESSIONS_DIR="$STATE_DIR/sessions"
 RUNS_DIR="$STATE_DIR/runs"
 
-SESSION="" RECENT="" FAILED=false JSON=false
+SESSION="" RECENT="" FAILED=false AFTER="" BEFORE="" JSON=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -35,6 +35,30 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     --failed) FAILED=true ;;
+    --after)
+      shift
+      AFTER="${1:-}"
+      if [ -z "$AFTER" ]; then
+        printf 'error: --after requires a date (YYYY-MM-DD)\n' >&2
+        exit 1
+      fi
+      if ! [[ "$AFTER" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        printf 'error: --after date must be YYYY-MM-DD\n' >&2
+        exit 1
+      fi
+      ;;
+    --before)
+      shift
+      BEFORE="${1:-}"
+      if [ -z "$BEFORE" ]; then
+        printf 'error: --before requires a date (YYYY-MM-DD)\n' >&2
+        exit 1
+      fi
+      if ! [[ "$BEFORE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        printf 'error: --before date must be YYYY-MM-DD\n' >&2
+        exit 1
+      fi
+      ;;
     --json) JSON=true ;;
     *)
       printf 'error: unknown option: %s\n' "$1" >&2
@@ -72,7 +96,9 @@ resolve_prefix() {
   printf '%s' "${matches[0]}"
 }
 
-# Extract run metrics ({spans, tools, status, tokens}) from a JSONL event stream on stdin.
+# Extract run metrics ({spans, tools, status, tokens, date}) from a JSONL event stream on stdin.
+# `date` is "YYYY-MM-DD" from the first event's meta.timestamp (the run's start), or "" when the
+# first event carries no timestamp.
 run_metrics() {
   jq -sc '{
     spans: ([.[] | .meta?.span_id? // empty | strings | select(length > 0)] | unique | length),
@@ -87,7 +113,8 @@ run_metrics() {
         else "incomplete" end
       end
     ),
-    tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.prompt_tokens // 0) + (.completion_tokens // 0))] | add // 0)
+    tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.prompt_tokens // 0) + (.completion_tokens // 0))] | add // 0),
+    date: (.[0].meta?.timestamp? // "" | .[0:10])
   }'
 }
 
@@ -118,7 +145,8 @@ if [ -n "$SESSION" ]; then
             elif $last.type == "error" then "error"
             else "incomplete" end
           ),
-          tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.prompt_tokens // 0) + (.completion_tokens // 0))] | add // 0)
+          tokens: ([.[] | select(.api?.usage?) | .api.usage | ((.prompt_tokens // 0) + (.completion_tokens // 0))] | add // 0),
+          date: (.[0].meta?.timestamp? // "" | .[0:10])
         }})
       | .[] | {run_id, metrics: (.metrics | tojson)}
     ' "$session_file" 2>/dev/null); then
@@ -168,6 +196,24 @@ if [ "$FAILED" = true ]; then
   sorted=("${filtered[@]+"${filtered[@]}"}")
 fi
 
+# Apply --after/--before filter (inclusive on both ends, YYYY-MM-DD), same
+# semantics as shai-sessions/shai-stats: a run's date is the first event's
+# timestamp in its events.jsonl. Runs whose first event carries no usable
+# timestamp (date "") cannot be dated and are excluded when either bound is
+# active.
+if [ -n "$AFTER" ] || [ -n "$BEFORE" ]; then
+  filtered=()
+  for entry in "${sorted[@]}"; do
+    metrics="${entry#*"$TAB"}"
+    date=$(printf '%s' "$metrics" | jq -r '.date // ""')
+    if [ -z "$date" ]; then continue; fi
+    if [ -n "$AFTER" ] && [[ "$date" < "$AFTER" ]]; then continue; fi
+    if [ -n "$BEFORE" ] && [[ "$date" > "$BEFORE" ]]; then continue; fi
+    filtered+=("$entry")
+  done
+  sorted=("${filtered[@]+"${filtered[@]}"}")
+fi
+
 # Apply --recent. Handled as its own branch: `${arr[@]: -0}` is not "the last
 # zero elements" -- a negative offset of -0 is arithmetically 0, so bash would
 # treat it as "from the start" and return the whole array instead of none.
@@ -194,7 +240,7 @@ if [ "$JSON" = true ]; then
     "$first" || printf ','
     first=false
     printf '%s' "$metrics" | jq -c --arg rid "$rid" --arg ts "$started" \
-      '. + {run_id: $rid, started: $ts}'
+      'del(.date) + {run_id: $rid, started: $ts}'
   done
   printf ']\n'
 else
