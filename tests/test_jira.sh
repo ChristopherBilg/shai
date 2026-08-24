@@ -95,7 +95,9 @@ write_argc_stub
 NLTOOL=$(jq -nc '{type:"message",source:"assistant",payload:{content:null,tool_calls:[{id:"jn1",type:"function",function:{name:"jira",arguments:({args:["issue","list","line1\nline2"]}|tojson)}}],finish_reason:"tool_calls"}}')
 NLOUT=$(echo "$NLTOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
 assert_contains "$NLOUT" 'argc=3' "run.sh: three args arrive as three argv entries"
-assert_contains "$NLOUT" 'arg=<line1' "run.sh: newline arg starts intact"
-assert_contains "$NLOUT" 'line2>' "run.sh: newline arg arrives whole (not split by framing)"
+# The whole JSON-escaped form (backslash-n as it appears in the tool_result JSON) only
+# matches when the newline arg arrived as a single argv entry — a framing split would
+# render it as separate `arg=<...>` lines instead.
+assert_contains "$NLOUT" 'arg=<line1\nline2>' "run.sh: newline arg arrives whole (not split by framing)"
 
 finish
