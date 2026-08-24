@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_runs.sh — tests for shai-runs observability filter
-# Covers: run listing, session scoping, status detection, --failed, --recent, --json, prefix matching
+# Covers: run listing, session scoping, status detection, --failed, --recent, --after/--before, --json, prefix matching
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -276,6 +276,44 @@ OUT=$("$RUNS" --after 2026-08-10 --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "after exact match included"
 OUT=$("$RUNS" --before 2026-08-10 --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "before exact match included"
+
+desc "--recent + --after: composes"
+setup_runs
+make_run "run_20260809T090000_old01" \
+  "$(fixture_event "message" "assistant" '{"content":"a","finish_reason":"stop"}' \
+    "run_20260809T090000_old01" "sess_test" "span_1" "null" "2026-08-09T12:00:00Z")"
+make_run "run_20260811T090000_mid01" \
+  "$(fixture_event "message" "assistant" '{"content":"b","finish_reason":"stop"}' \
+    "run_20260811T090000_mid01" "sess_test" "span_1" "null" "2026-08-11T12:00:00Z")"
+make_run "run_20260813T090000_new01" \
+  "$(fixture_event "message" "assistant" '{"content":"c","finish_reason":"stop"}' \
+    "run_20260813T090000_new01" "sess_test" "span_1" "null" "2026-08-13T12:00:00Z")"
+OUT=$("$RUNS" --after 2026-08-10 --recent 1 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "recent+after count"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].run_id')" "run_20260813T090000_new01" "recent+after id"
+
+desc "date filter: undated run excluded when a bound is active"
+setup_runs
+# No usable meta.timestamp (fixture_event's `:-` default makes "" unusable, so write the raw event).
+mkdir -p "$SHAI_HOME/runs/run_20260809T090000_nodate"
+printf '{"type":"message","source":"assistant","payload":{"content":"a","finish_reason":"stop"},"version":"1.0","meta":{"run_id":"run_20260809T090000_nodate","session_id":"sess_test","span_id":"span_1","parent_span_id":null}}\n' \
+  >"$SHAI_HOME/runs/run_20260809T090000_nodate/events.jsonl"
+make_run "run_20260811T090000_dated1" \
+  "$(fixture_event "message" "assistant" '{"content":"b","finish_reason":"stop"}' \
+    "run_20260811T090000_dated1" "sess_test" "span_1" "null" "2026-08-11T12:00:00Z")"
+OUT=$("$RUNS" --after 2026-08-10 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "undated run excluded when bound active"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].run_id')" "run_20260811T090000_dated1" "dated run kept"
+OUT=$("$RUNS" --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "2" "undated run listed without bounds"
+
+desc "--json: date is internal, never in output"
+setup_runs
+make_run "run_20260811T090000_json01" \
+  "$(fixture_event "message" "assistant" '{"content":"a","finish_reason":"stop"}' \
+    "run_20260811T090000_json01" "sess_test" "span_1" "null" "2026-08-11T12:00:00Z")"
+OUT=$("$RUNS" --after 2026-08-10 --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.[0] | has("date")')" "false" "date absent from --json output"
 
 desc "invalid args: exit 1"
 assert_exit 1 "unknown flag" -- "$RUNS" --bogus
