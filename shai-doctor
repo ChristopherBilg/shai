@@ -113,9 +113,17 @@ check_env DEEPSEEK_API_KEY core
 # Derive additional deps from tool plugins
 if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
   SEEN_TOOLS=("${CORE_TOOLS[@]}" "${COND_TOOLS[@]}")
+  SEEN_ENVS=(DEEPSEEK_API_KEY)
   is_seen() {
     local item="$1" s
     for s in "${SEEN_TOOLS[@]+"${SEEN_TOOLS[@]}"}"; do
+      [ "$s" = "$item" ] && return 0
+    done
+    return 1
+  }
+  is_env_seen() {
+    local item="$1" s
+    for s in "${SEEN_ENVS[@]+"${SEEN_ENVS[@]}"}"; do
       [ "$s" = "$item" ] && return 0
     done
     return 1
@@ -137,7 +145,10 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
       [ -n "$line" ] || continue
       local_name=$(printf '%s' "$line" | jq -r '.name')
       local_level=$(printf '%s' "$line" | jq -r '.level')
-      check_env "$local_name" "$local_level"
+      if ! is_env_seen "$local_name"; then
+        SEEN_ENVS+=("$local_name")
+        check_env "$local_name" "$local_level"
+      fi
     done < <(jq -c '.capabilities.requires.env // [] | .[]' "$tj" 2>/dev/null)
   done
 
