@@ -1,0 +1,83 @@
+#!/bin/bash
+# shai-container — manage shai workflows inside an Incus (LXC) container
+# Usage: shai-container setup
+#        shai-container install|uninstall|start|stop|logs <workflow> [--interval <timespan>]
+#        shai-container status [workflow] [--json]
+#        shai-container shell
+# Reads: DEEPSEEK_API_KEY, SHAI_CONTAINER_NAME from environment
+# Writes: Incus container state (setup); proxies shai-supervise inside the container
+# Exit: 0 on success; 1 on failure; 2 on usage error
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+CONTAINER="${SHAI_CONTAINER_NAME:-shai-sandbox}"
+INSTALL_DIR="/opt/shai"
+
+usage() {
+  printf 'Usage: shai-container setup\n' >&2
+  printf '       shai-container install|uninstall|start|stop|logs <workflow> [--interval <timespan>]\n' >&2
+  printf '       shai-container status [workflow] [--json]\n' >&2
+  printf '       shai-container shell\n' >&2
+  exit 2
+}
+
+if [ $# -lt 1 ]; then usage; fi
+
+if ! command -v incus &>/dev/null; then
+  printf 'error: incus not found — install Incus first (https://linuxcontainers.org/incus)\n' >&2
+  exit 1
+fi
+
+require_container() {
+  if ! incus info "$CONTAINER" &>/dev/null; then
+    printf 'error: container "%s" not found — run "shai-container setup" first\n' "$CONTAINER" >&2
+    exit 1
+  fi
+}
+
+cmd_setup() {
+  if incus info "$CONTAINER" &>/dev/null; then
+    printf 'error: container "%s" already exists — delete it first or use a different SHAI_CONTAINER_NAME\n' "$CONTAINER" >&2
+    exit 1
+  fi
+
+  printf 'Creating container %s...\n' "$CONTAINER" >&2
+  incus launch images:ubuntu/24.04 "$CONTAINER"
+
+  printf 'Installing system dependencies...\n' >&2
+  incus exec "$CONTAINER" -- apt-get update -y
+  incus exec "$CONTAINER" -- apt-get install -y bash curl jq git
+
+  printf 'Installing GitHub CLI...\n' >&2
+  incus exec "$CONTAINER" -- bash -c 'curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && apt-get update && apt-get install -y gh'
+
+  printf 'Installing shai...\n' >&2
+  incus file push -r "$DIR/" "$CONTAINER$INSTALL_DIR/"
+
+  printf 'Configuring environment...\n' >&2
+  incus config set "$CONTAINER" environment.DEEPSEEK_API_KEY="${DEEPSEEK_API_KEY:-}"
+
+  printf 'Enabling systemd linger...\n' >&2
+  incus exec "$CONTAINER" -- loginctl enable-linger root
+
+  printf 'Setup complete. Run "shai-container shell" then "gh auth login" to finish.\n' >&2
+}
+
+cmd_supervise() {
+  require_container
+  incus exec "$CONTAINER" -- "$INSTALL_DIR/shai-supervise" "$@"
+}
+
+cmd_shell() {
+  require_container
+  incus exec "$CONTAINER" -- bash
+}
+
+CMD="$1"
+shift
+case "$CMD" in
+  setup) cmd_setup ;;
+  install | uninstall | start | stop | status | logs) cmd_supervise "$CMD" "$@" ;;
+  shell) cmd_shell ;;
+  *) usage ;;
+esac
