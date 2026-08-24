@@ -77,7 +77,7 @@ assert_eq "$(wc -l <"$TMP_APP2/failures/_manual.jsonl" | tr -d ' ')" "2" \
   "append: two records, two lines"
 assert_eq "$(jq -s 'length' "$TMP_APP2/failures/_manual.jsonl")" "2" \
   "append: both lines are valid JSON"
-assert_eq "$(jq -r '.[1].summary' "$TMP_APP2/failures/_manual.jsonl")" "second" \
+assert_eq "$(jq -sr '.[1].summary' "$TMP_APP2/failures/_manual.jsonl")" "second" \
   "append: second record preserved"
 
 # --- workflow resolution: WF_NAME wins over SHAI_FAILURE_WORKFLOW ---
@@ -181,7 +181,7 @@ _CLEANUP_DIRS+=("$TMP_DEF")
 LINE="$(cat "$TMP_DEF/failures/_manual.jsonl")"
 assert_eq "$(printf '%s' "$LINE" | jq '.context')" "{}" \
   "fail_record: context defaults to {}"
-assert_eq "$(printf '%s' "$LINE" | jq '.context | type')" "object" \
+assert_eq "$(printf '%s' "$LINE" | jq -r '.context | type')" "object" \
   "fail_record: default context is an object"
 
 # --- invalid context_json: replaced with {"raw": ...}, record never dropped ---
