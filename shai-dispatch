@@ -12,8 +12,26 @@
 # Writes: one tool_result event per tool_use (32000-byte cap: first 24000 + last 8000 kept with
 #         a "[truncated: ...]" marker); content fenced in external_data tags, closing external_data tags
 #         escaped as &lt;/external_data&gt; (note line when any are escaped; opening tags untouched); write_file, patch_file, delete_file modify the filesystem
-# Exit: 1 if any tool ran (signals shai-repl to re-evaluate), 0 otherwise; 2 on bad constants
+# Exit: 1 if any tool ran (signals shai-repl / shai-loop to re-evaluate), 0 otherwise;
+#       2 on bad constants, 3 on dispatch failure (any failure that is not "a tool ran").
+# The exit code is a contract consumed by shai-loop's re-eval loop (see #257): ONLY 1 means
+# "a tool ran, re-evaluate". Every other non-zero exit must mean "dispatch failed", so the
+# loop stops instead of re-evaluating on a failure. The ERR trap below is what makes that
+# contract hold: under `set -euo pipefail` an unexpected command failure would otherwise abort
+# with that command's status — usually 1 — and be misread as "a tool ran". Normalizing every
+# set -e abort to 3 keeps the two apart; explicit `exit` calls (including the deliberate
+# exit 1 at the end) are not command failures and do not trip the trap.
 set -euo pipefail
+
+# dispatch_failed: ERR-trap handler — normalize any unexpected failure to the dedicated
+# "dispatch failed" exit (3), reporting the underlying status on stderr so the failure is
+# visible at the point it happens instead of silently reading as "a tool ran".
+dispatch_failed() {
+  local rc=$?
+  printf 'shai-dispatch: dispatch failed (exit %s), not "a tool ran" — the re-eval loop will stop\n' "$rc" >&2
+  exit 3
+}
+trap dispatch_failed ERR
 
 MAX_BYTES=32000
 HEAD_BYTES=24000
@@ -29,6 +47,15 @@ fi
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 TOOLS_DIR="${SHAI_TOOLS_DIR:-$DIR/tools}"
+# Pre-flight the one unconditionally-sourced dependency so a partial/interrupted install
+# (missing lib/read-only.sh) fails with an explicit message and exit 3 before any input is
+# read. A bare `source` failure would abort with status 1 — indistinguishable from "a tool
+# ran" to shai-loop, which would re-evaluate forever (see #257).
+if [ ! -r "$DIR/lib/read-only.sh" ]; then
+  printf 'shai-dispatch: cannot read %s — install incomplete? (exit 3: dispatch failed, not "a tool ran")\n' \
+    "$DIR/lib/read-only.sh" >&2
+  exit 3
+fi
 # shellcheck source=lib/read-only.sh
 source "$DIR/lib/read-only.sh"
 
