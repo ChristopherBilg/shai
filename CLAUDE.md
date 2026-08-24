@@ -647,3 +647,34 @@ tests that hit the network.
 Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
 `tests/install-lint-tools.sh` and checksum-verified against `tests/lint-tools.sha256`
 (trust-on-first-use).
+
+### Mutation-checking rule: no unfalsifiable assertions
+
+A test that cannot fail is worse than no test: it reports safety that does not exist, and it is
+invisible in a green suite. Five assertions written during one feature branch (#258) all passed
+against a deliberately broken implementation — every one was found by mutation (delete the
+code, watch the test go red, restore), and **none** by reading the test. The causes were
+distinct, so this is a set of rules, not one fix:
+
+- **Any assertion whose expected value is an absence, a zero, or an empty string must be
+  mutation-checked when written.** Break the code it targets, watch it go red, restore. If it
+  stays green, either the assertion or the reachability assumption is wrong. An
+  `assert_eq x ""`/`"0"` or an existence check that survives the mutation is asserting
+  nothing. `assert_contains "$x" ""` is always a tautology (any string contains the empty
+  string) and must never be used as a presence check — assert the JSON type or a distinctive
+  fragment instead. State in the test's comment that the mutation check was done when it is
+  non-obvious.
+- **Assert on our own distinctive output, not on incidental substrings.** If bash, `jq`, `git`
+  or `gh` can emit text containing the same fragment (a path in a redirection error, a generic
+  "not found"), the assertion is not discriminating. Prefer a prefix or message this project
+  owns (`error:` markers, named section headers, a marker line) so a broken implementation
+  cannot pass by matching someone else's output.
+- **Guard branches get unit tests, not integration tests.** A defensive branch for a condition
+  the platform cannot produce cannot be exercised end-to-end — bash resets caught traps in
+  every subshell form, so an inherited `EXIT` trap never fires inside `$( )`, `( )`, `&`, or a
+  pipeline element (verified on 5.2.21). Drive the guard's input directly instead of trying to
+  provoke it, and say so in a comment so the next reader does not "fix" the test into vacuity.
+- **A negative assertion should say why the thing is absent**, not just that it is. Pair it
+  with a positive control where practical: the same fixture shape that *does* produce the
+  artifact, adjacent in the file, so the contrast is visible and a broken fixture cannot
+  masquerade as correct behaviour.
