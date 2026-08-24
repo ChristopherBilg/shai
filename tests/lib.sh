@@ -89,6 +89,15 @@ write_git_stub() {
   chmod +x "$STUB/git"
 }
 
+# write_jira_stub: jira that echoes a recognizable line including its args.
+write_jira_stub() {
+  {
+    printf '#!/bin/bash\n'
+    printf 'echo "stub jira output for: $*"\n'
+  } >"$STUB/jira"
+  chmod +x "$STUB/jira"
+}
+
 # write_roundtrip_curl_stub <dir>: stateful curl stub for a full tool round-trip.
 # First call returns a list_directory tool call, second returns a stop/text reply.
 # Exports SHAI_ROUND_COUNT (the counter file); callers unset it when done.

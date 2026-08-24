@@ -9,6 +9,7 @@ echo "shai-dispatch"
 make_stub_bin
 write_gh_stub
 write_git_stub
+write_jira_stub
 
 DEFAULT_MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' "$DIR/shai-dispatch")
 [ -n "$DEFAULT_MAX_BYTES" ] || {
@@ -217,6 +218,23 @@ assert_eq "$GITRC" "1" "dispatch: git tool exit 1"
 assert_contains "$GITOUT" 'stub git output for: log --oneline -5' "dispatch: git args passed as argv array"
 assert_eq "$(printf '%s' "$GITOUT" | jq -r '.payload.is_error')" "false" "dispatch: git success → is_error false"
 assert_contains "$GITOUT" '<external_data source=\"git\">' "dispatch: git tool_result wrapped with source"
+
+# new: jira positive path — dispatch resolves jira to tools/jira/run.sh (generic
+#     $TOOLS_DIR/<tool>/run.sh lookup, no dispatch changes) and the stub receives the
+#     args as distinct argv entries (issue #265 acceptance criteria)
+JIRATOOL='{"type":"message","source":"assistant","payload":{"content":null,"tool_calls":[{"id":"jt1","type":"function","function":{"name":"jira","arguments":"{\"args\":[\"issue\",\"list\",\"-p\",\"PROJ\"]}"}}],"finish_reason":"tool_calls"}}'
+JIRAOUT=$(echo "$JIRATOOL" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch")
+JIRARC=$?
+assert_eq "$JIRARC" "1" "dispatch: jira tool exit 1"
+assert_contains "$JIRAOUT" 'stub jira output for: issue list -p PROJ' "dispatch: jira args passed as argv array"
+assert_eq "$(printf '%s' "$JIRAOUT" | jq -r '.payload.is_error')" "false" "dispatch: jira success → is_error false"
+assert_contains "$JIRAOUT" '<external_data source=\"jira\">' "dispatch: jira tool_result wrapped with source"
+
+# new: jira with an empty args array → is_error, exercising the empty-args guard in tools/jira/run.sh
+JIRAEMPTY=$(jq -nc '{type:"message",source:"assistant",payload:{content:null,tool_calls:[{id:"jie1",type:"function",function:{name:"jira",arguments:({args:[]}|tojson)}}],finish_reason:"tool_calls"}}')
+JIRAEMPTYOUT=$(echo "$JIRAEMPTY" | SHAI_HOME="$WRITE_HOME" "$DIR/shai-dispatch") || true
+assert_contains "$JIRAEMPTYOUT" '"is_error":true' "dispatch: jira empty args → is_error true"
+assert_contains "$JIRAEMPTYOUT" 'must not be empty' "dispatch: jira empty args → clear message"
 
 # new: successful real tool sets is_error:false (list_directory on a temp dir)
 TMPD="$(mktemp -d)"
