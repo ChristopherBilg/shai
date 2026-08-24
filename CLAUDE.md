@@ -239,11 +239,13 @@ The scripts:
   `--json` outputs a JSON array. Filters: `--recent N` (last N by timestamp), `--after`/`--before`
   (inclusive date range, `YYYY-MM-DD`). Gracefully skips malformed session files with a warning.
   Exit 0 on success; 1 on invalid arguments.
-- **`shai-runs [--session ID] [--recent N] [--failed] [--json]`** (`shai-runs:1`) — lists runs
-  with span count, tool count, status (`complete`/`error`/`incomplete`), and token totals.
+- **`shai-runs [--session ID] [--recent N] [--failed] [--after DATE] [--before DATE] [--json]`**
+  (`shai-runs:1`) — lists runs with span count, tool count, status
+  (`complete`/`error`/`incomplete`), and token totals.
   Without `--session`: scans `$SHAI_HOME/runs/*/events.jsonl`. With `--session`: groups events
-  from the session log by `meta.run_id`. `--failed` filters to error runs. Supports ID prefix
-  matching for `--session`. Exit 0 on success; 1 on invalid arguments or no match.
+  from the session log by `meta.run_id`. `--failed` filters to error runs. `--after`/`--before`
+  filter by run date (inclusive, `YYYY-MM-DD`, from the first event's timestamp). Supports ID
+  prefix matching for `--session`. Exit 0 on success; 1 on invalid arguments or no match.
 - **`shai-trace <run_id> [--request <span>] [--response <span>] [--verbose] [--json]`**
   (`shai-trace:1`) — renders a run's full span chain: inputs, outputs, tool calls, token usage,
   and latency per span. Reads from `$SHAI_HOME/runs/<run_id>/events.jsonl`; falls back to
