@@ -186,7 +186,10 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.api.message_id')" "msg_test123" "api.m
 assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "deepseek-v4-flash-20260801" "api.model"
 assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.prompt_tokens')" "100" "api.usage.prompt_tokens"
 assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.completion_tokens')" "50" "api.usage.completion_tokens"
-assert_contains "$(printf '%s' "$OUT" | jq '.api.latency_ms')" "" "api.latency_ms is present"
+# Presence must be asserted on the JSON type, not with assert_contains ... "" — the empty
+# needle is a tautology (any string contains the empty string), so it passes whether or not
+# the key exists (mutation-checked: deleting the api.latency_ms emission stays green).
+assert_eq "$(printf '%s' "$OUT" | jq '.api.latency_ms | type')" '"number"' "api.latency_ms is present"
 # latency_ms should be a non-negative integer
 LATENCY=$(printf '%s' "$OUT" | jq '.api.latency_ms')
 [ "$LATENCY" -ge 0 ] 2>/dev/null || {

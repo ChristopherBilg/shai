@@ -77,9 +77,10 @@ RC=$?
 assert_eq "$RC" "0" "doctor: all pass → exit 0"
 assert_contains "$OUT" "[OK]" "doctor: at least one OK in output"
 if [[ "$OUT" == *"[FAIL]"* ]]; then
-  assert_eq "found-fail" "no-fail" "doctor: no FAIL markers when all present"
+  echo -e "  ${RED}✗${NC} doctor: no FAIL markers when all present"
+  FAILED=1
 else
-  assert_eq "0" "0" "doctor: no FAIL markers when all present"
+  echo -e "  ${GREEN}✓${NC} doctor: no FAIL markers when all present"
 fi
 
 # --- Test 2: core tool missing (jq) → exit 1 + FAIL ---
@@ -137,9 +138,10 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   assert_eq "$RC" "1" "doctor: missing jq → exit 1 from the core-tool FAIL alone"
   assert_contains "$OUT" "[FAIL]" "doctor: missing jq still reported as FAIL"
   if [[ "$OUT" == *"Tool-declared dependencies:"* ]]; then
-    assert_eq "section-present" "section-absent" "doctor: missing jq skips the Tool-declared dependencies section"
+    echo -e "  ${RED}✗${NC} doctor: missing jq skips the Tool-declared dependencies section (section still shown)"
+    FAILED=1
   else
-    assert_eq "0" "0" "doctor: missing jq skips the Tool-declared dependencies section"
+    echo -e "  ${GREEN}✓${NC} doctor: missing jq skips the Tool-declared dependencies section"
   fi
   exit "$FAILED"
 ) || FAILED=1
