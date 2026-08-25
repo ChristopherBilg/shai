@@ -45,6 +45,7 @@ check() {
 }
 
 check "$DEFAULT_MODEL" CLAUDE.md "default model"
+check "$DEFAULT_MODEL" shai-doctor "doctor default model"
 check "$MAX_BYTES" CLAUDE.md "truncation limit"
 check "$MAX_BYTES" README.md "truncation limit"
 check "$HEAD_BYTES" CLAUDE.md "truncation head window"
@@ -52,6 +53,7 @@ check "$HEAD_BYTES" README.md "truncation head window"
 check "$TAIL_BYTES" CLAUDE.md "truncation tail window"
 check "$TAIL_BYTES" README.md "truncation tail window"
 check "$CONTEXT_BUDGET" CLAUDE.md "context budget"
+check "$CONTEXT_BUDGET" shai-doctor "doctor context budget"
 check "$SHELLCHECK_VER" CLAUDE.md "shellcheck version"
 check "$SHFMT_VER" CLAUDE.md "shfmt version"
 

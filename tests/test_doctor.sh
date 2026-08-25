@@ -55,6 +55,10 @@ chmod +x "$STUB/timeout"
 # config — otherwise the host's real ~/.shai would leak into the exact warning counts below.
 FIX="$(mktemp -d)"
 _CLEANUP_DIRS+=("$FIX")
+# shellcheck disable=SC2031  # shellcheck follows run_doctor's `source "$DIR/shai-doctor"` into
+#                           # lib/workflow.sh, whose wf_init assigns SHAI_HOME, and flags this
+#                           # assignment as clobbered by the subshell. The doctor only reads
+#                           # SHAI_HOME; the subshell env isolation is intentional (see above).
 export SHAI_HOME="$FIX/home"
 mkdir -p "$SHAI_HOME"
 cat >"$SHAI_HOME/ci.json" <<'JSON'
@@ -213,5 +217,73 @@ assert_contains "$OUT" "[WARN] search_files alternation" "doctor: stale search_f
 assert_contains "$OUT" "literal pipe" "doctor: stale search_files names the literal-pipe misread"
 SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: stale search_files is the only warning"
+
+rm -f "$STUB/grep"
+
+# A git stub makes the SHAI_SUGGEST_REPO auto-detection (wf_suggest_repo, sourced from
+# lib/workflow.sh) resolve deterministically instead of depending on this checkout's origin.
+cat >"$STUB/git" <<'STUBEOF'
+#!/bin/bash
+# stub git: pretend the -C dir is the top of a work tree whose origin is a GitHub repo
+cwd=""
+if [ "$1" = "-C" ]; then cwd="$2"; shift 2; fi
+case "$1" in
+  rev-parse) echo "$cwd" ;;
+  remote) echo "https://github.com/Owner/Custom-Repo.git" ;;
+esac
+STUBEOF
+chmod +x "$STUB/git"
+
+# --- Test 13: Configuration section shows defaults when vars are unset ---
+(
+  unset SHAI_MODEL SHAI_MAX_CONTEXT_BYTES SHAI_UNIT_DIR SHAI_SUGGEST SHAI_SUGGEST_REPO 2>/dev/null || true
+  OUT=$(run_doctor)
+  assert_contains "$OUT" "Configuration:" "doctor: prints the Configuration section"
+  assert_contains "$OUT" "[OK]   SHAI_MODEL" "doctor: SHAI_MODEL listed"
+  assert_contains "$OUT" "deepseek-v4-flash (default)" "doctor: SHAI_MODEL shows default value"
+  assert_contains "$OUT" "1300000 (default)" "doctor: SHAI_MAX_CONTEXT_BYTES shows default value"
+  assert_contains "$OUT" "1 (default)" "doctor: SHAI_SUGGEST shows default value"
+  assert_contains "$OUT" "(unset — auto-detected: Owner/Custom-Repo)" "doctor: SHAI_SUGGEST_REPO shows the auto-detected repo"
+  exit "$FAILED"
+) || FAILED=1
+rm -f "$STUB/git"
+
+# --- Test 14: Configuration section shows explicit values (no "(default)" tag) ---
+(
+  export SHAI_MODEL="custom-model"
+  # Must be a value unique to the Configuration section — "owner/repo" would also match the
+  # ci.json fixture's "repos: github.com/owner/repo" line in the Tool-declared files section.
+  export SHAI_SUGGEST_REPO="Owner/Custom-Repo"
+  OUT=$(run_doctor)
+  assert_contains "$OUT" "custom-model" "doctor: explicit SHAI_MODEL shown"
+  if [[ "$OUT" == *"custom-model (default)"* ]]; then
+    echo -e "  ${RED}✗${NC} doctor: explicit SHAI_MODEL must not show (default)"
+    FAILED=1
+  else
+    echo -e "  ${GREEN}✓${NC} doctor: explicit SHAI_MODEL does not show (default)"
+  fi
+  assert_contains "$OUT" "Owner/Custom-Repo" "doctor: explicit SHAI_SUGGEST_REPO shown"
+  exit "$FAILED"
+) || FAILED=1
+
+# --- Test 15: SHAI_HOME shows the explicit value (test fixture sets it) ---
+OUT=$(run_doctor)
+assert_contains "$OUT" "[OK]   SHAI_HOME" "doctor: SHAI_HOME listed"
+assert_contains "$OUT" "$SHAI_HOME" "doctor: SHAI_HOME shows the explicit path"
+if [[ "$OUT" == *"$SHAI_HOME (default)"* ]]; then
+  echo -e "  ${RED}✗${NC} doctor: explicit SHAI_HOME must not show (default)"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} doctor: explicit SHAI_HOME does not show (default)"
+fi
+
+# --- Test 16: Configuration section never affects error/warning counts ---
+(
+  unset SHAI_MODEL SHAI_SUGGEST_REPO 2>/dev/null || true
+  OUT=$(run_doctor)
+  SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+  assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: config section adds no errors or warnings"
+  exit "$FAILED"
+) || FAILED=1
 
 finish
