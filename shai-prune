@@ -1,9 +1,9 @@
 #!/bin/bash
-# shai-prune — manually remove session logs, run directories, and workflow ledgers
-# Usage: shai-prune [--sessions] [--runs] [--ledgers] [--dry-run] [--before YYYY-MM-DD]
+# shai-prune — manually remove session logs, run directories, workflow ledgers, and failure records
+# Usage: shai-prune [--sessions] [--runs] [--ledgers] [--failures] [--dry-run] [--before YYYY-MM-DD]
 # Reads: $SHAI_HOME/sessions/*.jsonl, $SHAI_HOME/sessions/*.latest.json, $SHAI_HOME/runs/*/,
-#   and $SHAI_HOME/ledgers/*.jsonl
-# Writes: removes selected files/directories, including ledger files (or lists them with --dry-run)
+#   $SHAI_HOME/ledgers/*.jsonl, and $SHAI_HOME/failures/*.jsonl
+# Writes: removes selected files/directories, including ledger and failure files (or lists them with --dry-run)
 # Exit: 0 on success or nothing to prune; 1 on invalid arguments
 set -euo pipefail
 
@@ -11,10 +11,12 @@ STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 SESSIONS_DIR="$STATE_DIR/sessions"
 RUNS_DIR="$STATE_DIR/runs"
 LEDGERS_DIR="$STATE_DIR/ledgers"
+FAILURES_DIR="$STATE_DIR/failures"
 
 do_sessions=false
 do_runs=false
 do_ledgers=false
+do_failures=false
 dry_run=false
 before=""
 
@@ -23,6 +25,7 @@ while [ $# -gt 0 ]; do
     --sessions) do_sessions=true ;;
     --runs) do_runs=true ;;
     --ledgers) do_ledgers=true ;;
+    --failures) do_failures=true ;;
     --dry-run) dry_run=true ;;
     --before)
       shift
@@ -40,10 +43,11 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if ! "$do_sessions" && ! "$do_runs" && ! "$do_ledgers"; then
+if ! "$do_sessions" && ! "$do_runs" && ! "$do_ledgers" && ! "$do_failures"; then
   do_sessions=true
   do_runs=true
   do_ledgers=true
+  do_failures=true
 fi
 
 FIND_BEFORE=()
@@ -61,6 +65,7 @@ if [ -n "$before" ]; then
 fi
 
 TARGETS=()
+FILTER_TARGETS=()
 
 if "$do_sessions" && [ -d "$SESSIONS_DIR" ]; then
   while IFS= read -r -d '' f; do
@@ -80,22 +85,41 @@ if "$do_ledgers" && [ -d "$LEDGERS_DIR" ]; then
   done < <(find "$LEDGERS_DIR" -maxdepth 1 -type f -name '*.jsonl' "${FIND_BEFORE[@]}" -print0 2>/dev/null)
 fi
 
-if [ ${#TARGETS[@]} -eq 0 ]; then
+if "$do_failures" && [ -d "$FAILURES_DIR" ]; then
+  if [ -n "$before" ]; then
+    # Failure files are pruned by record content, not mtime: --before drops the lines
+    # whose ts predates the cutoff, and files left empty (or already empty) are deleted.
+    # Records without a string ts cannot be dated and are kept. A file jq cannot parse is
+    # left untouched (fail closed: never drop unreadable records).
+    while IFS= read -r -d '' f; do
+      if [ ! -s "$f" ] || [ "$(jq -r -s --arg b "$before" '[.[] | select((.ts | type) == "string" and .ts < $b)] | length' "$f" 2>/dev/null || printf '0')" -gt 0 ]; then
+        FILTER_TARGETS+=("$f")
+      fi
+    done < <(find "$FAILURES_DIR" -maxdepth 1 -type f -name '*.jsonl' -print0 2>/dev/null)
+  else
+    while IFS= read -r -d '' f; do
+      TARGETS+=("$f")
+    done < <(find "$FAILURES_DIR" -maxdepth 1 -type f -name '*.jsonl' -print0 2>/dev/null)
+  fi
+fi
+
+TOTAL=$((${#TARGETS[@]} + ${#FILTER_TARGETS[@]}))
+if [ "$TOTAL" -eq 0 ]; then
   printf 'nothing to prune\n'
   exit 0
 fi
 
-for t in "${TARGETS[@]}"; do
+for t in "${TARGETS[@]}" "${FILTER_TARGETS[@]}"; do
   printf '%s\n' "$t"
 done
 
 if "$dry_run"; then
-  printf '\n%d item(s) would be removed (dry run)\n' "${#TARGETS[@]}"
+  printf '\n%d item(s) would be removed (dry run)\n' "$TOTAL"
   exit 0
 fi
 
 if [ -t 0 ]; then
-  printf '\nremove %d item(s)? [y/N] ' "${#TARGETS[@]}" >/dev/tty
+  printf '\nremove %d item(s)? [y/N] ' "$TOTAL" >/dev/tty
   read -r confirm </dev/tty
   case "$confirm" in
     y | Y | yes | YES) ;;
@@ -109,4 +133,22 @@ fi
 for t in "${TARGETS[@]}"; do
   rm -rf "$t"
 done
-printf 'removed %d item(s)\n' "${#TARGETS[@]}"
+for t in "${FILTER_TARGETS[@]}"; do
+  if [ ! -s "$t" ]; then
+    rm -f "$t"
+    continue
+  fi
+  tmp="$(mktemp)"
+  if jq -c --arg b "$before" 'select((.ts | type) != "string" or .ts >= $b)' "$t" >"$tmp" 2>/dev/null; then
+    if [ -s "$tmp" ]; then
+      mv "$tmp" "$t"
+    else
+      rm -f "$tmp"
+      rm -f "$t" # empty after pruning → delete
+    fi
+  else
+    rm -f "$tmp"
+    printf 'warning: cannot parse %s, leaving it untouched\n' "$t" >&2
+  fi
+done
+printf 'removed %d item(s)\n' "$TOTAL"
