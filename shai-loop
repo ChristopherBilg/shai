@@ -10,6 +10,11 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# fail_record (lib/failure.sh) backs the failure write sites below (record_eval_error and the
+# dispatch_error record). Sourced unconditionally — an install tree without lib/ is broken, and
+# the missing-lib fixture in tests/test_loop.sh mirrors this by shipping a lib/ with failure.sh.
+# shellcheck source=lib/failure.sh
+source "$DIR/lib/failure.sh"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 RUNS_DIR="$STATE_DIR/runs"
 
@@ -174,6 +179,23 @@ check_truncation() {
   ' "$LATEST" >/dev/null 2>&1
 }
 
+# record_eval_error: failure write site #1 (see #271) — after an eval pass whose LATEST can
+# only hold shai-eval's own output (the initial eval pipeline and each re_eval), detect a
+# system error event (API/curl/parse failure) and record it as an api_error, with the event's
+# payload text as summary and shai-eval/chat_completions context. Records only, never changes
+# control flow: the re-eval loop already stops on an error event because shai-dispatch finds no
+# tool_calls in it and exits 0 — this is the recording point, not a detection fix. Deliberately
+# NOT called after emit_dispatch_error: those system error events are dispatch/truncation
+# failures, not API errors.
+record_eval_error() {
+  if jq -e '.type == "error" and .source == "system"' "$LATEST" >/dev/null 2>&1; then
+    local summary
+    summary=$(jq -r '.payload.text // empty' "$LATEST" 2>/dev/null) || summary=""
+    [ -n "$summary" ] || summary="shai-eval failed"
+    fail_record "api_error" "$summary" '{"script":"shai-eval","stage":"chat_completions"}'
+  fi
+}
+
 advance_span
 
 if [ "$RUN_LOG" != "/dev/null" ]; then
@@ -186,6 +208,8 @@ fi
 
 cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" "${EVAL_OPTS[@]}" | "$DIR/shai-stamp" |
   tee -a "$LOOP_LOG" | tee "$LATEST" | print_event
+
+record_eval_error
 
 if check_truncation; then
   emit_dispatch_error "response truncated (finish_reason: length) — model exhausted max_tokens with no visible output"
@@ -210,10 +234,14 @@ else
       # inverts $? and a failing dispatch would read as exit 0.)
       dispatch_rc=$?
       if [ "$dispatch_rc" -ne 1 ]; then
+        # Failure write site #4 (see #271): record the terminal dispatch failure before
+        # emitting the error event.
+        fail_record "dispatch_error" "shai-dispatch exited $dispatch_rc"
         emit_dispatch_error "shai-dispatch failed (exit $dispatch_rc) — stopping the re-eval loop"
         break
       fi
       re_eval
+      record_eval_error
       if check_truncation; then
         emit_dispatch_error "response truncated (finish_reason: length) — model exhausted max_tokens with no visible output"
         break

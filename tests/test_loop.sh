@@ -199,6 +199,11 @@ FAKE_INSTALL="$(mktemp -d)"
 _CLEANUP_DIRS+=("$FAKE_INSTALL")
 cp "$DIR/shai-loop" "$DIR/shai-dispatch" "$DIR/shai-context" "$DIR/shai-eval" \
   "$DIR/shai-read" "$DIR/shai-stamp" "$DIR/shai-print" "$FAKE_INSTALL/"
+# shai-loop sources lib/failure.sh (it records api_error/dispatch_error, see #271), so the
+# broken-install fixture must ship a lib/ with failure.sh — but deliberately no
+# lib/read-only.sh, which is what makes shai-dispatch exit 3.
+mkdir -p "$FAKE_INSTALL/lib"
+cp "$DIR/lib/failure.sh" "$FAKE_INSTALL/lib/failure.sh"
 chmod +x "$FAKE_INSTALL"/shai-*
 
 printf '%s\n' "$TOOLCALL_JSON" | write_curl_stub 200

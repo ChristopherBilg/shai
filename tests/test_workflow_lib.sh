@@ -65,6 +65,10 @@ _CLEANUP_DIRS+=("$FIX")
 mkdir -p "$FIX/workflows/my_workflow" "$FIX/lib" "$FIX/prompts"
 # shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
 cp "$DIR/lib/workflow.sh" "$FIX/lib/"
+# workflow.sh sources lib/failure.sh (wf_fail records workflow_error, see #271), so the
+# fixture lib/ must carry it too.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+cp "$DIR/lib/failure.sh" "$FIX/lib/"
 # shellcheck disable=SC2031
 cp "$DIR/shai-prompt" "$DIR/shai-read" "$DIR/shai-stamp" "$FIX/"
 # shellcheck disable=SC2031

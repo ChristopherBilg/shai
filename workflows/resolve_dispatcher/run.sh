@@ -87,8 +87,12 @@ while IFS=$'\t' read -r REPO NUMBER; do
     wf_output "dispatched $REPO#$NUMBER"
   else
     # Worker failed; the label is already gone, so wf_mark is intentionally skipped. A human
-    # must re-apply the label to retry.
+    # must re-apply the label to retry. Record the failure (write site #5, see #271) in the
+    # dispatcher's own failure file via WF_NAME — the context script names the worker that
+    # failed, not the dispatcher.
     wf_output "WARNING: review_resolver failed for $REPO#$NUMBER (re-label to retry)"
+    fail_record "workflow_error" "review_resolver failed for $REPO#$NUMBER" \
+      "{\"script\":\"review_resolver\",\"detail\":\"worker failed for $REPO#$NUMBER\"}"
     FAILED=$((FAILED + 1))
   fi
 done < <(printf '%s' "$SEARCH_JSON" | jq -r '.[] | "\(.repository.nameWithOwner)\t\(.number)"')

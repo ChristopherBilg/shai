@@ -8,6 +8,12 @@ DIR="$(cd "$WF_DIR/.." &>/dev/null && pwd)"
 
 WF_NAME="${WF_NAME:-$(basename "$(dirname "${BASH_SOURCE[1]:-workflow}")")}"
 
+# fail_record (lib/failure.sh) backs the failure write sites in this library (wf_fail) and in
+# the workflow scripts that source it (the dispatchers' worker-failure records). Sourced here so
+# every workflow gets the recorder with no per-workflow boilerplate.
+# shellcheck source=lib/failure.sh
+source "$WF_DIR/failure.sh"
+
 mint_id() {
   printf '%s_%s_%s' "$1" "$(date -u +%Y%m%dT%H%M%S)" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')"
 }
@@ -42,6 +48,11 @@ wf_output() {
 
 wf_fail() {
   printf '%s %s ERROR: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WF_NAME" "$*" >&2
+  # Record the failure before exiting (write site #2, see #271). The context JSON embeds
+  # $0 (the workflow script) and the message by string interpolation; a message containing a
+  # quote would fall back to fail_record's {"raw": ...} context instead of dropping the
+  # record — and fail_record never fails the caller, so the exit 1 below always happens.
+  fail_record "workflow_error" "$*" "{\"script\":\"$0\",\"detail\":\"$*\"}"
   exit 1
 }
 

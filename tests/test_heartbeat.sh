@@ -52,6 +52,9 @@ PIPEDIR="$(mktemp -d)"
 _CLEANUP_DIRS+=("$PIPEDIR")
 mkdir -p "$PIPEDIR/lib" "$PIPEDIR/workflows/heartbeat" "$PIPEDIR/prompts"
 cp "$DIR/lib/workflow.sh" "$PIPEDIR/lib/workflow.sh"
+# workflow.sh sources lib/failure.sh (wf_fail records workflow_error, see #271), so the
+# fixture lib/ must carry it too.
+cp "$DIR/lib/failure.sh" "$PIPEDIR/lib/failure.sh"
 cp "$DIR/workflows/heartbeat/run.sh" "$PIPEDIR/workflows/heartbeat/run.sh"
 cp "$DIR/prompts/system.txt" "$PIPEDIR/prompts/system.txt"
 cp "$DIR/shai-prompt" "$DIR/shai-read" "$DIR/shai-context" "$DIR/shai-eval" "$DIR/shai-stamp" "$PIPEDIR/"

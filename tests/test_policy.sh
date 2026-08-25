@@ -39,11 +39,12 @@ mapfile -t READ_ONLY_TOOLS < <(
 # Every test below passes an explicit temp-dir SHAI_HOME, so no test ever touches a real
 # ~/.shai or hits the network.
 extract_functions() {
-  # shai-dispatch sources lib/read-only.sh via its own $DIR, which under eval resolves to this
-  # test's directory (tests/) — rewrite the source path to the real repo lib so the eval'd
-  # check_policy can use the shared exclusion list (see #118).
+  # shai-dispatch sources lib/read-only.sh and lib/failure.sh via its own $DIR, which under
+  # eval resolves to this test's directory (tests/) — rewrite both source paths to the real
+  # repo lib so the eval'd check_policy can use the shared exclusion list (see #118) and
+  # fail_record (see #271).
   sed -n '1,/^tool_calls=/p' "$DIR/shai-dispatch" | head -n -1 |
-    sed "s|\$DIR/lib/read-only.sh|$DIR/lib/read-only.sh|g"
+    sed "s|\$DIR/lib/read-only.sh|$DIR/lib/read-only.sh|g; s|\$DIR/lib/failure.sh|$DIR/lib/failure.sh|g"
 }
 
 run_check_policy() {

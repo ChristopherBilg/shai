@@ -58,6 +58,13 @@ if [ ! -r "$DIR/lib/read-only.sh" ]; then
 fi
 # shellcheck source=lib/read-only.sh
 source "$DIR/lib/read-only.sh"
+# fail_record (lib/failure.sh) backs the run_tool write sites below (policy_denial on every
+# permission-gate denial, tool_error on a non-zero run.sh exit). The same missing-file
+# pre-flight cannot apply here — lib/failure.sh is the recorder for the pre-flight failure
+# itself — so a missing failure.sh falls through to the ERR trap, which exits 3 ("dispatch
+# failed"), the same contract as any other unexpected failure.
+# shellcheck source=lib/failure.sh
+source "$DIR/lib/failure.sh"
 
 # truncate_output <raw>: echo tool output bounded to MAX_BYTES payload bytes.
 # Under the cap the bytes pass through unchanged (no marker). Over the cap, keep the first
@@ -279,6 +286,13 @@ run_tool() {
           printf 'Policy denied: %s.' "$name"
           ;;
       esac
+      # Failure write site #3a (see #271): every permission-gate denial is recorded as a
+      # policy_denial, with the tool and the full policy reason (rule:/default:/argscope:/
+      # unmatched:/nopolicy) naming the deciding policy file. The context is built with jq
+      # --arg so a policy path with characters that would break string interpolation still
+      # yields a valid context object. Behavior is unchanged: the denial still returns 1.
+      fail_record "policy_denial" "policy denied $name" \
+        "$(jq -nc --arg tool "$name" --arg policy "$policy_reason" '{tool:$tool, policy:$policy}')"
       return 1
       ;;
     prompt)
@@ -329,11 +343,20 @@ run_tool() {
             printf 'Not granted: %s — permission not granted; %s' "$name" "$denial_note"
             ;;
         esac
+        # Failure write site #3b (see #271): a prompt that failed — headless run or a
+        # declined TTY prompt — is a denial like any other, recorded with the same
+        # tool + policy-reason context.
+        fail_record "policy_denial" "not granted $name (prompt)" \
+          "$(jq -nc --arg tool "$name" --arg policy "$policy_reason" '{tool:$tool, policy:$policy}')"
         return 1
       fi
       ;;
     *)
       printf 'Policy denied: %s (unrecognized action)' "$name"
+      # Failure write site #3c (see #271): an unrecognized policy action is a denial too
+      # (fail closed), recorded with the raw action as the policy reason.
+      fail_record "policy_denial" "unrecognized policy action for $name" \
+        "$(jq -nc --arg tool "$name" --arg policy "$policy_action" '{tool:$tool, policy:$policy}')"
       return 1
       ;;
   esac
@@ -342,7 +365,20 @@ run_tool() {
     printf 'Unknown tool: %s' "$name"
     return 1
   fi
-  "$run_sh" "$input"
+  # Failure write site #3d (see #271): run.sh's exit code is captured instead of left to
+  # propagate as the function's final status; a non-zero exit records a tool_error
+  # (informational — the model may recover from the is_error tool_result) with the tool, the
+  # first 500 bytes of input, and the exit code. The exact exit code still propagates to the
+  # caller unchanged, so the exit-code contract (1 = "a tool ran", 3 = dispatch failure) is
+  # untouched, and the OR-list keeps the failure out of the ERR trap.
+  local run_rc=0
+  "$run_sh" "$input" || run_rc=$?
+  if [ "$run_rc" -ne 0 ]; then
+    fail_record "tool_error" "$name failed (exit $run_rc)" \
+      "$(jq -nc --arg tool "$name" --arg input "$(head -c 500 <<<"$input")" --argjson rc "$run_rc" \
+        '{tool:$tool, input:$input, exit_code:$rc}')"
+  fi
+  return "$run_rc"
 }
 
 tool_calls=0
