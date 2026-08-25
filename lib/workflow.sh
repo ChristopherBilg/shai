@@ -42,6 +42,9 @@ wf_output() {
 
 wf_fail() {
   printf '%s %s ERROR: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WF_NAME" "$*" >&2
+  # shellcheck source=lib/failure.sh
+  source "$DIR/lib/failure.sh"
+  fail_record "workflow_error" "$1" '{"script":"'"$0"'","detail":"'"$1"'"}'
   exit 1
 }
 
