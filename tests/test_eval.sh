@@ -117,6 +117,21 @@ DRYDEFAULT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   env -u SHAI_MAX_TOKENS "$DIR/shai-eval" --dry-run)
 assert_contains "$DRYDEFAULT" '"max_tokens":32000' "eval: default max_tokens is 32000"
 
+# SHAI_MAX_TOKENS non-integer → controlled exit 2 with a clear message, not a jq crash
+# (a bad value would otherwise abort shai-eval mid-payload-build and take shai-loop's
+# pipeline down with it under pipefail)
+MTENVBAD=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_MAX_TOKENS=abc "$DIR/shai-eval" --dry-run 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: SHAI_MAX_TOKENS non-integer exits 2"
+assert_contains "$MTENVBAD" "SHAI_MAX_TOKENS" "eval: SHAI_MAX_TOKENS non-integer → clear message"
+
+# validation runs on the final value: a valid --max-tokens flag overrides a bad env var
+DRYRESCUE=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_MAX_TOKENS=abc "$DIR/shai-eval" --dry-run --max-tokens 99)
+RC=$?
+assert_eq "$RC" "0" "eval: --max-tokens flag rescues a bad SHAI_MAX_TOKENS env var"
+assert_contains "$DRYRESCUE" '"max_tokens":99' "eval: rescued payload uses the flag value"
+
 # new: empty stdin → exit 0, no output
 EEMPTY=$(printf '' | "$DIR/shai-eval")
 RC=$?

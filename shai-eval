@@ -8,7 +8,8 @@
 #         usage, latency_ms); on a real call, also dumps the request, and on success the response
 #         metadata, to $SHAI_HOME/runs/<run_id>/<span_id>-{request,response}.json (best-effort);
 #         --dry-run prints payload
-# Exit: 0 always; --health-check exits 1 if DEEPSEEK_API_KEY missing; 2 on bad CLI args
+# Exit: 0 always; --health-check exits 1 if DEEPSEEK_API_KEY missing; 2 on bad CLI args or
+#        a non-integer SHAI_MAX_TOKENS
 set -euo pipefail
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
@@ -78,6 +79,18 @@ INPUT=$(cat)
 if [ -z "$(printf '%s' "$INPUT" | tr -d '[:space:]')" ]; then
   exit 0
 fi
+
+# Validate the final MAX_TOKENS (env default or --max-tokens override): a non-integer value
+# would make `jq --argjson` fail in the PAYLOAD build below and abort this script under
+# `set -e` — and with pipefail, the whole shai-loop pipeline with it — instead of failing
+# cleanly with a controlled exit (same positive-integer rule as --max-tokens and
+# SHAI_MAX_CONTEXT_BYTES).
+case "$MAX_TOKENS" in
+  '' | 0* | *[!0-9]*)
+    echo "error: --max-tokens / SHAI_MAX_TOKENS must be a positive integer (got \"$MAX_TOKENS\")" >&2
+    exit 2
+    ;;
+esac
 
 TOOLS_JSON="[]"
 if [ -n "$TOOLS_FILE" ]; then
