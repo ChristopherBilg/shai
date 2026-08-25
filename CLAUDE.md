@@ -431,10 +431,15 @@ follows.
 
 **Permission gate** — `shai-dispatch` checks `$SHAI_HOME/policy.json` before executing each tool.
 Rules are matched first-match-wins by tool name and optional arg patterns (globs). Actions:
-`allow` (execute silently), `prompt` (interactive Y/N on `/dev/tty`; non-interactive → fail
+`allow` (execute), `prompt` (interactive Y/N on `/dev/tty`; non-interactive → fail
 closed as error event), `deny` (error event, never execute). When no rule matches and no
 explicit `default` is set, the fallback is per-tool: a tool whose `tool.json` declares
 `capabilities.read_only: true` is auto-allowed, and everything else defaults to `prompt`.
+Every decision is logged to stderr as `policy: <action> <tool> (<reason>)` — the reason names
+the matched rule (`rule:<file>:<idx>`), the deciding `default`, the read-only fallback, or
+"no rule matched" — so a grant outside every rule is never silent, and identical calls always
+produce the identical verdict (the rule lookup selects its first match inside jq, so a
+multi-rule policy can never lose a match to a broken pipe, see #294).
 
 **Default exclusions for auto-allowed read-only tools** (decision from #118) — the read-only
 tools stay filesystem-wide (no root confinement: that boundary belongs to `policy.json` arg

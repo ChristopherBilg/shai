@@ -416,4 +416,130 @@ result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" PATH="$stub_dir:$PATH" bas
 assert_contains "$result" '"is_error":true' "exclusions integration: excluded path → is_error true (fail closed)"
 assert_contains "$result" 'Not granted' "exclusions integration: excluded path → denied message, tool not executed"
 
+# --- determinism (#294): identical calls must produce identical verdicts, every time ---
+# Regression for #294: policy enforcement gave different verdicts for identical out-of-policy
+# tool calls (same tool, same path, same old/new string — granted, granted, denied, granted).
+# Two properties are asserted here:
+#   1. Repeated identical calls → byte-identical verdict + reason, and the expected denial
+#      every time: argscope for an out-of-policy write tool, unmatched for a tool with no
+#      rules at all (a no-rule-matched call is always denied).
+#   2. First-match-wins is deterministic even when MANY rules match. Root cause of #294: the
+#      rule-match/arg-scope lookups piped jq's multi-line output into `head -n 1` under
+#      `set -o pipefail` — head closed the pipe after the first line, jq could die with
+#      SIGPIPE (141), pipefail then reported the pipeline failed, and the `|| match=""`
+#      guard discarded a VALID match, so the call fell through to the fallback and the
+#      verdict flipped with process timing. The lookup now takes the first element inside
+#      jq ([...][0] // empty), so the pipeline emits at most one line and a match can never
+#      be lost to a broken pipe.
+
+# (1a) the issue_worker policy shape (#294): a single patch_file allow rule scoped to /tmp/*,
+# no default. A call targeting e.g. $SHAI_HOME/ci.json is out of policy and must be denied
+# identically every single time — same verdict, same argscope reason naming the policy file
+# and the required pattern.
+PDIR=$(setup_policy '{"rules":[{"tool":"patch_file","args":{"path":"/tmp/*"},"action":"allow"}]}')
+FIRST_VERDICT=""
+for i in $(seq 1 25); do
+  RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "patch_file" \
+    '{"path":"/home/user/.shai/ci.json","old_string":"a","new_string":"b"}')
+  if [ -z "$FIRST_VERDICT" ]; then
+    FIRST_VERDICT="$RES"
+  else
+    assert_eq "$RES" "$FIRST_VERDICT" \
+      "determinism: out-of-policy patch_file → identical verdict+reason every time (iter $i)"
+  fi
+done
+assert_eq "$FIRST_VERDICT" "$(printf 'prompt\targscope:%s/policy.json:path=/tmp/*' "$PDIR")" \
+  "determinism: out-of-policy patch_file → argscope denial naming the policy and pattern"
+
+# (1b) a write tool with no rule at all (and no default) → unmatched prompt every time
+# (headless dispatch fails closed, so the call is always denied)
+PDIR=$(setup_policy '{"rules":[{"tool":"patch_file","args":{"path":"/tmp/*"},"action":"allow"}]}')
+FIRST_NO_RULE=""
+for i in $(seq 1 25); do
+  RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "some_write_tool" '{"path":"/tmp/x"}')
+  if [ -z "$FIRST_NO_RULE" ]; then
+    FIRST_NO_RULE="$RES"
+  else
+    assert_eq "$RES" "$FIRST_NO_RULE" \
+      "determinism: no-rule-matched write tool → identical verdict+reason every time (iter $i)"
+  fi
+done
+assert_contains "$FIRST_NO_RULE" $'prompt\tunmatched:' \
+  "determinism: no-rule-matched write tool → unmatched (always denied headless)"
+assert_contains "$FIRST_NO_RULE" "$PDIR/policy.json" \
+  "determinism: no-rule-matched write tool → reason names the consulted policy"
+
+# (2) first-match-wins must hold deterministically with many matching rules. Generate enough
+# matching rules that the old jq|head pipeline's multi-line output would overflow the pipe
+# buffer, so head's early close and jq's SIGPIPE were guaranteed and the valid match was
+# always discarded (verdict flipped to the default deny). The first rule's action must win,
+# identically, every time.
+BIGDIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$BIGDIR")
+{
+  printf '{"default":"deny","rules":['
+  for i in $(seq 1 20000); do
+    printf '{"tool":"race_tool","args":{"path":"/tmp/*"},"action":"allow"},'
+  done
+  printf '{"tool":"race_tool","action":"deny"}]}'
+} >"$BIGDIR/policy.json"
+for i in $(seq 1 3); do
+  RES=$(SHAI_HOME="$BIGDIR" run_check_policy_raw "race_tool" '{"path":"/tmp/x"}')
+  assert_eq "$RES" "$(printf 'allow\trule:%s/policy.json:1' "$BIGDIR")" \
+    "determinism: first-match-wins with 20001 matching rules, never lost to a broken pipe (iter $i)"
+done
+
+# (3) integration: repeated identical out-of-policy calls through the full dispatch pipeline
+# produce the same Not granted denial every time, the tool never executes, and the policy
+# decision is logged to stderr — a denial (or, symmetrically, a grant) is never silent.
+# The target lives OUTSIDE the /tmp/* allow root (like $SHAI_HOME/ci.json in #294), so the
+# call is out of policy even though the policy file itself sits in a /tmp temp dir.
+tmpdir=$(setup_policy '{"rules":[{"tool":"patch_file","args":{"path":"/tmp/*"},"action":"allow"}]}')
+OUTROOT=$(mktemp -d /var/tmp/shai294.XXXXXX)
+_CLEANUP_DIRS+=("$OUTROOT")
+CIJSON="$OUTROOT/ci.json"
+printf '{"checks":{"scratch":true}}' >"$CIJSON"
+event=$(jq -nc --arg p "$CIJSON" '{type:"message",source:"assistant",payload:{content:null,tool_calls:[{id:"det1",type:"function",function:{name:"patch_file",arguments:({path:$p,old_string:"scratch",new_string:"replaced"}|tojson)}}],finish_reason:"tool_calls"}}')
+FIRST_DENIAL=""
+for i in $(seq 1 10); do
+  result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" "$DIR/shai-dispatch" 2>&1) || true
+  if [ -z "$FIRST_DENIAL" ]; then
+    FIRST_DENIAL="$result"
+  else
+    assert_eq "$result" "$FIRST_DENIAL" \
+      "determinism: dispatch of identical out-of-policy call → identical output+stderr every time (iter $i)"
+  fi
+done
+assert_contains "$FIRST_DENIAL" '"is_error":true' "determinism: dispatch of out-of-policy call → is_error true"
+assert_contains "$FIRST_DENIAL" 'Not granted' "determinism: dispatch of out-of-policy call → denied message"
+assert_contains "$FIRST_DENIAL" 'requires path to match /tmp/*' "determinism: dispatch of out-of-policy call → argscope denial names the pattern"
+assert_contains "$FIRST_DENIAL" "policy: prompt patch_file (argscope:$tmpdir/policy.json:path=/tmp/*)" \
+  "determinism: dispatch of out-of-policy call → policy decision logged to stderr"
+assert_eq "$(cat "$CIJSON")" '{"checks":{"scratch":true}}' \
+  "determinism: dispatch of out-of-policy call → tool never executed, file unchanged"
+
+# a deny rule's decision is logged to stderr naming the rule that matched
+tmpdir=$(setup_policy '{"rules":[{"tool":"list_directory","action":"deny"}]}')
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"det2","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}  }],"finish_reason":"tool_calls"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" "$DIR/shai-dispatch" 2>&1) || true
+assert_contains "$result" "policy: deny list_directory (rule:$tmpdir/policy.json:1)" \
+  "determinism: deny rule decision logged to stderr naming the rule"
+
+# an allow from the policy default is logged to stderr — a grant outside every rule is visible
+tmpdir=$(setup_policy '{"default":"allow","rules":[]}')
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"det3","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}  }],"finish_reason":"tool_calls"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" "$DIR/shai-dispatch" 2>&1) || true
+assert_contains "$result" "policy: allow list_directory (default:$tmpdir/policy.json)" \
+  "determinism: default-allow decision logged to stderr naming the deciding default"
+assert_contains "$result" '"is_error":false' "determinism: default-allow decision → tool executes"
+
+# an allow granted by a matched rule is logged to stderr naming the rule — the exact
+# "grant is never silent" path: the allow comes from rule:<file>:<idx>, not a default
+tmpdir=$(setup_policy '{"rules":[{"tool":"list_directory","action":"allow"}]}')
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"det4","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}  }],"finish_reason":"tool_calls"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" "$DIR/shai-dispatch" 2>&1) || true
+assert_contains "$result" "policy: allow list_directory (rule:$tmpdir/policy.json:1)" \
+  "determinism: rule-allow decision logged to stderr naming the rule"
+assert_contains "$result" '"is_error":false' "determinism: rule-allow decision → tool executes"
+
 finish
