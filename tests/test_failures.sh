@@ -399,6 +399,29 @@ assert_eq "$(printf '%s' "$DENY_LINE" | jq -r '.context.tool')" "gh" \
 assert_contains "$(printf '%s' "$DENY_LINE" | jq -r '.context.policy')" "default:" \
   "shai-dispatch: policy_denial context names the deciding policy"
 
+# --- write site: shai-dispatch records policy_denial on a headless prompt-gate denial ---
+# stderr is redirected to /dev/null so prompt_user's `[ -t 2 ]` headless check fails
+# deterministically (the denial mode non-interactive workflows actually hit)
+desc "shai-dispatch: policy_denial recorded on headless prompt-gate denial"
+TMP_PROMPT="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMP_PROMPT")
+printf '{"version":"1.0","default":"prompt","rules":[]}' >"$TMP_PROMPT/policy.json"
+
+PROMPT_TOOL=$(jq -nc '{type:"message",source:"assistant",payload:{content:null,tool_calls:[{id:"pp1",type:"function",function:{name:"gh",arguments:({args:["pr","view","1"]}|tojson)}}],finish_reason:"tool_calls"}}')
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+echo "$PROMPT_TOOL" | SHAI_HOME="$TMP_PROMPT" "$DIR/shai-dispatch" >/dev/null 2>&1
+assert_eq "$?" "1" "shai-dispatch: headless prompt denial still exits 1 (tool ran → re-eval)"
+PROMPT_REC="$TMP_PROMPT/failures/_manual.jsonl"
+assert_eq "$(test -f "$PROMPT_REC" && echo exists)" "exists" \
+  "shai-dispatch: headless prompt policy_denial record written"
+PROMPT_LINE="$(cat "$PROMPT_REC")"
+assert_eq "$(printf '%s' "$PROMPT_LINE" | jq -r '.category')" "policy_denial" \
+  "shai-dispatch: headless prompt record category is policy_denial"
+assert_eq "$(printf '%s' "$PROMPT_LINE" | jq -r '.context.tool')" "gh" \
+  "shai-dispatch: headless prompt policy_denial context names the tool"
+assert_contains "$(printf '%s' "$PROMPT_LINE" | jq -r '.context.policy')" "default:" \
+  "shai-dispatch: headless prompt policy_denial context names the deciding policy"
+
 # --- write site: shai-loop records dispatch_error when shai-dispatch exits 3 ---
 desc "shai-loop: dispatch_error recorded when shai-dispatch exits 3"
 TMP_DISP="$(mktemp -d)"
@@ -437,6 +460,45 @@ assert_contains "$(printf '%s' "$DISP_LINE" | jq -r '.summary')" "exited 3" \
   "shai-loop: dispatch_error summary names the exit code"
 assert_eq "$(printf '%s' "$DISP_LINE" | jq -r '.context.script')" "shai-dispatch" \
   "shai-loop: dispatch_error context names shai-dispatch"
+
+# --- write site: shai-loop records dispatch_error when the dispatch loop bound is exceeded ---
+# A stub shai-dispatch that always exits 1 ("a tool ran") would re-evaluate forever; a small
+# SHAI_MAX_DISPATCH_ROUNDS caps the loop so the bound path is hit quickly.
+desc "shai-loop: dispatch_error recorded when the dispatch loop bound is exceeded"
+TMP_BOUND="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMP_BOUND")
+mkdir -p "$TMP_BOUND/sessions"
+printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMP_BOUND/sessions/test.jsonl"
+: >"$TMP_BOUND/sessions/test.latest.json"
+
+FAKE_INSTALL_BOUND="$(mktemp -d)"
+_CLEANUP_DIRS+=("$FAKE_INSTALL_BOUND")
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+cp "$DIR/shai-loop" "$DIR/shai-context" "$DIR/shai-eval" \
+  "$DIR/shai-read" "$DIR/shai-stamp" "$DIR/shai-print" "$FAKE_INSTALL_BOUND/"
+printf '#!/bin/bash\nexit 1\n' >"$FAKE_INSTALL_BOUND/shai-dispatch"
+mkdir -p "$FAKE_INSTALL_BOUND/lib"
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+cp "$DIR/lib/failure.sh" "$FAKE_INSTALL_BOUND/lib/"
+chmod +x "$FAKE_INSTALL_BOUND"/shai-*
+
+printf '%s\n' "$TOOLCALL_JSON" | write_curl_stub 200
+
+# timeout guards the assertion itself: if the bound fails to stop the loop, the suite fails fast
+BOUND_OUT=$(printf 'list' | timeout 30 env PATH="$STUB:$PATH" SHAI_HOME="$TMP_BOUND" SHAI_SESSION_ID=test SHAI_MAX_DISPATCH_ROUNDS=2 "$FAKE_INSTALL_BOUND/shai-loop" 2>/dev/null)
+BOUND_RC=$?
+assert_eq "$BOUND_RC" "0" "shai-loop: loop bound → loop stops, exit 0"
+assert_contains "$BOUND_OUT" '"type":"error"' "shai-loop: loop bound → error event emitted"
+BOUND_REC="$TMP_BOUND/failures/_repl.jsonl"
+assert_eq "$(test -f "$BOUND_REC" && echo exists)" "exists" \
+  "shai-loop: loop-bound dispatch_error record written"
+BOUND_LINE="$(cat "$BOUND_REC")"
+assert_eq "$(printf '%s' "$BOUND_LINE" | jq -r '.category')" "dispatch_error" \
+  "shai-loop: loop-bound record category is dispatch_error"
+assert_contains "$(printf '%s' "$BOUND_LINE" | jq -r '.summary')" "exceeded 2 dispatch rounds" \
+  "shai-loop: loop-bound summary names the bound"
+assert_eq "$(printf '%s' "$BOUND_LINE" | jq -r '.context.script')" "shai-loop" \
+  "shai-loop: loop-bound context names shai-loop"
 
 # --- write site: issue_dispatcher records workflow_error when a worker fails ---
 desc "issue_dispatcher: workflow_error recorded when a worker fails"
