@@ -102,8 +102,9 @@ while read -r -p "> " line || [ -n "$line" ]; do
   printf '%s\n' "$line" | "$DIR/shai-loop" --tools-file "$TOOLS_FILE" ${LOOP_QUIET_FLAG:+"$LOOP_QUIET_FLAG"} 2>&1 >/dev/null
 
   # one blank line after every completed turn (normal, error, or interrupted) separates it from
-  # the next prompt. Unconditional: exit/quit break before this, and a trailing blank line in
-  # piped output is harmless.
+  # the next prompt. Unconditional: exit/quit break before this, so the goodbye follows the last
+  # prompt directly; only on EOF (Ctrl-D, or piped input without exit) does the goodbye follow
+  # this separator — the intended trade-off per #300's "keep it unconditional" instruction.
   printf '\n'
 done
 
