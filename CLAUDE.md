@@ -31,7 +31,13 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
 
 # Retention:
-./shai-prune [--sessions] [--runs] [--ledgers] [--dry-run] [--before YYYY-MM-DD]  # manual retention
+./shai-prune [--sessions] [--runs] [--ledgers] [--failures] [--dry-run] [--before YYYY-MM-DD]  # manual retention
+
+# Failure introspection:
+./shai-failures list                         # per-workflow failure summary
+./shai-failures list --workflow <name>       # one row per failure record
+./shai-failures show <workflow>:<line>       # full detail of a single record
+./shai-failures summary                      # totals plus category/workflow breakdowns
 
 # Replay a failed run (idempotent, non-destructive):
 ./shai-retry --run <run_id>               # replay under a new run_id, commit on success
@@ -66,7 +72,8 @@ curl errors, HTTP 429, 5xx — with exponential backoff 1s/2s/4s/…; default `2
 disable), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
 step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; overrides
-remote detection).
+remote detection), `SHAI_FAILURE_WORKFLOW` (failure store workflow name; used when `WF_NAME`
+is unset — see **Failure store** below).
 
 **Ambient trace context** — set by `shai-repl`/`shai-retry`, inherited by every child filter, read only
 by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its request dump):
@@ -92,8 +99,9 @@ only shared state is the append-only session log. To rewind the assistant's memo
 the file (`head -n 20 ~/.shai/sessions/<session_id>.jsonl`) — there is no database.
 
 State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs),
-`sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop), and
-`ledgers/<workflow_name>.jsonl` (per-workflow idempotency ledgers — see below).
+`sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop),
+`ledgers/<workflow_name>.jsonl` (per-workflow idempotency ledgers — see below), and
+`failures/<workflow_name>.jsonl` (per-workflow failure records — see below).
 
 **The event schema is the contract between every script.** Records in `sessions/<session_id>.jsonl`:
 
@@ -248,10 +256,10 @@ The scripts:
   replays a failed run's user message under a new run_id using buffer-then-commit — events go to
   the new run log during execution and are committed to the session log only on success. Records
   `retry_of` in the envelope meta. Detects already-committed runs as no-ops.
-- **`shai-prune [--sessions] [--runs] [--ledgers] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
-  retention: removes session log files, run directories, and/or workflow ledger files, optionally
-  filtered by date. Ledgers are included in the default (no-flags) prune alongside sessions
-  and runs; `--ledgers` can still be passed alone to prune only ledgers. Interactive prompts for confirmation; non-interactive skips it.
+- **`shai-prune [--sessions] [--runs] [--ledgers] [--failures] [--dry-run] [--before YYYY-MM-DD]`** (`shai-prune:1`) — manual
+  retention: removes session log files, run directories, workflow ledger files, and/or failure records, optionally
+  filtered by date. Ledgers and failure records are included in the default (no-flags) prune alongside sessions
+  and runs; `--ledgers`/`--failures` can still be passed alone to prune only ledgers/failure records. Interactive prompts for confirmation; non-interactive skips it.
 - **`shai-sessions [--recent N] [--after DATE] [--before DATE] [--json]`**
   (`shai-sessions:1`) — lists sessions from `$SHAI_HOME/sessions/*.jsonl` with event count,
   distinct run count, and total tokens (from `api.usage`). Human-readable table by default;
@@ -283,6 +291,21 @@ The scripts:
   (failures are per-workflow, not per-session). `--after`/`--before` filter by session date
   and by failure-record timestamp. `--json` outputs a JSON summary object. Exit 0 on success;
   1 on invalid arguments or no match.
+- **`shai-failures list [--workflow NAME] [--category CAT] [--after DATE] [--before DATE] [--recent N] [--json]`**
+  (`shai-failures:1`) — inspects the failure store, `$SHAI_HOME/failures/<workflow>.jsonl`
+  (written by `fail_record`; see **Failure store** below). `list` without `--workflow` prints
+  one row per workflow — failure count, oldest/newest record date, top category; with
+  `--workflow` it prints one row per failure record, chronological, with stable
+  `<workflow>:<line>` ids (the JSONL file's physical line numbers, so an id printed by `list`
+  always resolves via `show`). `show <workflow>:<line>` prints full detail of a single record —
+  timestamp, workflow, category, summary, run/session when present, and context — plus a
+  `shai-trace <run_id>` hint when the record carries a run. `summary` aggregates across all
+  workflows: total with the date range, then per-category and per-workflow breakdowns with
+  percentages. `--category` and `--after`/`--before` (inclusive `YYYY-MM-DD`) filter `list`
+  in both modes; `summary` takes `--after`/`--before`; `--recent N` keeps the last N rows of
+  a `list`. Malformed lines are dropped with a warning, like `shai-ledgers`. `--json`
+  switches any subcommand to JSON output. Exit 0 on success; 1 on invalid arguments or no
+  match; 2 on usage error.
 - **`shai-ledgers [--workflow NAME] [--recent N] [--after DATE] [--before DATE] [--json]`**
   (`shai-ledgers:1`) — lists workflow idempotency ledgers from `$SHAI_HOME/ledgers/*.jsonl`
   (written by `wf_mark`; see **Work ledger** below). Without `--workflow`: one row per ledger
@@ -444,7 +467,8 @@ identical to before.
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
 (mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
 wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
-`wf_fail "message"` (stderr + exit 1), `wf_seen "key"` / `wf_mark "key"` (work ledger — see
+`wf_fail "message"` (stderr + exit 1; records a `workflow_error` to the failure store first —
+see **Failure store** below), `wf_seen "key"` / `wf_mark "key"` (work ledger — see
 below), `wf_suggest` (post-workflow suggestion step — see below). Sets `DIR` to the shai
 install directory.
 
@@ -475,6 +499,25 @@ keys. Each line: `{"key":"...","ts":"...","session_id":"..."}`. Two helpers in `
 idempotent). Keys are opaque, workflow-defined strings (e.g. `pr:owner/repo:123`). Mark after
 success so failures retry on next invocation. Inspect ledgers with `shai-ledgers`; delete them
 with `shai-prune --ledgers`.
+
+**Failure store** — `$SHAI_HOME/failures/<workflow_name>.jsonl` records structured failure
+data, one JSONL line per failure, appended by `fail_record "category" "summary"
+['context_json']` from `lib/failure.sh` (the sole write path). Each record:
+
+`{"ts":"...","workflow":"...","run_id":"..."|null,"session_id":"..."|null,"category":"...","summary":"...","context":{...}}`
+
+The workflow name resolves first non-empty from `$WF_NAME`, `$SHAI_FAILURE_WORKFLOW`, `_repl`
+(interactive REPL sessions), or `_manual`; `run_id`/`session_id` come from the ambient trace
+context (null when unset). `context_json` is optional (defaults to `{}`); a value that is not a
+JSON object is stored as `{"raw":"..."}` so a record is never dropped. **Invariant:
+`fail_record` never fails the caller** — every failure path warns on stderr and returns 0, so a
+`set -e` caller can invoke it as a bare command. The five categories span the instrumented
+write sites: `shai-loop` records `api_error` when `shai-eval` emits an error event and
+`dispatch_error` when the re-eval loop stops on a dispatch failure; `shai-dispatch` records
+`tool_error` when a tool's `run.sh` exits nonzero and `policy_denial` when the permission gate
+blocks a tool; `wf_fail` records `workflow_error` before exiting. Inspect records with
+`shai-failures`; delete them with `shai-prune --failures`; `shai-stats` reads the store as a
+peer data source.
 
 **Workflows** live in `workflows/`. Each is a standalone bash script (at `workflows/<name>/run.sh`)
 following the same conventions as runtime scripts (shebang, strict mode, doc header). Workflows
