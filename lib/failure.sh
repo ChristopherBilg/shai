@@ -15,7 +15,9 @@ set -uo pipefail
 #
 # run_id/session_id come from the ambient trace context ($SHAI_RUN_ID, $SHAI_SESSION_ID)
 # and are null when unset. context_json is optional (defaults to {}); a value that is not
-# valid JSON is stored as {"raw":"<escaped original>"} so a record is never dropped.
+# valid JSON — or a valid JSON value that is not an object — is stored as
+# {"raw":"<escaped original>"}, so the documented context: object schema always holds and
+# a record is never dropped.
 #
 # Invariant: fail_record never fails the caller — every failure path warns on stderr and
 # returns 0, so a caller under `set -e` can call it as a bare command. The failures/
@@ -45,9 +47,10 @@ fail_record() {
     return 0
   }
 
-  # A context_json that jq cannot parse as JSON falls back to {"raw": ...} (escaped by jq
-  # itself), so the record is always written. Both invocations live in condition context so
-  # a failing jq cannot trip a `set -e` caller.
+  # A context_json that jq cannot parse as JSON — or that parses to a non-object — falls
+  # back to {"raw": ...} (escaped by jq itself), so the record is always written and the
+  # documented context: object schema always holds. Both invocations live in condition
+  # context so a failing jq cannot trip a `set -e` caller.
   if line=$(jq -nc \
     --arg ts "$ts" \
     --arg workflow "$workflow" \
@@ -63,7 +66,7 @@ fail_record() {
        session_id: ($session_id | nullable),
        category: $category,
        summary: $summary,
-       context: $context}' 2>/dev/null); then
+       context: (if ($context | type) == "object" then $context else {raw: ($context | tojson)} end)}' 2>/dev/null); then
     :
   elif line=$(jq -nc \
     --arg ts "$ts" \

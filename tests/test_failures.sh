@@ -1,7 +1,7 @@
 #!/bin/bash
 # test_failures.sh — unit tests for lib/failure.sh
 # Covers: fail_record — JSONL schema, per-workflow files, workflow-name resolution,
-#         failures/ dir creation, invalid-context fallback, never-fail invariant
+#         failures/ dir creation, invalid/non-object-context fallback, never-fail invariant
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -10,8 +10,9 @@ echo "lib/failure.sh"
 # Each block runs in a subshell that exports its own SHAI_HOME and pins the
 # workflow-resolution env vars, so cases never leak into each other.
 # All absence/null/zero assertions below were mutation-checked: breaking the code they
-# target (dropping a field, writing "" instead of null, returning 1, dropping the raw
-# fallback, reordering the resolution chain) turns each one red.
+# target (dropping a field, writing "" instead of null, returning 1 on append/mkdir/jq
+# failure, dropping the raw fallback or the non-object wrap, reordering the resolution
+# chain) turns each one red.
 
 # --- basic record: all fields, valid JSONL, per-workflow file ---
 desc "basic record: all fields in the per-workflow file"
@@ -206,6 +207,30 @@ assert_eq "$(printf '%s' "$LINE" | jq -r '.context.raw')" \
   "invalid context: raw holds the original text"
 assert_eq "$(printf '%s' "$LINE" | jq -r '.category')" "dispatch_error" \
   "invalid context: record still written with its category"
+
+# --- non-object context_json: valid JSON that is not an object -> {"raw": ...} ---
+# Mutation-checked: replacing the type guard with a bare `context: $context` turns the
+# first two assertions below red.
+desc "non-object context_json: raw fallback, record still written"
+TMP_NOBJ="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMP_NOBJ")
+# shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this case
+(
+  export SHAI_HOME="$TMP_NOBJ"
+  unset WF_NAME SHAI_FAILURE_WORKFLOW SHAI_SESSION_ID
+  source "$DIR/lib/failure.sh"
+  fail_record "tool_error" "non-object context" '42'
+  exit "$FAILED"
+) || FAILED=1
+LINE="$(cat "$TMP_NOBJ/failures/_manual.jsonl")"
+assert_eq "$(printf '%s' "$LINE" | jq -r '.context | type')" "object" \
+  "non-object context: context stays an object"
+assert_eq "$(printf '%s' "$LINE" | jq -r '.context.raw')" "42" \
+  "non-object context: value wrapped as raw"
+assert_eq "$(printf '%s' "$LINE" | jq '.context | keys | length')" "1" \
+  "non-object context: fallback has exactly the raw key"
+assert_eq "$(printf '%s' "$LINE" | jq -r '.category')" "tool_error" \
+  "non-object context: record still written with its category"
 
 # --- append failure: warns on stderr, returns 0 (never-fail invariant) ---
 desc "append failure: warns on stderr, returns 0"
