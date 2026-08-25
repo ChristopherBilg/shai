@@ -338,6 +338,15 @@ PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"ci","args":{"cwd":"/tmp/
 RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "ci" '{"cwd":"/elsewhere"}')
 assert_contains "$RES" 'cwd=/tmp/*,check=tests' "reason: arg-scope miss → all key=pattern pairs reported"
 
+# array-typed input args (e.g. the jira tool's `args` array): the pattern matches the input's
+# JSON rendering, so scoping to ["issue","view",*] allows the read-only view verb only
+PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"jira","args":{"args":"[\"issue\",\"view\",*]"},"action":"allow"}]}')
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "jira" '{"args":["issue","view","PROJ-123"]}')
+assert_contains "$RES" $'allow\trule:' "array-typed args: issue view matches the scoped rule"
+RES=$(SHAI_HOME="$PDIR" run_check_policy_raw "jira" '{"args":["issue","edit","PROJ-123"]}')
+assert_contains "$RES" $'prompt\targscope:' "array-typed args: write verb → arg-scope miss"
+assert_contains "$RES" 'args=["issue","view",*]' "array-typed args: arg-scope miss reports the expected pattern"
+
 # a deny rule with args that miss is NOT an arg-scope miss: retrying to match its pattern
 # would land on the deny rule, so report unmatched instead of suggesting a fixable retry
 PDIR=$(setup_policy '{"version":"1.0","rules":[{"tool":"ci","args":{"cwd":"/tmp/*"},"action":"deny"}]}')

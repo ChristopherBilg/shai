@@ -2,11 +2,12 @@
 # shai-eval — the only network hop: call the Deepseek API
 # Usage: cat request.json | shai-eval [--tools-file <path>|--model M|--max-tokens N|--dry-run|--health-check]
 # Reads: a {messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
-#        environment to locate the per-span request/response dumps
+#        environment to locate the per-span request/response dumps;
+#        SHAI_EVAL_RETRIES (default 2, max 10) for retry count on transient failures
 # Writes: one assistant/error event (assistant events carry an `api` key: message_id, model,
 #         usage, latency_ms); on a real call, also dumps the request, and on success the response
 #         metadata, to $SHAI_HOME/runs/<run_id>/<span_id>-{request,response}.json (best-effort);
-#         --dry-run prints payload
+#         --dry-run prints payload; retry progress to stderr
 # Exit: 0 always; --health-check exits 1 if DEEPSEEK_API_KEY missing; 2 on bad CLI args
 set -euo pipefail
 
@@ -17,6 +18,21 @@ DRY_RUN=false
 HEALTH_CHECK=false
 API_URL="https://api.deepseek.com/v1/chat/completions"
 TOOLS_FILE=""
+
+EVAL_RETRIES="${SHAI_EVAL_RETRIES:-2}"
+case "$EVAL_RETRIES" in
+  '' | *[!0-9]*)
+    printf 'error: SHAI_EVAL_RETRIES must be a non-negative integer (got "%s")\n' "$EVAL_RETRIES" >&2
+    exit 2
+    ;;
+esac
+# Cap retries so the 1 << ATTEMPT backoff stays inside bash's signed 64-bit arithmetic (at
+# ATTEMPT >= 63 the shift wraps negative and `sleep` fails under set -e — a crash in code whose
+# contract is never to crash). 10 retries => max backoff 2^10 s (~17 min).
+[ "$EVAL_RETRIES" -gt 10 ] && {
+  printf 'error: SHAI_EVAL_RETRIES must be at most 10 (got "%s")\n' "$EVAL_RETRIES" >&2
+  exit 2
+}
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -109,17 +125,58 @@ if [ -n "${SHAI_RUN_ID:-}" ]; then
   { mkdir -p "$RUN_DIR" && printf '%s\n' "$PAYLOAD" >"$REQ_FILE"; } 2>/dev/null || true
 fi
 
-# date failure (nonzero exit) falls back to the literal string "0"; a `date` with no %N support
-# (non-GNU) exits 0 but emits non-numeric text instead -- guarded below, before it ever reaches
-# arithmetic, since `$(( ))` cannot safely catch its own malformed-operand error via `|| fallback`.
-_START_MS=$(date +%s%3N 2>/dev/null || printf '0')
-RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' -X POST "$API_URL" \
-  -H "content-type: application/json" \
-  -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
-  -d @-) || {
-  jq -nc '{type:"error", source:"system", payload:{text:"request failed (curl)"}}'
+ATTEMPT=0
+CURL_FAILED=false
+while true; do
+  CURL_FAILED=false
+
+  # date failure (nonzero exit) falls back to the literal string "0"; a `date` with no %N support
+  # (non-GNU) exits 0 but emits non-numeric text instead -- guarded below, before it ever reaches
+  # arithmetic, since `$(( ))` cannot safely catch its own malformed-operand error via `|| fallback`.
+  # Captured per attempt so latency_ms reflects the successful call, not the backoff sleeps.
+  _START_MS=$(date +%s%3N 2>/dev/null || printf '0')
+  RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' -X POST "$API_URL" \
+    -H "content-type: application/json" \
+    -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+    -d @-) || CURL_FAILED=true
+
+  if [ "$CURL_FAILED" = true ]; then
+    if [ "$ATTEMPT" -lt "$EVAL_RETRIES" ]; then
+      BACKOFF=$((1 << ATTEMPT))
+      printf 'shai-eval: retrying (attempt %d/%d) after curl failure, backoff %ds\n' \
+        "$((ATTEMPT + 2))" "$((EVAL_RETRIES + 1))" "$BACKOFF" >&2
+      sleep "$BACKOFF"
+      ATTEMPT=$((ATTEMPT + 1))
+      continue
+    fi
+    jq -nc '{type:"error", source:"system", payload:{text:"request failed (curl)"}}'
+    exit 0
+  fi
+
+  HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -n1)
+  BODY=$(printf '%s' "$RESPONSE" | sed '$d')
+
+  if [ "$HTTP_CODE" = "200" ]; then
+    break
+  fi
+
+  # 429 and 5xx are transient — retry if attempts remain
+  if { [ "$HTTP_CODE" = "429" ] || [ "$HTTP_CODE" -ge 500 ] 2>/dev/null; } && [ "$ATTEMPT" -lt "$EVAL_RETRIES" ]; then
+    BACKOFF=$((1 << ATTEMPT))
+    printf 'shai-eval: retrying (attempt %d/%d) after HTTP %s, backoff %ds\n' \
+      "$((ATTEMPT + 2))" "$((EVAL_RETRIES + 1))" "$HTTP_CODE" "$BACKOFF" >&2
+    sleep "$BACKOFF"
+    ATTEMPT=$((ATTEMPT + 1))
+    continue
+  fi
+
+  # non-retryable error or retries exhausted
+  MSG=$(printf '%s' "$BODY" | jq -r '.error.message // empty' 2>/dev/null || true)
+  [ -z "$MSG" ] && MSG="HTTP $HTTP_CODE"
+  jq -nc --arg text "$MSG" '{type:"error", source:"system", payload:{text:$text}}'
   exit 0
-}
+done
+
 _END_MS=$(date +%s%3N 2>/dev/null || printf '0')
 LATENCY_MS=0
 case "$_START_MS$_END_MS" in
@@ -129,16 +186,6 @@ case "$_START_MS$_END_MS" in
     [ "$LATENCY_MS" -lt 0 ] && LATENCY_MS=0 # never report negative latency (e.g. clock skew)
     ;;
 esac
-
-HTTP_CODE=$(printf '%s' "$RESPONSE" | tail -n1)
-BODY=$(printf '%s' "$RESPONSE" | sed '$d')
-
-if [ "$HTTP_CODE" != "200" ]; then
-  MSG=$(printf '%s' "$BODY" | jq -r '.error.message // empty' 2>/dev/null || true)
-  [ -z "$MSG" ] && MSG="HTTP $HTTP_CODE"
-  jq -nc --arg text "$MSG" '{type:"error", source:"system", payload:{text:$text}}'
-  exit 0
-fi
 
 if OUT=$(printf '%s' "$BODY" | jq -c --argjson latency "$LATENCY_MS" '
   if (.error // null) != null then

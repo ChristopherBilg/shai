@@ -77,8 +77,8 @@ re-review. A human re-applies a label if another round is wanted.
    about scope or requirements alignment (e.g. "the PR drops requirement X from the issue")
    can only be judged against the issue text, not against the PR's paraphrase of it — a
    comment that correctly cites the issue is in scope even when the PR body describes the
-   issue differently. If a Jira key (`PROJ-123`) appears, also call `jira_issue_view` for the
-   same purpose.
+   issue differently. If a Jira key (`PROJ-123`) appears, also call `jira` with
+   `["issue", "view", "PROJ-123"]` to fetch context for the same purpose.
 
 ## Classification
 

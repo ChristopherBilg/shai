@@ -39,7 +39,6 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 ## Tools
 - `gh` — run any GitHub CLI (gh) command via a pre-tokenized argument array (write, requires approval)
 - `jira` — run any Jira CLI (jira) command via a pre-tokenized argument array (write, requires approval)
-- `jira_issue_view` — view a Jira issue (read-only)
 - `list_directory` — list the files and folders in a local directory (read-only)
 - `print_file` — print the contents of a local file, with optional `line_numbers` prefixes and an inclusive `start_line`/`end_line` range so `file:line` anchors need no hand counting and files larger than the output cap can be paged (read-only)
 - `search_files` — search for a text pattern across files in a directory tree; returns `path:line_number: text` rows plus a `[truncated: showing first N matches]` marker when the cap is hit; supports `glob`, `ignore_case`, `literal`, and `max_results`; the pattern is grep extended regex, so `|` alternates and the other metacharacters `+ ? ( ) { } [ ] . * ^ $` must be backslash-escaped for a literal match (e.g. `C\+\+`) — or set `literal: true` for exact-string matching with no escaping; skips binary files and default-excluded paths (`.git`, `.ssh`, `.env`, `node_modules`, …); a zero-match pattern containing regex metacharacters gets a `[note: 0 matches …]` line so an empty result is never silently misread (read-only)

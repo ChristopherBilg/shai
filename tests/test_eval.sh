@@ -56,12 +56,12 @@ assert_eq "$?" "0" "eval: health-check ok with key"
 
 # --- error-path coverage: reuse the stub curl with different bodies/codes ---
 printf '%s' '{"error":{"message":"overloaded"}}' | write_curl_stub 529
-EVERR=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+EVERR=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval")
 assert_contains "$EVERR" '"type":"error"' "eval: non-200 JSON body → error event"
 assert_contains "$EVERR" 'overloaded' "eval: error message extracted"
 
 printf '%s' '<html>502 Bad Gateway</html>' | write_curl_stub 502
-EVHTML=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+EVHTML=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval")
 assert_contains "$EVHTML" '"type":"error"' "eval: non-200 non-JSON body → error event (no crash)"
 assert_contains "$EVHTML" 'HTTP 502' "eval: non-JSON error falls back to HTTP code"
 
@@ -112,7 +112,7 @@ assert_eq "$RC" "0" "eval: empty stdin → exit 0"
 make_stub_bin
 printf '#!/bin/bash\ncat > /dev/null\nexit 7\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
-EVCURLFAIL=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+EVCURLFAIL=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval")
 assert_contains "$EVCURLFAIL" '"type":"error"' "eval: curl hard-failure → error event"
 assert_contains "$EVCURLFAIL" 'request failed (curl)' "eval: curl-failure message"
 
@@ -205,7 +205,7 @@ make_stub_bin
 write_curl_stub 500 <<'STUB'
 {"error":{"message":"overloaded"}}
 STUB
-OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval")
 assert_eq "$(printf '%s' "$OUT" | jq '.api // "absent"')" '"absent"' "api key: absent on HTTP error event"
 
 make_stub_bin
@@ -241,7 +241,7 @@ write_curl_stub 500 <<'STUB'
 {"error":{"message":"fail"}}
 STUB
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
-  SHAI_HOME="$EVR2" SHAI_RUN_ID=run_err_resp SHAI_SPAN_ID=span_1 "$DIR/shai-eval" >/dev/null
+  SHAI_EVAL_RETRIES=0 SHAI_HOME="$EVR2" SHAI_RUN_ID=run_err_resp SHAI_SPAN_ID=span_1 "$DIR/shai-eval" >/dev/null
 assert_eq "$([ -f "$EVR2/runs/run_err_resp/span_1-response.json" ] && echo "exists" || echo "absent")" "absent" \
   "response dump: not written for an HTTP error event"
 
@@ -284,5 +284,115 @@ echo '{"messages":[{"role":"user","content":"hi"}]}' |
   env -u SHAI_SPAN_ID SHAI_HOME="$EVR4" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
 assert_eq "$([ -f "$EVR4/runs/run_nospan/span_0-response.json" ] && echo "exists")" "exists" \
   "response dump: unset span falls back to span_0"
+
+# --- retry-with-backoff -------------------------------------------------------
+desc "retry-with-backoff"
+
+# helper: stateful curl stub that fails N times then succeeds
+# Usage: write_retry_curl_stub <fail_count> <fail_code> <success_body>
+# The stub tracks call count in $STUB/.retry_count.
+write_retry_curl_stub() {
+  local fail_count="$1" fail_code="$2" success_body="$3"
+  echo 0 >"$STUB/.retry_count"
+  printf '%s' "$success_body" >"$STUB/.success_body"
+  cat >"$STUB/curl" <<STUBEOF
+#!/bin/bash
+cat > /dev/null
+n=\$(cat "$STUB/.retry_count")
+echo \$((n + 1)) > "$STUB/.retry_count"
+if [ "\$n" -lt "$fail_count" ]; then
+  printf '{"error":{"message":"temporarily unavailable"}}\n'
+  echo "$fail_code"
+else
+  cat "$STUB/.success_body"
+  printf '\n'
+  echo "200"
+fi
+STUBEOF
+  chmod +x "$STUB/curl"
+}
+
+# retry succeeds after transient 503
+make_stub_bin
+write_retry_curl_stub 2 503 '{"id":"msg_retry","choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: recovers after transient 503"
+assert_contains "$OUT" "recovered" "retry: final response content correct"
+CALL_COUNT=$(cat "$STUB/.retry_count")
+assert_eq "$CALL_COUNT" "3" "retry: made 3 total attempts (1 initial + 2 retries)"
+
+# retry succeeds after transient 429
+make_stub_bin
+write_retry_curl_stub 1 429 '{"id":"msg_429","choices":[{"message":{"role":"assistant","content":"ok429"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: recovers after 429"
+
+# retry exhausted → error event (not crash)
+make_stub_bin
+write_retry_curl_stub 5 500 '{"id":"never","choices":[{"message":{"role":"assistant","content":"never"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+RC=$?
+assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: exhausted retries → error event"
+assert_eq "$RC" "0" "retry: exhausted retries still exits 0"
+
+# SHAI_EVAL_RETRIES=0 disables retry — first failure is final
+make_stub_bin
+write_retry_curl_stub 1 503 '{"id":"msg_no","choices":[{"message":{"role":"assistant","content":"nope"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval" 2>/dev/null)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: SHAI_EVAL_RETRIES=0 disables retry"
+CALL_COUNT=$(cat "$STUB/.retry_count")
+assert_eq "$CALL_COUNT" "1" "retry: SHAI_EVAL_RETRIES=0 makes exactly 1 attempt"
+
+# 4xx (not 429) is never retried
+make_stub_bin
+write_retry_curl_stub 1 401 '{"id":"msg_auth","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: 401 is not retried"
+CALL_COUNT=$(cat "$STUB/.retry_count")
+assert_eq "$CALL_COUNT" "1" "retry: 401 makes exactly 1 attempt"
+
+# curl hard-failure is retried
+make_stub_bin
+echo 0 >"$STUB/.retry_count"
+cat >"$STUB/curl" <<'STUBEOF'
+#!/bin/bash
+cat > /dev/null
+COUNTER_FILE="$(dirname "$0")/.retry_count"
+n=$(cat "$COUNTER_FILE")
+echo $((n + 1)) > "$COUNTER_FILE"
+if [ "$n" -lt 1 ]; then
+  exit 7
+fi
+cat <<'JSON'
+{"id":"msg_curl_retry","choices":[{"message":{"role":"assistant","content":"curl recovered"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+JSON
+echo "200"
+STUBEOF
+chmod +x "$STUB/curl"
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: curl hard-failure recovered on retry"
+
+# invalid SHAI_EVAL_RETRIES → exit 2
+EVERR=$(SHAI_EVAL_RETRIES=abc "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
+RC=$?
+assert_eq "$RC" "2" "retry: invalid SHAI_EVAL_RETRIES exits 2"
+assert_contains "$EVERR" "SHAI_EVAL_RETRIES" "retry: invalid value → clear error message"
+
+# oversized SHAI_EVAL_RETRIES → exit 2 (backoff arithmetic must not overflow)
+EVERR=$(SHAI_EVAL_RETRIES=63 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
+RC=$?
+assert_eq "$RC" "2" "retry: oversized SHAI_EVAL_RETRIES exits 2"
+assert_contains "$EVERR" "SHAI_EVAL_RETRIES" "retry: oversized value → clear error message"
+
+# SHAI_EVAL_RETRIES at the cap (10) is accepted
+EVERR=$(SHAI_EVAL_RETRIES=10 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
+RC=$?
+assert_eq "$RC" "0" "retry: SHAI_EVAL_RETRIES=10 at the cap is accepted"
+
+# default retries (no env var) — a 503 should still be retried
+make_stub_bin
+write_retry_curl_stub 1 503 '{"id":"msg_default","choices":[{"message":{"role":"assistant","content":"default ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | env -u SHAI_EVAL_RETRIES "$DIR/shai-eval" 2>/dev/null)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: default retries recovers from transient 503"
 
 finish
