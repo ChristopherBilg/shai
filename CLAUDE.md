@@ -59,7 +59,7 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
 `SHAI_MODEL` (default `deepseek-v4-flash`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_EVAL_RETRIES` (max retries on transient API failures —
-curl errors, HTTP 429, 5xx — with exponential backoff 1s/2s/4s/…; default `2`, set to `0` to
+curl errors, HTTP 429, 5xx — with exponential backoff 1s/2s/4s/…; default `2`, max `10`, set to `0` to
 disable), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
 step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; overrides
@@ -167,7 +167,7 @@ The scripts:
   Every API/curl/parse failure becomes an `error` event with exit 0 (the sole exception:
   `--health-check` exits 1 when `DEEPSEEK_API_KEY` is missing). Transient failures (curl errors,
   HTTP 429, 5xx) are retried with exponential backoff (1s, 2s, 4s, …) up to
-  `SHAI_EVAL_RETRIES` times (default 2; set to 0 to disable); non-transient errors (4xx other
+  `SHAI_EVAL_RETRIES` times (default 2; max 10; set to 0 to disable); non-transient errors (4xx other
   than 429) and retries-exhausted both emit a single error event immediately. Retry attempts
   log to stderr so the user sees progress. `--dry-run` prints the payload
   without calling out; `--tools-file <path>` attaches the aggregated tool array at that path

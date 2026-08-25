@@ -378,6 +378,17 @@ RC=$?
 assert_eq "$RC" "2" "retry: invalid SHAI_EVAL_RETRIES exits 2"
 assert_contains "$EVERR" "SHAI_EVAL_RETRIES" "retry: invalid value → clear error message"
 
+# oversized SHAI_EVAL_RETRIES → exit 2 (backoff arithmetic must not overflow)
+EVERR=$(SHAI_EVAL_RETRIES=63 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
+RC=$?
+assert_eq "$RC" "2" "retry: oversized SHAI_EVAL_RETRIES exits 2"
+assert_contains "$EVERR" "SHAI_EVAL_RETRIES" "retry: oversized value → clear error message"
+
+# SHAI_EVAL_RETRIES at the cap (10) is accepted
+EVERR=$(SHAI_EVAL_RETRIES=10 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
+RC=$?
+assert_eq "$RC" "0" "retry: SHAI_EVAL_RETRIES=10 at the cap is accepted"
+
 # default retries (no env var) — a 503 should still be retried
 make_stub_bin
 write_retry_curl_stub 1 503 '{"id":"msg_default","choices":[{"message":{"role":"assistant","content":"default ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
