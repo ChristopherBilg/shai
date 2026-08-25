@@ -125,15 +125,16 @@ if [ -n "${SHAI_RUN_ID:-}" ]; then
   { mkdir -p "$RUN_DIR" && printf '%s\n' "$PAYLOAD" >"$REQ_FILE"; } 2>/dev/null || true
 fi
 
-# date failure (nonzero exit) falls back to the literal string "0"; a `date` with no %N support
-# (non-GNU) exits 0 but emits non-numeric text instead -- guarded below, before it ever reaches
-# arithmetic, since `$(( ))` cannot safely catch its own malformed-operand error via `|| fallback`.
-_START_MS=$(date +%s%3N 2>/dev/null || printf '0')
-
 ATTEMPT=0
 CURL_FAILED=false
 while true; do
   CURL_FAILED=false
+
+  # date failure (nonzero exit) falls back to the literal string "0"; a `date` with no %N support
+  # (non-GNU) exits 0 but emits non-numeric text instead -- guarded below, before it ever reaches
+  # arithmetic, since `$(( ))` cannot safely catch its own malformed-operand error via `|| fallback`.
+  # Captured per attempt so latency_ms reflects the successful call, not the backoff sleeps.
+  _START_MS=$(date +%s%3N 2>/dev/null || printf '0')
   RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time 120 -w '\n%{http_code}' -X POST "$API_URL" \
     -H "content-type: application/json" \
     -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
