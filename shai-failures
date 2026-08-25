@@ -179,8 +179,7 @@ cmd_list() {
           | {id: "\($wf):\(.line)", workflow: $wf, line: .line,
              ts: (.rec.ts // null), category: (.rec.category // null),
              summary: (.rec.summary // null), run_id: (.rec.run_id // null),
-             session_id: (.rec.session_id // null), context: (.rec.context // {})}'
-        2>/dev/null); then
+             session_id: (.rec.session_id // null), context: (.rec.context // {})}' 2>/dev/null); then
         if [ -n "$entry_json" ]; then
           mapfile -t entries <<<"$entry_json"
         fi
@@ -318,7 +317,10 @@ cmd_show() {
   for arg in "$@"; do
     case "$arg" in
       --json) JSON=true ;;
-      -*) printf 'error: unknown option: %s\n' "$arg" >&2; exit 1 ;;
+      -*)
+        printf 'error: unknown option: %s\n' "$arg" >&2
+        exit 1
+        ;;
       *) positional+=("$arg") ;;
     esac
   done

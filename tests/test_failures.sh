@@ -575,10 +575,12 @@ _CLEANUP_DIRS+=("$TMP_WFBLOCK")
 # trace hint, the run/session null-omission, the zero-row skip, the empty-array path,
 # the physical-line id mapping) turns each one red.
 
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
 FAILURES="$DIR/shai-failures"
 
 # setup_failures: fresh SHAI_HOME with a failures/ dir for the command tests.
 setup_failures() {
+  # shellcheck disable=SC2031  # deliberate: SHAI_HOME is set by lib.sh at file scope, not lost
   export SHAI_HOME
   SHAI_HOME=$(mktemp -d)
   _CLEANUP_DIRS+=("$SHAI_HOME")
@@ -701,13 +703,15 @@ OUT=$("$FAILURES" list --workflow issue_d --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "prefix: unambiguous prefix resolves"
 
 make_failure issue_worker 2026-08-21T09:00:00Z api_error "boom"
-ERR=$("$FAILURES" list --workflow issue_ 2>&1 >/dev/null); RC=$?
+ERR=$("$FAILURES" list --workflow issue_ 2>&1 >/dev/null)
+RC=$?
 assert_eq "$RC" "1" "prefix: ambiguous exits 1"
 assert_contains "$ERR" "ambiguous" "prefix: ambiguous message"
 assert_contains "$ERR" "issue_dispatcher" "prefix: first candidate listed"
 assert_contains "$ERR" "issue_worker" "prefix: second candidate listed"
 
-ERR=$("$FAILURES" list --workflow nope 2>&1 >/dev/null); RC=$?
+ERR=$("$FAILURES" list --workflow nope 2>&1 >/dev/null)
+RC=$?
 assert_eq "$RC" "1" "prefix: no match exits 1"
 assert_contains "$ERR" "no match" "prefix: no-match message"
 
@@ -715,7 +719,8 @@ assert_contains "$ERR" "no match" "prefix: no-match message"
 desc "list: empty failures dir — clean no-failures output, exit 0"
 setup_failures
 rm -rf "$SHAI_HOME/failures"
-OUT=$("$FAILURES" list 2>/dev/null); RC=$?
+OUT=$("$FAILURES" list 2>/dev/null)
+RC=$?
 assert_eq "$RC" "0" "empty: exit 0"
 assert_eq "$OUT" "" "empty: no output"
 OUT=$("$FAILURES" list --json)
@@ -738,7 +743,8 @@ desc "list: malformed lines dropped with stderr warning"
 setup_failures
 make_failure issue_worker 2026-08-20T09:00:00Z api_error "HTTP 503"
 printf '%s' '{"ts":"2026-08-21T09:00:00Z","workflow":"issue_worker","run_id":null,"session_id":null,"category":"api_error","summary":"trunc' >>"$SHAI_HOME/failures/issue_worker.jsonl"
-OUT=$("$FAILURES" list --workflow issue_worker --json 2>/dev/null); RC=$?
+OUT=$("$FAILURES" list --workflow issue_worker --json 2>/dev/null)
+RC=$?
 ERR=$("$FAILURES" list --workflow issue_worker 2>&1 >/dev/null)
 assert_eq "$RC" "0" "malformed: exit 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "malformed: bad line dropped, good kept"
@@ -867,7 +873,8 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.by_workflow[0].workflow')" "issue_work
 desc "summary: empty store — clean zero output"
 setup_failures
 rm -rf "$SHAI_HOME/failures"
-OUT=$("$FAILURES" summary); RC=$?
+OUT=$("$FAILURES" summary)
+RC=$?
 assert_eq "$RC" "0" "summary empty: exit 0"
 assert_eq "$OUT" "Failures: 0 total" "summary empty: zero total line only"
 OUT=$("$FAILURES" summary --json)
