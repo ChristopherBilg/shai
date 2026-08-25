@@ -11,7 +11,7 @@
 #        (overrides the default $DIR/tools) from environment (retry skips non-read-only tools)
 # Writes: one tool_result event per tool_use (32000-byte cap: first 24000 + last 8000 kept with
 #         a "[truncated: ...]" marker); content fenced in external_data tags, closing external_data tags
-#         escaped as &lt;/external_data&gt; (note line when any are escaped; opening tags untouched); write_file, patch_file, delete_file modify the filesystem
+#         escaped as &lt;/external_data&gt; (note line when any are escaped; opening tags untouched); write_file, patch_file, delete_file modify the filesystem; every policy decision logged to stderr (see #294)
 # Exit: 1 if any tool ran (signals shai-repl / shai-loop to re-evaluate), 0 otherwise;
 #       2 on bad constants, 3 on dispatch failure (any failure that is not "a tool ran").
 # The exit code is a contract consumed by shai-loop's re-eval loop (see #257): ONLY 1 means
@@ -152,19 +152,27 @@ check_policy() {
     return 0
   fi
 
+  # Match lookup: first-match-wins over the policy's .rules array, in file order. The first
+  # element is selected INSIDE jq ([...][0] // empty) so the pipeline emits at most one line.
+  # A `jq ... | head -n 1` pipeline under `set -o pipefail` is racy: head closes the pipe
+  # after the first line, jq can die with SIGPIPE (141) while still writing further matches,
+  # pipefail then reports the pipeline as failed, and the `|| match=""` guard below discards
+  # a VALID match — the call falls through to the fallback and identical calls get different
+  # verdicts depending on process timing (see #294). One line out, nothing to race.
   local match_filter='
-    .rules | to_entries[]
-    | select(.value.tool == $name)
-    | select(
-        (.value | has("args") | not) or
-        (.value.args | to_entries | all(
-          .key as $k | .value as $v |
-          ($input[$k] // "" | tostring) | test(
-            "^" + ($v | gsub("(?<c>[.+?^${}()|\\[\\]])"; "\\\(.c)";"x") | gsub("\\*"; ".*")) + "$"
-          )
-        ))
-      )
-    | "\(.value.action)\t\(.key + 1)"
+    [ .rules | to_entries[]
+      | select(.value.tool == $name)
+      | select(
+          (.value | has("args") | not) or
+          (.value.args | to_entries | all(
+            .key as $k | .value as $v |
+            ($input[$k] // "" | tostring) | test(
+              "^" + ($v | gsub("(?<c>[.+?^${}()|\\[\\]])"; "\\\(.c)";"x") | gsub("\\*"; ".*")) + "$"
+            )
+          ))
+        )
+      | "\(.value.action)\t\(.key + 1)"
+    ][0] // empty
   '
 
   # Overlay rules are checked first and intentionally supersede base rules (including deny).
@@ -172,13 +180,13 @@ check_policy() {
 
   if "$has_overlay"; then
     match=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" \
-      "$match_filter" "$overlay_file" 2>/dev/null | head -n 1) || match=""
+      "$match_filter" "$overlay_file" 2>/dev/null) || match=""
     if [ -n "$match" ]; then matched_file="$overlay_file"; fi
   fi
 
   if [ -z "$match" ] && "$has_base"; then
     match=$(jq -r --arg name "$tool_name" --argjson input "$tool_input" \
-      "$match_filter" "$policy_file" 2>/dev/null | head -n 1) || match=""
+      "$match_filter" "$policy_file" 2>/dev/null) || match=""
     if [ -n "$match" ]; then matched_file="$policy_file"; fi
   fi
 
@@ -215,17 +223,20 @@ check_policy() {
   # as an arg-scope miss. An allow rule can only fail to match when the call's args missed its
   # patterns, so finding one means the args are the reason.
   local scope_rule="" scope_file=""
+  # Same determinism constraint as the match lookup above (#294): first element inside jq,
+  # never a `| head -n 1` that can SIGPIPE-discard a valid arg-scope rule.
   local scope_filter='
-    .rules[]?
-    | select(.tool == $name and has("args") and .action == "allow")
-    | .args | to_entries | map("\(.key)=\(.value)") | join(",")
+    [ .rules[]?
+      | select(.tool == $name and has("args") and .action == "allow")
+      | .args | to_entries | map("\(.key)=\(.value)") | join(",")
+    ][0] // empty
   '
   if "$has_overlay"; then
-    scope_rule=$(jq -r --arg name "$tool_name" "$scope_filter" "$overlay_file" 2>/dev/null | head -n 1) || scope_rule=""
+    scope_rule=$(jq -r --arg name "$tool_name" "$scope_filter" "$overlay_file" 2>/dev/null) || scope_rule=""
     if [ -n "$scope_rule" ]; then scope_file="$overlay_file"; fi
   fi
   if [ -z "$scope_rule" ] && "$has_base"; then
-    scope_rule=$(jq -r --arg name "$tool_name" "$scope_filter" "$policy_file" 2>/dev/null | head -n 1) || scope_rule=""
+    scope_rule=$(jq -r --arg name "$tool_name" "$scope_filter" "$policy_file" 2>/dev/null) || scope_rule=""
     if [ -n "$scope_rule" ]; then scope_file="$policy_file"; fi
   fi
   if [ -n "$scope_rule" ]; then
@@ -261,6 +272,13 @@ run_tool() {
   policy_line=$(check_policy "$name" "$input")
   policy_action="${policy_line%%$'\t'*}"
   policy_reason="${policy_line#*$'\t'}"
+  # Every policy decision is logged to stderr (issue #294): "policy: <action> <tool>
+  # (<reason>)" where the reason names the rule (rule:<file>:<idx>), the deciding default
+  # (default:<file>), the read-only fallback (readonly), or that no rule matched
+  # (unmatched:<overlay>:<base> / nopolicy / argscope:<file>:<patterns>). A grant is never
+  # silent: an allow that fell through every rule (e.g. a default:allow base policy) stays
+  # visible to whoever watches the run, and a denial names the exact rule that decided it.
+  printf 'policy: %s %s (%s)\n' "$policy_action" "$name" "$policy_reason" >&2
   case "$policy_action" in
     allow) ;;
     deny)
