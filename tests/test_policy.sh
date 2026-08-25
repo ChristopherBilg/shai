@@ -533,4 +533,13 @@ assert_contains "$result" "policy: allow list_directory (default:$tmpdir/policy.
   "determinism: default-allow decision logged to stderr naming the deciding default"
 assert_contains "$result" '"is_error":false' "determinism: default-allow decision → tool executes"
 
+# an allow granted by a matched rule is logged to stderr naming the rule — the exact
+# "grant is never silent" path: the allow comes from rule:<file>:<idx>, not a default
+tmpdir=$(setup_policy '{"rules":[{"tool":"list_directory","action":"allow"}]}')
+event='{"type":"message","source":"assistant","payload":{"tool_calls":[{"id":"det4","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}  }],"finish_reason":"tool_calls"}}'
+result=$(printf '%s\n' "$event" | SHAI_HOME="$tmpdir" "$DIR/shai-dispatch" 2>&1) || true
+assert_contains "$result" "policy: allow list_directory (rule:$tmpdir/policy.json:1)" \
+  "determinism: rule-allow decision logged to stderr naming the rule"
+assert_contains "$result" '"is_error":false' "determinism: rule-allow decision → tool executes"
+
 finish
