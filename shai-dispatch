@@ -58,6 +58,8 @@ if [ ! -r "$DIR/lib/read-only.sh" ]; then
 fi
 # shellcheck source=lib/read-only.sh
 source "$DIR/lib/read-only.sh"
+# shellcheck source=lib/failure.sh
+source "$DIR/lib/failure.sh"
 
 # truncate_output <raw>: echo tool output bounded to MAX_BYTES payload bytes.
 # Under the cap the bytes pass through unchanged (no marker). Over the cap, keep the first
@@ -279,6 +281,8 @@ run_tool() {
           printf 'Policy denied: %s.' "$name"
           ;;
       esac
+      fail_record "policy_denial" "policy denied tool $name" \
+        "$(jq -nc --arg tool "$name" --arg policy "$policy_reason" '{tool: $tool, policy: $policy}')"
       return 1
       ;;
     prompt)
@@ -329,11 +333,15 @@ run_tool() {
             printf 'Not granted: %s — permission not granted; %s' "$name" "$denial_note"
             ;;
         esac
+        fail_record "policy_denial" "permission not granted for tool $name" \
+          "$(jq -nc --arg tool "$name" --arg policy "$policy_reason" '{tool: $tool, policy: $policy}')"
         return 1
       fi
       ;;
     *)
       printf 'Policy denied: %s (unrecognized action)' "$name"
+      fail_record "policy_denial" "policy denied tool $name (unrecognized action)" \
+        "$(jq -nc --arg tool "$name" --arg policy "$policy_reason" '{tool: $tool, policy: $policy}')"
       return 1
       ;;
   esac
@@ -342,7 +350,18 @@ run_tool() {
     printf 'Unknown tool: %s' "$name"
     return 1
   fi
-  "$run_sh" "$input"
+  local run_rc=0 input_trunc tool_ctx
+  "$run_sh" "$input" || run_rc=$?
+  if [ "$run_rc" -ne 0 ]; then
+    # A run.sh that exited non-zero is recorded for forensics (the model may still recover
+    # from the is_error tool_result, so this is informational, not terminal). The tool input
+    # is truncated to its first 500 bytes so a huge arguments blob never bloats the record.
+    input_trunc=$(printf '%s' "$input" | head -c 500)
+    tool_ctx=$(jq -nc --arg tool "$name" --arg input "$input_trunc" --argjson rc "$run_rc" \
+      '{tool: $tool, input: $input, exit_code: $rc}') || tool_ctx='{}'
+    fail_record "tool_error" "tool $name failed (exit $run_rc)" "$tool_ctx"
+  fi
+  return "$run_rc"
 }
 
 tool_calls=0

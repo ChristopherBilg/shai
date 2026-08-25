@@ -76,6 +76,12 @@ while IFS=$'\t' read -r REPO NUMBER; do
     DISPATCHED=$((DISPATCHED + 1))
     wf_output "dispatched $REPO#$NUMBER"
   else
+    # Worker failed; the label is already gone, so wf_mark is intentionally skipped. A human
+    # must re-apply the label to retry.
+    # shellcheck source=lib/failure.sh
+    source "$DIR/lib/failure.sh"
+    fail_record "workflow_error" "worker failed for $REPO#$NUMBER" \
+      '{"script":"pr_reviewer","detail":"re-label to retry"}'
     wf_output "WARNING: pr_reviewer failed for $REPO#$NUMBER (re-label to retry)"
     FAILED=$((FAILED + 1))
   fi
