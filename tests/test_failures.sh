@@ -267,4 +267,24 @@ _CLEANUP_DIRS+=("$TMP_MK")
   exit "$FAILED"
 ) || FAILED=1
 
+# --- jq failure: both encode invocations fail (broken jq on PATH), warns, returns 0 ---
+# Mutation-checked: changing the else branch to `return 1` turns the RC assertion red.
+desc "jq failure: warns on stderr, returns 0"
+TMP_JQ="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMP_JQ")
+# shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this case
+(
+  export SHAI_HOME="$TMP_JQ"
+  unset WF_NAME SHAI_FAILURE_WORKFLOW SHAI_SESSION_ID
+  make_stub_bin
+  printf '#!/bin/bash\nexit 1\n' >"$STUB/jq"
+  chmod +x "$STUB/jq"
+  source "$DIR/lib/failure.sh"
+  ERR="$(fail_record "tool_error" "cannot encode" 2>&1)"
+  RC="$?"
+  assert_eq "$RC" "0" "jq failure: fail_record returns 0"
+  assert_contains "$ERR" "fail_record" "jq failure: warning names fail_record on stderr"
+  exit "$FAILED"
+) || FAILED=1
+
 finish
