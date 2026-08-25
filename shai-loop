@@ -158,6 +158,13 @@ emit_dispatch_error() {
   printf '%s\n' "$err_event" | print_event
 }
 
+# check_truncation: detect the zero-output false-completion mode (#271) — finish_reason
+# "length" with no content and no tool_calls means the model exhausted max_tokens on
+# reasoning alone and produced nothing, so the turn must not be marked complete.
+# Deliberately scoped to empty output: a response with visible content is committed as-is
+# (the model produced output, and in tool-driven workflows the deliverable is created via
+# tool calls, so a cut-off final message is not a false completion), and truncation WITH
+# parseable tool_calls proceeds because the calls are actionable. See CLAUDE.md.
 check_truncation() {
   jq -e '
     .type == "message" and .source == "assistant" and

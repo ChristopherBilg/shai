@@ -209,7 +209,11 @@ The scripts:
   delegates its inner loop to `shai-loop`; workflow scripts call it via `wf_llm`.
   **Truncation detection**: after each eval, checks for `finish_reason: "length"` with no
   tool_calls and no content — the model exhausted `max_tokens` on reasoning alone. Emits an
-  error event so the turn is not falsely marked as complete (see #271).
+  error event so the turn is not falsely marked as complete (see #271). Deliberately scoped
+  to zero-output responses: `finish_reason: "length"` with visible content is still committed
+  (the model produced output, and in tool-driven workflows the deliverable is created via
+  tool calls, so a cut-off final message is not a false completion), and truncation with
+  parseable `tool_calls` proceeds normally.
   **Invariant: it must never crash the pipeline** — errors become events, exit 0.
 - **`shai-workflow list|run|describe`** (`shai-workflow:1`) — workflow discovery and
   invocation. `list` scans `workflows/` and prints names with purpose lines. `run <name>
