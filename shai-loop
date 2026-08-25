@@ -21,7 +21,7 @@ source "$DIR/lib/failure.sh"
 # even a future failure that, against the contract, exits 1 degrades to a stopped run with an
 # error event instead of an unbounded re-eval spin. Env-overridable (like
 # SHAI_MAX_CONTEXT_BYTES) but never disable-able: a valid value is a positive integer.
-MAX_DISPATCH_ROUNDS="${SHAI_MAX_DISPATCH_ROUNDS:-100}"
+MAX_DISPATCH_ROUNDS="${SHAI_MAX_DISPATCH_ROUNDS:-300}"
 case "$MAX_DISPATCH_ROUNDS" in
   '' | 0* | *[!0-9]*)
     printf 'error: SHAI_MAX_DISPATCH_ROUNDS must be a positive integer (got "%s")\n' "$MAX_DISPATCH_ROUNDS" >&2

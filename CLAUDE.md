@@ -323,7 +323,7 @@ and appends `tool_result`s → `shai-context | shai-eval` re-runs so the model s
 repeat until a turn ends with no tool call. `shai-repl` drives one turn of this via `shai-loop`;
 workflows drive it once per `wf_llm` call. Only `shai-dispatch` exit 1 ("a tool ran") continues
 the loop: any other non-zero exit is a dispatch failure and stops it with an error event, and
-`MAX_DISPATCH_ROUNDS` (default 100, overridable via `SHAI_MAX_DISPATCH_ROUNDS`) bounds the loop
+`MAX_DISPATCH_ROUNDS` (default 300, overridable via `SHAI_MAX_DISPATCH_ROUNDS`) bounds the loop
 so even a failure that (against the contract) exits 1 degrades to a stopped run, never an
 unbounded spin (see #257).
 
@@ -357,7 +357,7 @@ gate below applies to workflow tool calls exactly as it does to the interactive 
 **The `gh` tool's exit codes** — `tools/gh/run.sh` runs `timeout 120s gh "${args[@]}"` and,
 under `set -euo pipefail`, `gh`'s exit code becomes the tool's exit code, so `shai-dispatch`
 marks any nonzero result `is_error: true`, and `shai-context` renders it to the agent prefixed
-with `[ERROR] `. A nonzero exit is not always a failure — some `gh` commands use the exit code
+with `[ERROR]`. A nonzero exit is not always a failure — some `gh` commands use the exit code
 as information. Known cases: `gh pr checks` exits 8 while any check is pending and 1 when a
 check has failed (decide from the status table, not the error flag), and `gh label create`
 exits nonzero when the label already exists (ignore that error and continue). When a prompt
