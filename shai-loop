@@ -217,6 +217,8 @@ else
   while :; do
     dispatch_round=$((dispatch_round + 1))
     if [ "$dispatch_round" -gt "$MAX_DISPATCH_ROUNDS" ]; then
+      fail_record "dispatch_error" "re-eval loop exceeded $MAX_DISPATCH_ROUNDS dispatch rounds" \
+        '{"script":"shai-loop","detail":"dispatch loop bound exceeded"}'
       emit_dispatch_error "re-eval loop exceeded $MAX_DISPATCH_ROUNDS dispatch rounds — stopping"
       break
     fi
