@@ -199,6 +199,10 @@ FAKE_INSTALL="$(mktemp -d)"
 _CLEANUP_DIRS+=("$FAKE_INSTALL")
 cp "$DIR/shai-loop" "$DIR/shai-dispatch" "$DIR/shai-context" "$DIR/shai-eval" \
   "$DIR/shai-read" "$DIR/shai-stamp" "$DIR/shai-print" "$FAKE_INSTALL/"
+# shai-loop sources lib/failure.sh (failure-store instrumentation), so the fixture must
+# provide it; lib/read-only.sh stays absent so shai-dispatch's pre-flight still exits 3.
+mkdir -p "$FAKE_INSTALL/lib"
+cp "$DIR/lib/failure.sh" "$FAKE_INSTALL/lib/"
 chmod +x "$FAKE_INSTALL"/shai-*
 
 printf '%s\n' "$TOOLCALL_JSON" | write_curl_stub 200

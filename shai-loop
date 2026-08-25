@@ -12,6 +12,8 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 RUNS_DIR="$STATE_DIR/runs"
+# shellcheck source=lib/failure.sh
+source "$DIR/lib/failure.sh"
 
 # Dispatch-loop backstop (see #257): shai-dispatch's exit code is a one-bit signal to this
 # loop — 1 means "a tool ran, re-evaluate", 0 means "done". Any other non-zero exit is a
@@ -174,6 +176,21 @@ check_truncation() {
   ' "$LATEST" >/dev/null 2>&1
 }
 
+# record_eval_error: when the latest event is an error event from shai-eval (API/curl/parse
+# failure — the run ends with an error event, exit 0), record it to the durable failure store
+# (lib/failure.sh). Called only immediately after an eval pipeline, when LATEST can only hold
+# eval output — never after emit_dispatch_error, whose system error events are
+# dispatch/truncation failures, not API errors. Recording never changes control flow: the
+# re-eval loop already stops on an eval error because shai-dispatch finds no tool_calls.
+record_eval_error() {
+  if jq -e '.type == "error" and .source == "system"' "$LATEST" >/dev/null 2>&1; then
+    local error_text
+    error_text=$(jq -r '.payload.text // "unknown eval error"' "$LATEST" 2>/dev/null) || error_text="unknown eval error"
+    fail_record "api_error" "$error_text" \
+      '{"script":"shai-eval","stage":"chat_completions","detail":"shai-eval emitted an error event"}'
+  fi
+}
+
 advance_span
 
 if [ "$RUN_LOG" != "/dev/null" ]; then
@@ -187,6 +204,8 @@ fi
 cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" "${EVAL_OPTS[@]}" | "$DIR/shai-stamp" |
   tee -a "$LOOP_LOG" | tee "$LATEST" | print_event
 
+record_eval_error
+
 if check_truncation; then
   emit_dispatch_error "response truncated (finish_reason: length) — model exhausted max_tokens with no visible output"
 else
@@ -198,6 +217,8 @@ else
   while :; do
     dispatch_round=$((dispatch_round + 1))
     if [ "$dispatch_round" -gt "$MAX_DISPATCH_ROUNDS" ]; then
+      fail_record "dispatch_error" "re-eval loop exceeded $MAX_DISPATCH_ROUNDS dispatch rounds" \
+        '{"script":"shai-loop","detail":"dispatch loop bound exceeded"}'
       emit_dispatch_error "re-eval loop exceeded $MAX_DISPATCH_ROUNDS dispatch rounds — stopping"
       break
     fi
@@ -210,10 +231,13 @@ else
       # inverts $? and a failing dispatch would read as exit 0.)
       dispatch_rc=$?
       if [ "$dispatch_rc" -ne 1 ]; then
+        fail_record "dispatch_error" "shai-dispatch exited $dispatch_rc" \
+          '{"script":"shai-dispatch","detail":"dispatch failed during the re-eval loop"}'
         emit_dispatch_error "shai-dispatch failed (exit $dispatch_rc) — stopping the re-eval loop"
         break
       fi
       re_eval
+      record_eval_error
       if check_truncation; then
         emit_dispatch_error "response truncated (finish_reason: length) — model exhausted max_tokens with no visible output"
         break
