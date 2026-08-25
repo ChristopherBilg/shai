@@ -140,12 +140,17 @@ The scripts:
   `shai-doctor` to stderr and exits 1), loads the system prompt via `shai-prompt system`, seeds
   it into a new session (an inherited `SHAI_SESSION_ID` always wins — an
   nvim/tmux/cron wrapper owns the session), and loads tool plugins via `shai-tools` into a temp
-  file at startup (cleaned up on exit). Reads lines from stdin; each non-empty line mints a fresh
+  file at startup (cleaned up on exit). After the health check, when stdout is a TTY it prints a
+  one-line startup banner `shai <version> — session <id> — type 'exit' to quit` (a
+  `— model <model>` segment is appended only when `SHAI_MODEL` is explicitly set; the
+  `deepseek-v4-flash` default is never synthesized, so it cannot drift from
+  `shai-eval`/`shai-doctor`). Reads lines from stdin; each non-empty line mints a fresh
   `SHAI_RUN_ID` and is handed to `shai-loop --tools-file <tmp>`, which owns the run/span
   bookkeeping, the event log, and the eval/dispatch loop (see below); `shai-repl` itself just
   redirects `shai-loop`'s human-readable stderr to its own stdout (`./shai-repl --quiet` / `-q`
   forwards through to suppress it) and discards `shai-loop`'s stdout (the final event JSON,
-  unused by the interactive REPL).
+  unused by the interactive REPL). `exit`/`quit` and EOF (Ctrl-D) all end the loop with a single
+  `Goodbye.` on stdout.
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
   Used by `shai-repl` at startup to load `prompts/system.txt`.

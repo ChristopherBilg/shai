@@ -2,13 +2,17 @@
 # shai-repl — REPL/orchestrator: seed the system prompt, then delegate the eval+dispatch loop to shai-loop
 # Usage: shai-repl [-q|--quiet]   (interactive; reads prompts until exit/quit/EOF)
 # Reads: interactive prompt lines on stdin (or piped input); SHAI_SESSION_ID / SHAI_SCHEMA_VERSION
-#        from the environment if already set (an inherited session id is never overwritten)
-# Writes: assistant turns via shai-loop, whose human-readable stderr is redirected to shai-repl's
-#         stdout (tool dispatches shown by default; -q/--quiet hides them); shai-loop buffers
-#         events in $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits finalized
-#         events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes directly if
-#         the run dir is unavailable)
-# Exit: 0 on clean exit; 1 if DEEPSEEK_API_KEY is missing (health check); 2 on unknown option; 3 if the system prompt is missing or empty (shai-prompt)
+#        from the environment if already set (an inherited session id is never overwritten);
+#        SHAI_MODEL when explicitly set (shown in the startup banner, never defaulted here)
+# Writes: a one-line startup banner on stdout when stdout is a TTY (version/session/model; not
+#         suppressed by -q/--quiet), "Goodbye." on exit/quit/EOF; assistant turns via shai-loop,
+#         whose human-readable stderr is redirected to shai-repl's stdout (tool dispatches shown
+#         by default; -q/--quiet hides them); shai-loop buffers events in
+#         $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits finalized events to
+#         $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes directly if the run
+#         dir is unavailable)
+# Exit: 0 on clean exit (exit/quit/EOF); 1 if DEEPSEEK_API_KEY is missing (health check); 2 on
+#       unknown option; 3 if the system prompt is missing or empty (shai-prompt)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -69,14 +73,21 @@ if [ ! -s "$SESSION_LOG" ]; then
   printf '%s' "$SYSTEM_PROMPT" | "$DIR/shai-read" --system | "$DIR/shai-stamp" >>"$SESSION_LOG"
 fi
 
+# one-line startup banner, stdout TTY only ([ -t 1 ]): version + session + model when SHAI_MODEL
+# is explicitly set. It is startup info, not per-turn dispatch noise, so -q/--quiet does not
+# suppress it. The deepseek-v4-flash default is never synthesized here — constants-sync.sh keeps
+# that default in sync across shai-eval/CLAUDE.md/shai-doctor, and a third copy would drift.
+if [ -t 1 ]; then
+  printf 'shai %s — session %s%s — type %s\n' \
+    "$("$DIR/shai-version")" "$SHAI_SESSION_ID" \
+    "${SHAI_MODEL:+ — model $SHAI_MODEL}" "'exit' to quit"
+fi
+
 # `|| [ -n "$line" ]` keeps a final prompt that has no trailing newline (piped input)
 while read -r -p "> " line || [ -n "$line" ]; do
   case "$line" in
     "") continue ;;
-    exit | quit)
-      printf "Goodbye.\n"
-      break
-      ;;
+    exit | quit) break ;;
   esac
 
   # a run is one user turn; shai-loop mints/advances spans and manages the run log internally.
@@ -89,3 +100,6 @@ while read -r -p "> " line || [ -n "$line" ]; do
   # shellcheck disable=SC2069  # the swap (stderr to old stdout, then stdout to /dev/null) is deliberate, not a mis-ordered redirect
   printf '%s\n' "$line" | "$DIR/shai-loop" --tools-file "$TOOLS_FILE" ${LOOP_QUIET_FLAG:+"$LOOP_QUIET_FLAG"} 2>&1 >/dev/null
 done
+
+# exit/quit and EOF (Ctrl-D) all land here: one goodbye, printed once, on stdout
+printf "Goodbye.\n"

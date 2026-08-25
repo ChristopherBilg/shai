@@ -47,6 +47,17 @@ printf 'hi there' | SHAI_HOME="$SHAI_TMP3" SHAI_SESSION_ID=test "$DIR/shai-repl"
 H3=$(cat "$SHAI_TMP3/sessions/test.jsonl" 2>/dev/null || echo "")
 assert_contains "$H3" '"text":"hi there"' "shai-repl: processes final line without trailing newline"
 
+# new: EOF after the final turn (no trailing newline, then end of input) prints the same
+# goodbye as exit/quit — the loop must fall through to the post-loop goodbye
+SHAI_TMP_EOF="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_EOF")
+make_stub_bin
+write_gh_stub
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+chmod +x "$STUB/curl"
+EOFGOODBYE=$(printf 'hi there' | SHAI_HOME="$SHAI_TMP_EOF" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1)
+assert_contains "$EOFGOODBYE" "Goodbye." "shai-repl: EOF after final turn prints goodbye"
+
 # new: `exit` ends the loop cleanly with a goodbye and without erroring
 make_stub_bin
 write_gh_stub
@@ -57,6 +68,29 @@ SHAI_TMP="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP")
 QUITOUT=$(printf 'exit\n' | SHAI_HOME="$SHAI_TMP" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1)
 assert_contains "$QUITOUT" "Goodbye." "shai-repl: exit prints goodbye and ends the loop"
+
+# new: piped input must NOT print the startup banner (stdout is a pipe, not a TTY) —
+# explicit regression for the `[ -t 1 ]` gate
+SHAI_TMP_NB="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_NB")
+NBOUT=$(printf 'exit\n' | SHAI_HOME="$SHAI_TMP_NB" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1)
+assert_eq "$(grep -cE '^shai ' <<<"$NBOUT" || true)" "0" "shai-repl: no startup banner when stdout is not a TTY"
+
+# new: the startup banner DOES print when stdout is a TTY — positive test for the
+# `[ -t 1 ]` gate via script(1)'s pty, covering the version/session line and the
+# SHAI_MODEL segment (absent when unset, appended when set)
+SHAI_TMP_B="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_B")
+make_stub_bin
+write_gh_stub
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+chmod +x "$STUB/curl"
+BANNEROUT=$(printf 'exit\n' | script -qec "SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess '$DIR/shai-repl'" /dev/null)
+assert_eq "$(grep -cE '^shai ' <<<"$BANNEROUT" || true)" "1" "shai-repl: banner prints once when stdout is a TTY"
+assert_contains "$BANNEROUT" " — session banner_sess — type 'exit' to quit" "shai-repl: banner shows version, session id, and exit hint"
+assert_eq "$(grep -c '— model' <<<"$BANNEROUT" || true)" "0" "shai-repl: banner omits model segment when SHAI_MODEL is unset"
+BANNEROUT_M=$(printf 'exit\n' | script -qec "SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess SHAI_MODEL=deepseek-chat '$DIR/shai-repl'" /dev/null)
+assert_contains "$BANNEROUT_M" " — model deepseek-chat" "shai-repl: banner appends — model segment when SHAI_MODEL is set"
 
 # new: a blank line is skipped — it must not create an assistant event
 SHAI_TMP2="$(mktemp -d)"
