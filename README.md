@@ -71,6 +71,7 @@ Inspect sessions, runs, and aggregate metrics from the terminal:
 ./shai-sessions --recent 5 --json        # last 5 sessions as JSON
 ./shai-runs --session <id>               # list runs within a session
 ./shai-runs --failed                     # show only failed runs
+./shai-runs --failed --after 2026-08-01  # failed runs since a date
 ./shai-trace <run_id>                    # render a run's full span chain
 ./shai-trace <run_id> --request span_1   # dump the exact API request for a span
 ./shai-stats                             # aggregate metrics across all sessions
