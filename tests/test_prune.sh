@@ -173,6 +173,27 @@ SHAI_HOME="$PHOME" "$DIR/shai-prune" --failures --before 2026-08-15 </dev/null >
 assert_eq "$(find "$PHOME/failures/" -maxdepth 1 -type f -printf '%f\n')" "review.jsonl" \
   "prune: --failures --before deletes already-empty failure file"
 
+# unparseable failure files are left untouched and warned about (fail closed;
+# mutation-checked: swallowing jq's error drops the warning and the test fails)
+new_home_with_failures
+printf 'not valid json\n' >"$PHOME/failures/bad.jsonl"
+WARNOUT=$(SHAI_HOME="$PHOME" "$DIR/shai-prune" --failures --before 2026-08-15 </dev/null 2>&1)
+assert_contains "$WARNOUT" "warning: cannot parse" \
+  "prune: --failures --before warns on unparseable failure file"
+assert_eq "$(cat "$PHOME/failures/bad.jsonl")" "not valid json" \
+  "prune: --failures --before leaves unparseable file untouched"
+assert_eq "$(find "$PHOME/failures/" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)" \
+  "$(printf 'bad.jsonl\nreview.jsonl')" \
+  "prune: --failures --before prunes parseable files, keeps unparseable one"
+
+# rewritten failure files keep their original permission bits (mutation-checked:
+# dropping the mode copy leaves the file at mktemp's 0600 and the test fails)
+new_home_with_failures
+chmod 640 "$PHOME/failures/review.jsonl"
+SHAI_HOME="$PHOME" "$DIR/shai-prune" --failures --before 2026-08-15 </dev/null >/dev/null 2>&1
+assert_eq "$(stat -c '%a' "$PHOME/failures/review.jsonl")" "640" \
+  "prune: --failures --before preserves file mode across rewrite"
+
 # --failures --dry-run lists failure files but does not delete them
 new_home_with_failures
 DRYOUT_F=$(SHAI_HOME="$PHOME" "$DIR/shai-prune" --failures --dry-run </dev/null 2>&1)

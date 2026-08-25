@@ -92,7 +92,19 @@ if "$do_failures" && [ -d "$FAILURES_DIR" ]; then
     # Records without a string ts cannot be dated and are kept. A file jq cannot parse is
     # left untouched (fail closed: never drop unreadable records).
     while IFS= read -r -d '' f; do
-      if [ ! -s "$f" ] || [ "$(jq -r -s --arg b "$before" '[.[] | select((.ts | type) == "string" and .ts < $b)] | length' "$f" 2>/dev/null || printf '0')" -gt 0 ]; then
+      if [ ! -s "$f" ]; then
+        # already empty: nothing to filter, the removal loop deletes it
+        FILTER_TARGETS+=("$f")
+        continue
+      fi
+      if ! old="$(jq -r -s --arg b "$before" '[.[] | select((.ts | type) == "string" and .ts < $b)] | length' "$f" 2>/dev/null)"; then
+        # fail closed: an unparseable file (or a missing jq) must not be dropped
+        # silently — warn here so it is never lost without a trace, and keep it out
+        # of FILTER_TARGETS so it is left untouched (not listed, not counted)
+        printf 'warning: cannot parse %s, leaving it untouched\n' "$f" >&2
+        continue
+      fi
+      if [ "$old" -gt 0 ]; then
         FILTER_TARGETS+=("$f")
       fi
     done < <(find "$FAILURES_DIR" -maxdepth 1 -type f -name '*.jsonl' -print0 2>/dev/null)
@@ -138,7 +150,14 @@ for t in "${FILTER_TARGETS[@]}"; do
     rm -f "$t"
     continue
   fi
-  tmp="$(mktemp)"
+  # mktemp creates the temp file 0600 and mv carries its mode onto the target, so copy
+  # the original mode before the rename; creating the temp in the target's directory
+  # keeps the rename atomic even when $SHAI_HOME is on a different mount than /tmp.
+  tmp="$(mktemp "$(dirname "$t")/.prune.XXXXXX")"
+  mode="$(stat -c '%a' "$t" 2>/dev/null || true)"
+  if [ -n "$mode" ]; then
+    chmod "$mode" "$tmp" 2>/dev/null || true
+  fi
   if jq -c --arg b "$before" 'select((.ts | type) != "string" or .ts >= $b)' "$t" >"$tmp" 2>/dev/null; then
     if [ -s "$tmp" ]; then
       mv "$tmp" "$t"
