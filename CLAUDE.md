@@ -72,8 +72,8 @@ curl errors, HTTP 429, 5xx — with exponential backoff 1s/2s/4s/…; default `2
 disable), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
 step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; overrides
-remote detection), `SHAI_FAILURE_WORKFLOW` (failure store workflow name; overrides `WF_NAME` —
-see **Failure store** below).
+remote detection), `SHAI_FAILURE_WORKFLOW` (failure store workflow name; used when `WF_NAME`
+is unset — see **Failure store** below).
 
 **Ambient trace context** — set by `shai-repl`/`shai-retry`, inherited by every child filter, read only
 by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its request dump):
