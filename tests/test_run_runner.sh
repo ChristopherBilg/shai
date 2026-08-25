@@ -1,8 +1,9 @@
 #!/bin/bash
 # test_run_runner.sh — unit tests for tests/run.sh's single-suite filter and summary block
 # Covers: name/.sh/glob filter forms select exactly the matching suites, the per-suite PASS
-#   summary block names every suite that ran, and a filter matching nothing exits 1 with
-#   "no suites matched" instead of a false-green ALL SUITES PASSED (0)
+#   summary block names every suite that ran, a filter matching nothing exits 1 with
+#   "no suites matched" instead of a false-green ALL SUITES PASSED (0), and -j flag
+#   validation (-j 0, -j with no value) plus -j1 sequential mode.
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -49,5 +50,26 @@ if [[ "$OUT" == *"ALL SUITES PASSED"* ]]; then
 else
   echo -e "  ${GREEN}✓${NC} no match: no false-green ALL SUITES PASSED"
 fi
+
+# -j flag: invalid values must error out cleanly before any suite is spawned.
+desc "-j 0 rejected"
+OUT=$("$RUNNER" -j 0 test_ci 2>&1)
+RC=$?
+assert_eq "$RC" "1" "-j 0: exit 1"
+assert_contains "$OUT" "must be a positive integer" "-j 0: names the condition"
+
+desc "-j with no value rejected"
+OUT=$("$RUNNER" -j 2>&1)
+RC=$?
+assert_eq "$RC" "1" "-j with no value: exit 1"
+assert_contains "$OUT" "requires a number" "-j with no value: names the condition"
+
+# -j1 restores sequential mode: same single-suite result as the default run.
+desc "-j1 sequential mode"
+OUT=$("$RUNNER" -j1 test_ci)
+RC=$?
+assert_eq "$RC" "0" "-j1: exit 0"
+assert_eq "$(printf '%s\n' "$OUT" | grep -c '^PASS test_ci\.sh$')" "1" \
+  "-j1: exactly one PASS test_ci.sh summary line"
 
 finish
