@@ -77,9 +77,11 @@ Inspect sessions, runs, and aggregate metrics from the terminal:
 ./shai-stats --after 2026-08-01 --json   # scoped stats as JSON
 ./shai-ledgers                           # summarize each workflow's idempotency ledger
 ./shai-ledgers --workflow issue_d        # list one workflow's ledger entries
+./shai-failures                          # summarize each workflow's failure records
+./shai-failures list --workflow issue_d  # list one workflow's failure records
 ```
 
-All five scripts accept `--json` for structured output and prefix matching on their ID/name argument (e.g. `shai-trace run_2026` resolves to the full run ID if unambiguous).
+All six scripts accept `--json` for structured output and prefix matching on their ID/name argument (e.g. `shai-trace run_2026` resolves to the full run ID if unambiguous).
 
 `./shai-supervise status [script] [--json]` renders the same style of table for the installed
 `systemd --user` timers (UNIT, STATE, LAST, NEXT), and also accepts `--json`.

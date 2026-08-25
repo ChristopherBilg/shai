@@ -1,0 +1,546 @@
+#!/bin/bash
+# shai-failures — inspect failure records written by lib/failure.sh
+# Usage: shai-failures list [--workflow NAME] [--category CAT] [--after DATE] [--before DATE] [--recent N] [--json]
+#        shai-failures show <workflow>:<line> [--json]
+#        shai-failures summary [--after DATE] [--before DATE] [--json]
+# Reads: $SHAI_HOME/failures/<workflow>.jsonl
+# Writes: stdout (failure listing, detail, or summary)
+# Exit: 0 on success; 1 on invalid arguments or no match; 2 on usage error
+set -euo pipefail
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+FAILURES_DIR="$STATE_DIR/failures"
+
+# usage_error: print the usage block to stderr and exit 2 (usage error, not an
+# invalid argument value — those exit 1).
+usage_error() {
+  printf 'usage: shai-failures <list|show|summary> [options]\n' >&2
+  printf '       shai-failures list [--workflow NAME] [--category CAT] [--after DATE] [--before DATE] [--recent N] [--json]\n' >&2
+  printf '       shai-failures show <workflow>:<line> [--json]\n' >&2
+  printf '       shai-failures summary [--after DATE] [--before DATE] [--json]\n' >&2
+  exit 2
+}
+
+# resolve_prefix <prefix> <dir> <suffix>: the single "<dir>/<prefix>*<suffix>" match,
+# printed to stdout with no trailing newline. No match or an ambiguous match is an
+# error on stderr (listing the candidates) and a non-zero return. Same contract as
+# shai-ledgers/shai-runs/shai-stats.
+resolve_prefix() {
+  local prefix="$1" dir="$2" suffix="${3:-}"
+  local matches=() entry
+  for entry in "$dir"/"${prefix}"*"$suffix"; do
+    [ -e "$entry" ] || continue
+    matches+=("$entry")
+  done
+  if [ ${#matches[@]} -eq 0 ]; then
+    printf 'error: no match for "%s"\n' "$prefix" >&2
+    return 1
+  elif [ ${#matches[@]} -gt 1 ]; then
+    printf 'error: ambiguous prefix "%s" matches:\n' "$prefix" >&2
+    for m in "${matches[@]}"; do printf '  %s\n' "$(basename "$m" "$suffix")" >&2; done
+    return 1
+  fi
+  printf '%s' "${matches[0]}"
+}
+
+# valid_lines <file>: the file's lines that parse as JSON objects, re-emitted compact
+# on stdout. A truncated/corrupted line (a crash mid-append — the same realistic
+# failure shai-ledgers guards against) is dropped here, so every later `jq -s` pass
+# sees only well-formed records. `|| true` keeps a pathological file from tripping
+# `set -e`; whatever parsed is still on stdout.
+valid_lines() {
+  jq -Rc 'fromjson? // empty | select(type == "object")' <"$1" 2>/dev/null || true
+}
+
+# counted_lines <file>: the file's lines that parse as JSON objects, re-emitted as
+# {line: <physical line number>, rec: <record>}. Line numbers are the JSONL file's
+# own 1-based physical lines, so `<workflow>:<line>` ids stay stable and match what
+# `show` resolves via sed. Malformed lines yield no output (and are reported by the
+# caller via the valid/malformed counts). input_line_number tracks the raw input
+# line being read, so numbering survives dropped lines.
+counted_lines() {
+  jq -Rc 'select((fromjson? // null) | type == "object") |
+          {line: input_line_number, rec: fromjson}' <"$1" 2>/dev/null || true
+}
+
+# cmd_list: one row per workflow (failure count, date range, top category), or — with
+# --workflow — one row per failure record, chronological, with `<workflow>:<line>`
+# ids. Filters (--after/--before/--category) compose in both modes; --recent keeps
+# the last N rows after sorting.
+cmd_list() {
+  local WORKFLOW="" CATEGORY="" RECENT="" AFTER="" BEFORE=""
+  local JSON=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --workflow)
+        shift
+        WORKFLOW="${1:-}"
+        if [ -z "$WORKFLOW" ]; then
+          printf 'error: --workflow requires a name or prefix\n' >&2
+          exit 1
+        fi
+        if [[ "$WORKFLOW" =~ [/] ]] || [[ "$WORKFLOW" == *..* ]]; then
+          printf 'error: --workflow must not contain / or .. (got "%s")\n' "$WORKFLOW" >&2
+          exit 1
+        fi
+        ;;
+      --category)
+        shift
+        CATEGORY="${1:-}"
+        if [ -z "$CATEGORY" ]; then
+          printf 'error: --category requires a value\n' >&2
+          exit 1
+        fi
+        ;;
+      --recent)
+        shift
+        RECENT="${1:-}"
+        if [ -z "$RECENT" ]; then
+          printf 'error: --recent requires a value\n' >&2
+          exit 1
+        fi
+        if ! [[ "$RECENT" =~ ^[0-9]+$ ]]; then
+          printf 'error: --recent value must be an integer\n' >&2
+          exit 1
+        fi
+        ;;
+      --after)
+        shift
+        AFTER="${1:-}"
+        if [ -z "$AFTER" ]; then
+          printf 'error: --after requires a date (YYYY-MM-DD)\n' >&2
+          exit 1
+        fi
+        if ! [[ "$AFTER" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+          printf 'error: --after date must be YYYY-MM-DD\n' >&2
+          exit 1
+        fi
+        ;;
+      --before)
+        shift
+        BEFORE="${1:-}"
+        if [ -z "$BEFORE" ]; then
+          printf 'error: --before requires a date (YYYY-MM-DD)\n' >&2
+          exit 1
+        fi
+        if ! [[ "$BEFORE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+          printf 'error: --before date must be YYYY-MM-DD\n' >&2
+          exit 1
+        fi
+        ;;
+      --json) JSON=true ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  # A failure record carries an ISO-8601 `ts`, not a date-bearing filename, so the
+  # date window is applied inside jq against `.ts[:10]`. Open ends become sentinel
+  # bounds ("" sorts before every date, "9999-99-99" after every date) so one
+  # comparison covers all four flag combinations — same scheme as shai-ledgers.
+  AFTER_BOUND="$AFTER"
+  BEFORE_BOUND="${BEFORE:-9999-99-99}"
+
+  # Fields are joined with a real tab; jq's compact output never emits a raw tab
+  # byte (control characters are escaped as \t inside JSON strings), so a literal
+  # tab is a safe, unambiguous separator between the workflow name and its metrics.
+  TAB=$'\t'
+
+  local entries=()
+  if [ -n "$WORKFLOW" ]; then
+    # --- per-workflow mode: one row per failure record ---
+    local failure_file name total_lines valid_count bad parsed entry_json
+    failure_file=$(resolve_prefix "$WORKFLOW" "$FAILURES_DIR" ".jsonl") || exit 1
+    name=$(basename "$failure_file" .jsonl)
+    # Single jq -R pass validates, parses, and numbers in one process. Lines that
+    # fail to parse (crash mid-append) are dropped; the dropped count is reported
+    # as a warning, same as shai-ledgers.
+    total_lines=$(grep -c '.' "$failure_file" 2>/dev/null) || total_lines=0
+    parsed=$(counted_lines "$failure_file")
+    if [ -n "$parsed" ]; then
+      valid_count=$(printf '%s\n' "$parsed" | grep -c '.' 2>/dev/null) || valid_count=0
+    else
+      valid_count=0
+    fi
+    bad=$((total_lines - valid_count))
+    if [ "$bad" -gt 0 ]; then
+      printf 'warning: %s: dropped %d malformed line(s)\n' "$failure_file" "$bad" >&2
+    fi
+    if [ "$valid_count" -gt 0 ]; then
+      if entry_json=$(printf '%s\n' "$parsed" | jq -sc --arg wf "$name" \
+        --arg after "$AFTER_BOUND" --arg before "$BEFORE_BOUND" --arg category "$CATEGORY" '
+          [.[] | select(((.rec.ts // "")[:10]) >= $after and ((.rec.ts // "")[:10]) <= $before)
+                | select(($category == "") or (.rec.category == $category))]
+          | sort_by(.rec.ts // "")
+          | .[]
+          | {id: "\($wf):\(.line)", workflow: $wf, line: .line,
+             ts: (.rec.ts // null), category: (.rec.category // null),
+             summary: (.rec.summary // null), run_id: (.rec.run_id // null),
+             session_id: (.rec.session_id // null), context: (.rec.context // {})}' 2>/dev/null); then
+        if [ -n "$entry_json" ]; then
+          mapfile -t entries <<<"$entry_json"
+        fi
+      else
+        printf 'warning: %s: entry extraction failed\n' "$failure_file" >&2
+      fi
+    fi
+  else
+    # --- summary mode: one row per workflow ---
+    local f filtered total_lines valid_count bad_lines metrics wf_name
+    for f in "$FAILURES_DIR"/*.jsonl; do
+      [ -e "$f" ] || continue
+      wf_name=$(basename "$f" .jsonl)
+      filtered=$(valid_lines "$f")
+      total_lines=$(grep -c '.' "$f" 2>/dev/null) || total_lines=0
+      if [ -n "$filtered" ]; then
+        valid_count=$(printf '%s\n' "$filtered" | grep -c '.' 2>/dev/null) || valid_count=0
+      else
+        valid_count=0
+      fi
+      bad_lines=$((total_lines - valid_count))
+      if [ "$bad_lines" -gt 0 ]; then
+        printf 'warning: %s: dropped %d malformed line(s)\n' "$f" "$bad_lines" >&2
+      fi
+      if ! metrics=$(printf '%s' "$filtered" | jq -sc \
+        --arg after "$AFTER_BOUND" --arg before "$BEFORE_BOUND" --arg category "$CATEGORY" '
+          [.[] | select(((.ts // "")[:10]) >= $after and ((.ts // "")[:10]) <= $before)
+                | select(($category == "") or (.category == $category))] as $recs |
+          {
+            failures: ($recs | length),
+            oldest: (if ($recs | length) == 0 then null else ($recs | map(.ts // "") | sort | first) end),
+            newest: (if ($recs | length) == 0 then null else ($recs | map(.ts // "") | sort | last) end),
+            top: (($recs | group_by(.category)
+                   | map({category: .[0].category, count: length})
+                   | sort_by(-.count, .category) | first) // null)
+          }' 2>/dev/null); then
+        printf 'warning: skipping %s (parse error)\n' "$f" >&2
+        continue
+      fi
+      # A workflow only earns a row when it has failures inside the window — an
+      # empty (or wholly out-of-window) file is not a "0 failures" row.
+      if [ "$(printf '%s' "$metrics" | jq -r '.failures')" = "0" ]; then
+        continue
+      fi
+      entries+=("$wf_name$TAB$metrics")
+    done
+  fi
+
+  # Summary rows sort alphabetically by workflow name; entry rows are already
+  # chronological courtesy of jq's sort_by(.ts). Collation is pinned to C (byte)
+  # order so the row order is deterministic regardless of the caller's locale —
+  # under en_US.UTF-8 a plain `sort` would put `_repl` after letter-prefixed
+  # names. Guard the empty case explicitly rather than feeding zero arguments
+  # through printf/sort/mapfile: printf '%s\n' with no arguments still emits one
+  # blank line, which would otherwise become a single bogus empty entry.
+  local sorted=()
+  if [ "${#entries[@]}" -gt 0 ]; then
+    if [ -n "$WORKFLOW" ]; then
+      sorted=("${entries[@]}")
+    else
+      mapfile -t sorted < <(printf '%s\n' "${entries[@]}" | LC_ALL=C sort)
+    fi
+  fi
+
+  # Apply --recent. Handled as its own branch: `${arr[@]: -0}` is not "the last
+  # zero elements" — a negative offset of -0 is arithmetically 0, so bash would
+  # treat it as "from the start" and return the whole array instead of none.
+  if [ -n "$RECENT" ]; then
+    if [ "$RECENT" -eq 0 ]; then
+      sorted=()
+    elif [ "${#sorted[@]}" -gt "$RECENT" ]; then
+      sorted=("${sorted[@]: -$RECENT}")
+    fi
+  fi
+
+  if [ "${#sorted[@]}" -eq 0 ]; then
+    if [ "$JSON" = true ]; then printf '[]\n'; fi
+    return 0
+  fi
+
+  local entry wf metrics
+  if [ "$JSON" = true ]; then
+    printf '['
+    local first=true
+    for entry in "${sorted[@]}"; do
+      "$first" || printf ','
+      first=false
+      if [ -n "$WORKFLOW" ]; then
+        printf '%s' "$entry"
+      else
+        wf="${entry%%"$TAB"*}"
+        metrics="${entry#*"$TAB"}"
+        printf '%s' "$metrics" | jq -c --arg wf "$wf" \
+          '{workflow: $wf, failures: .failures, oldest: .oldest, newest: .newest, top_category: .top}'
+      fi
+    done
+    printf ']\n'
+    return 0
+  fi
+
+  if [ -n "$WORKFLOW" ]; then
+    printf '%-21s %-16s  %-44s  %s\n' "TIMESTAMP" "CATEGORY" "SUMMARY" "RUN"
+    local ts category summary run
+    for entry in "${sorted[@]}"; do
+      ts=$(printf '%s' "$entry" | jq -r '.ts // ""')
+      category=$(printf '%s' "$entry" | jq -r '.category // ""')
+      summary=$(printf '%s' "$entry" | jq -r '.summary // ""')
+      run=$(printf '%s' "$entry" | jq -r '.run_id // ""')
+      [ -n "$run" ] || run="--"
+      printf '%-21s %-16s  %-44s  %s\n' "$ts" "$category" "$summary" "$run"
+    done
+  else
+    printf '%-18s %8s  %-10s  %-10s  %s\n' "WORKFLOW" "FAILURES" "OLDEST" "NEWEST" "TOP CATEGORY"
+    local count oldest newest top_cat top_count top_display
+    for entry in "${sorted[@]}"; do
+      wf="${entry%%"$TAB"*}"
+      metrics="${entry#*"$TAB"}"
+      count=$(printf '%s' "$metrics" | jq -r '.failures')
+      oldest=$(printf '%s' "$metrics" | jq -r '.oldest // "" | .[0:10]')
+      newest=$(printf '%s' "$metrics" | jq -r '.newest // "" | .[0:10]')
+      top_cat=$(printf '%s' "$metrics" | jq -r '.top.category // ""')
+      top_count=$(printf '%s' "$metrics" | jq -r '.top.count // 0')
+      if [ -n "$top_cat" ]; then top_display="$top_cat ($top_count)"; else top_display="--"; fi
+      [ -n "$oldest" ] || oldest="--"
+      [ -n "$newest" ] || newest="--"
+      printf '%-18s %8s  %-10s  %-10s  %s\n' "$wf" "$count" "$oldest" "$newest" "$top_display"
+    done
+  fi
+  return 0
+}
+
+# cmd_show: full detail of a single failure record, addressed by its stable
+# `<workflow>:<line>` id (the JSONL file's physical line number — no synthetic ids).
+cmd_show() {
+  local JSON=false
+  local positional=() arg
+  for arg in "$@"; do
+    case "$arg" in
+      --json) JSON=true ;;
+      -*)
+        printf 'error: unknown option: %s\n' "$arg" >&2
+        exit 1
+        ;;
+      *) positional+=("$arg") ;;
+    esac
+  done
+  if [ "${#positional[@]}" -ne 1 ]; then
+    printf 'usage: shai-failures show <workflow>:<line> [--json]\n' >&2
+    exit 2
+  fi
+
+  local id="${positional[0]}"
+  local wf="${id%:*}" ln="${id##*:}"
+  if [ "$wf" = "$id" ]; then
+    printf 'error: invalid failure id "%s" (expected <workflow>:<line>)\n' "$id" >&2
+    exit 1
+  fi
+  if ! [[ "$ln" =~ ^[0-9]+$ ]] || [ "$ln" -lt 1 ]; then
+    printf 'error: invalid line number "%s" in failure id "%s"\n' "$ln" "$id" >&2
+    exit 1
+  fi
+  if [[ "$wf" =~ [/] ]] || [[ "$wf" == *..* ]]; then
+    printf 'error: workflow must not contain / or .. (got "%s")\n' "$wf" >&2
+    exit 1
+  fi
+
+  local file="$FAILURES_DIR/$wf.jsonl"
+  if [ ! -f "$file" ]; then
+    printf 'error: no failure records for workflow "%s"\n' "$wf" >&2
+    exit 1
+  fi
+  # Physical line addressing, so an id printed by `list` always resolves — even in
+  # a file that has since gained or lost malformed lines.
+  local raw rec
+  raw=$(sed -n "${ln}p" "$file")
+  if [ -z "$raw" ]; then
+    printf 'error: no failure record at %s (file has fewer lines)\n' "$id" >&2
+    exit 1
+  fi
+  if ! rec=$(printf '%s\n' "$raw" | jq -c 'select(type == "object")' 2>/dev/null) || [ -z "$rec" ]; then
+    printf 'error: line %s of %s is not a valid failure record\n' "$ln" "$file" >&2
+    exit 1
+  fi
+
+  if [ "$JSON" = true ]; then
+    printf '%s' "$rec" | jq -c --arg id "$id" --argjson ln "$ln" \
+      '{id: $id, workflow: .workflow, line: $ln, ts: .ts, category: .category,
+        summary: .summary, run_id: .run_id, session_id: .session_id,
+        context: (.context // {})}'
+    return 0
+  fi
+
+  local ts workflow category summary run_id session_id
+  ts=$(printf '%s' "$rec" | jq -r '.ts // ""')
+  workflow=$(printf '%s' "$rec" | jq -r '.workflow // ""')
+  category=$(printf '%s' "$rec" | jq -r '.category // ""')
+  summary=$(printf '%s' "$rec" | jq -r '.summary // ""')
+  run_id=$(printf '%s' "$rec" | jq -r '.run_id // ""')
+  session_id=$(printf '%s' "$rec" | jq -r '.session_id // ""')
+
+  printf 'Failure: %s\n' "$id"
+  printf '  %-10s %s\n' "Time:" "$ts"
+  printf '  %-10s %s\n' "Workflow:" "$workflow"
+  printf '  %-10s %s\n' "Category:" "$category"
+  printf '  %-10s %s\n' "Summary:" "$summary"
+  # Run/Session/Trace are only meaningful when a run context exists; a _manual
+  # failure with null run_id/session_id omits all three lines.
+  if [ -n "$run_id" ]; then printf '  %-10s %s\n' "Run:" "$run_id"; fi
+  if [ -n "$session_id" ]; then printf '  %-10s %s\n' "Session:" "$session_id"; fi
+  if printf '%s' "$rec" | jq -e '.context? | type == "object" and (length > 0)' >/dev/null 2>&1; then
+    printf '  Context:\n'
+    local kv key val vtype
+    while IFS= read -r kv; do
+      key=$(printf '%s' "$kv" | jq -r '.key')
+      vtype=$(printf '%s' "$kv" | jq -r '.value | type')
+      if [ "$vtype" = "string" ]; then
+        val=$(printf '%s' "$kv" | jq -r '.value')
+      else
+        val=$(printf '%s' "$kv" | jq -c '.value')
+      fi
+      printf '    %-8s %s\n' "$key:" "$val"
+    done <<<"$(printf '%s' "$rec" | jq -c '.context | to_entries[]')"
+  fi
+  if [ -n "$run_id" ]; then
+    printf '\n'
+    printf '  %-10s %s\n' "Trace:" "shai-trace $run_id"
+  fi
+  return 0
+}
+
+# cmd_summary: aggregate view across all workflows — total (with the date range),
+# per-category and per-workflow breakdowns with percentages.
+cmd_summary() {
+  local AFTER="" BEFORE="" JSON=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --after)
+        shift
+        AFTER="${1:-}"
+        if [ -z "$AFTER" ]; then
+          printf 'error: --after requires a date (YYYY-MM-DD)\n' >&2
+          exit 1
+        fi
+        if ! [[ "$AFTER" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+          printf 'error: --after date must be YYYY-MM-DD\n' >&2
+          exit 1
+        fi
+        ;;
+      --before)
+        shift
+        BEFORE="${1:-}"
+        if [ -z "$BEFORE" ]; then
+          printf 'error: --before requires a date (YYYY-MM-DD)\n' >&2
+          exit 1
+        fi
+        if ! [[ "$BEFORE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+          printf 'error: --before date must be YYYY-MM-DD\n' >&2
+          exit 1
+        fi
+        ;;
+      --json) JSON=true ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  AFTER_BOUND="$AFTER"
+  BEFORE_BOUND="${BEFORE:-9999-99-99}"
+
+  # Aggregate every file's valid records in a single slurp pass; malformed lines
+  # are dropped per file (with a warning) before the pass, exactly like shai-ledgers.
+  local all="" f filtered total_lines valid_count bad summary
+  for f in "$FAILURES_DIR"/*.jsonl; do
+    [ -e "$f" ] || continue
+    filtered=$(valid_lines "$f")
+    total_lines=$(grep -c '.' "$f" 2>/dev/null) || total_lines=0
+    if [ -n "$filtered" ]; then
+      valid_count=$(printf '%s\n' "$filtered" | grep -c '.' 2>/dev/null) || valid_count=0
+    else
+      valid_count=0
+    fi
+    bad=$((total_lines - valid_count))
+    if [ "$bad" -gt 0 ]; then
+      printf 'warning: %s: dropped %d malformed line(s)\n' "$f" "$bad" >&2
+    fi
+    if [ -n "$filtered" ]; then
+      all+="$filtered"$'\n'
+    fi
+  done
+
+  if ! summary=$(printf '%s' "$all" | jq -sc --arg after "$AFTER_BOUND" --arg before "$BEFORE_BOUND" '
+      [.[] | select(((.ts // "")[:10]) >= $after and ((.ts // "")[:10]) <= $before)] as $recs |
+      ($recs | length) as $total |
+      {
+        total: $total,
+        oldest: (if $total == 0 then null else ($recs | map(.ts // "") | sort | first) end),
+        newest: (if $total == 0 then null else ($recs | map(.ts // "") | sort | last) end),
+        by_category: ($recs | group_by(.category)
+          | map({category: .[0].category, count: length,
+                 percent: (if $total > 0 then ((length * 100) / $total | round) else 0 end)})
+          | sort_by(-.count, .category)),
+        by_workflow: ($recs | group_by(.workflow)
+          | map({workflow: .[0].workflow, count: length,
+                 percent: (if $total > 0 then ((length * 100) / $total | round) else 0 end)})
+          | sort_by(-.count, .workflow))
+      }' 2>/dev/null); then
+    printf 'error: failed to aggregate failure records\n' >&2
+    exit 1
+  fi
+
+  local total oldest newest
+  total=$(printf '%s' "$summary" | jq -r '.total')
+
+  if [ "$JSON" = true ]; then
+    printf '%s\n' "$summary" | jq -c '.'
+    return 0
+  fi
+
+  printf 'Failures: %d total' "$total"
+  if [ "$total" -gt 0 ]; then
+    oldest=$(printf '%s' "$summary" | jq -r '.oldest // "" | .[0:10]')
+    newest=$(printf '%s' "$summary" | jq -r '.newest // "" | .[0:10]')
+    printf ' (%s — %s)' "$oldest" "$newest"
+  fi
+  printf '\n'
+
+  if [ "$total" -gt 0 ]; then
+    local row name count pct
+    printf '\nBy category:\n'
+    while IFS= read -r row; do
+      name=$(printf '%s' "$row" | jq -r '.category')
+      count=$(printf '%s' "$row" | jq -r '.count')
+      pct=$(printf '%s' "$row" | jq -r '.percent')
+      printf '  %-17s %3d  (%d%%)\n' "$name" "$count" "$pct"
+    done <<<"$(printf '%s' "$summary" | jq -c '.by_category[]')"
+    printf '\nBy workflow:\n'
+    while IFS= read -r row; do
+      name=$(printf '%s' "$row" | jq -r '.workflow')
+      count=$(printf '%s' "$row" | jq -r '.count')
+      pct=$(printf '%s' "$row" | jq -r '.percent')
+      printf '  %-17s %3d  (%d%%)\n' "$name" "$count" "$pct"
+    done <<<"$(printf '%s' "$summary" | jq -c '.by_workflow[]')"
+  fi
+  return 0
+}
+
+SUBCOMMAND="${1:-}"
+if [ $# -gt 0 ]; then shift; fi
+
+case "$SUBCOMMAND" in
+  list) cmd_list "$@" ;;
+  show) cmd_show "$@" ;;
+  summary) cmd_summary "$@" ;;
+  "")
+    usage_error
+    ;;
+  *)
+    printf 'error: unknown subcommand: %s\n' "$SUBCOMMAND" >&2
+    usage_error
+    ;;
+esac
