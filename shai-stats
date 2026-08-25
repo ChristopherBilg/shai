@@ -1,13 +1,14 @@
 #!/bin/bash
-# shai-stats -- aggregate metrics across sessions and runs
+# shai-stats -- aggregate metrics across sessions, runs, and failures
 # Usage: shai-stats [--session ID] [--after DATE] [--before DATE] [--json]
-# Reads: $SHAI_HOME/sessions/*.jsonl
+# Reads: $SHAI_HOME/sessions/*.jsonl, $SHAI_HOME/failures/*.jsonl
 # Writes: stdout (aggregate metrics)
 # Exit: 0 on success; 1 on invalid arguments or no match
 set -euo pipefail
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 SESSIONS_DIR="$STATE_DIR/sessions"
+FAILURES_DIR="$STATE_DIR/failures"
 
 SESSION="" AFTER="" BEFORE="" JSON=false
 
@@ -99,13 +100,67 @@ for f in "${files[@]+"${files[@]}"}"; do
   fi
 done
 
+# Failure store: peer data source read independently of sessions. --session scoping does
+# NOT filter failures (failures are per-workflow, not per-session), but --after/--before
+# apply to the record timestamps. Malformed files are skipped with a warning, mirroring
+# the session-log guard above.
+fail_files=()
+for f in "$FAILURES_DIR"/*.jsonl; do
+  [ -e "$f" ] || continue
+  if jq -s '.' "$f" >/dev/null 2>&1; then
+    fail_files+=("$f")
+  else
+    printf 'warning: skipping %s (parse error)\n' "$f" >&2
+  fi
+done
+
+# Aggregate failure records across all valid files in a single jq pass. Records outside
+# the date window (by their ISO-8601 ts) are dropped before grouping.
+FAILURES='{"total":0,"by_category":[],"by_workflow":[]}'
+if [ ${#fail_files[@]} -gt 0 ]; then
+  FAILURES=$(cat "${fail_files[@]}" | jq -sc --arg after "$AFTER" --arg before "$BEFORE" '
+    def in_window:
+      ((.ts // "") | tostring) as $ts |
+      (($after == "") or (($ts | length) >= 10 and $ts[0:10] >= $after)) and
+      (($before == "") or (($ts | length) >= 10 and $ts[0:10] <= $before));
+
+    [.[] | select(in_window)] as $recs |
+    ($recs | length) as $total |
+    {
+      total: $total,
+      by_category: ($recs | group_by(.category)
+        | map({category: .[0].category, count: length,
+               percent: ((length * 100) / $total | floor)})
+        | sort_by(-.count)),
+      by_workflow: ($recs | group_by(.workflow)
+        | map({workflow: .[0].workflow, count: length})
+        | sort_by(-.count))
+    }
+  ')
+fi
+fail_total=$(printf '%s' "$FAILURES" | jq '.total')
+
+# render_failures: human-readable failures section (header + both breakdowns).
+# Call only when fail_total > 0.
+render_failures() {
+  printf 'Failures:     %d\n' "$fail_total"
+  printf '  by category:\n'
+  printf '%s' "$FAILURES" | jq -r '.by_category[] | "    \(.category): \(.count) (\(.percent)%)"'
+  printf '  by workflow:\n'
+  printf '%s' "$FAILURES" | jq -r '.by_workflow[] | "    \(.workflow): \(.count)"'
+}
+
 session_count=${#valid_files[@]}
 
 if [ "$session_count" -eq 0 ]; then
   if [ "$JSON" = true ]; then
-    printf '{"sessions":0,"runs":0,"statuses":{"complete":0,"error":0,"incomplete":0},"tokens":{"input":0,"output":0,"total":0},"cache":{"hit":0,"miss":0},"tools":[],"avg_per_run":{"input":0,"output":0},"avg_latency_ms":0}\n'
+    printf '{"sessions":0,"runs":0,"statuses":{"complete":0,"error":0,"incomplete":0},"tokens":{"input":0,"output":0,"total":0},"cache":{"hit":0,"miss":0},"tools":[],"avg_per_run":{"input":0,"output":0},"avg_latency_ms":0,"failures":%s}\n' "$FAILURES"
   else
     printf 'No sessions found.\n'
+    if [ "$fail_total" -gt 0 ]; then
+      printf '\n'
+      render_failures
+    fi
   fi
   exit 0
 fi
@@ -168,13 +223,14 @@ fi
 if [ "$JSON" = true ]; then
   printf '%s' "$AGGREGATE" | jq -c --argjson sessions "$session_count" \
     --argjson total "$tokens_total" --argjson avg_in "$avg_in" --argjson avg_out "$avg_out" \
-    --argjson avg_lat "$avg_latency" \
+    --argjson avg_lat "$avg_latency" --argjson failures "$FAILURES" \
     '{sessions: $sessions, runs: .runs, statuses: .statuses,
       tokens: {input: .tokens_in, output: .tokens_out, total: $total},
       cache: {hit: .cache_hit, miss: .cache_miss},
       tools: .tools,
       avg_per_run: {input: $avg_in, output: $avg_out},
-      avg_latency_ms: $avg_lat}'
+      avg_latency_ms: $avg_lat,
+      failures: $failures}'
 else
   printf 'Sessions:     %d\n' "$session_count"
   printf 'Runs:         %d\n' "$runs"
@@ -201,5 +257,9 @@ else
   fi
   if [ "$avg_latency" -gt 0 ]; then
     printf 'Avg latency:  %dms per span\n' "$avg_latency"
+  fi
+  if [ "$fail_total" -gt 0 ]; then
+    printf '\n'
+    render_failures
   fi
 fi
