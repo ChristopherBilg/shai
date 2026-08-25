@@ -15,6 +15,14 @@
 set -uo pipefail
 RUN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 
+# wait -n -p (used to reap the parallel pool below) needs bash >= 5.1; on 4.x/5.0 the
+# masked "invalid option" failure aborts the script on the unset $finished_pid after
+# already spawning orphaned suites — fail fast with a clear message instead.
+if [ "${BASH_VERSINFO[0]:-0}" -lt 5 ] || { [ "${BASH_VERSINFO[0]:-0}" -eq 5 ] && [ "${BASH_VERSINFO[1]:-0}" -lt 1 ]; }; then
+  echo "run.sh: bash >= 5.1 required (wait -n -p), found ${BASH_VERSION:-unknown}" >&2
+  exit 1
+fi
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
@@ -48,7 +56,11 @@ if ! [[ "$jobs_max" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 OUT_DIR="$(mktemp -d)"
+declare -A pids=()
+declare -A exit_codes=()
 trap 'rm -rf "$OUT_DIR"' EXIT
+# On TERM/INT, kill in-flight suites so an interrupted run doesn't leave orphans behind.
+trap 'kill "${pids[@]}" 2>/dev/null; exit 143' TERM INT
 
 suites=()
 for t in "$RUN_DIR"/test_*.sh; do
@@ -71,8 +83,6 @@ if [ "$total" -eq 0 ] && [ -n "$filter" ]; then
   exit 1
 fi
 
-declare -A pids=()
-declare -A exit_codes=()
 in_flight=0
 
 for t in "${suites[@]}"; do
