@@ -129,6 +129,39 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
     return 1
   }
 
+  # Env vars: collect every tool.json declaration first, then report each unique var once at
+  # its strictest declared level (core beats conditional). A var declared by several tools at
+  # different levels must not get its severity from whichever tool.json glob order happens to
+  # come first. No conflict exists today (every tool-declared env var is conditional); this
+  # keeps the doctor correct if one appears — e.g. a var one tool needs to function (core) and
+  # another merely degrades without (conditional) should FAIL, not WARN.
+  ENV_NAMES=() ENV_LEVELS=() ENV_COUNT=0
+  for tj in "$DIR"/tools/*/tool.json; do
+    [ -f "$tj" ] || continue
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      local_name=$(printf '%s' "$line" | jq -r '.name')
+      local_level=$(printf '%s' "$line" | jq -r '.level')
+      found=0
+      i=0
+      while [ "$i" -lt "$ENV_COUNT" ]; do
+        if [ "${ENV_NAMES[$i]}" = "$local_name" ]; then
+          if [ "$local_level" = "core" ]; then
+            ENV_LEVELS[i]="core"
+          fi
+          found=1
+          break
+        fi
+        i=$((i + 1))
+      done
+      if [ "$found" -eq 0 ]; then
+        ENV_NAMES[ENV_COUNT]="$local_name"
+        ENV_LEVELS[ENV_COUNT]="$local_level"
+        ENV_COUNT=$((ENV_COUNT + 1))
+      fi
+    done < <(jq -c '.capabilities.requires.env // [] | .[]' "$tj" 2>/dev/null)
+  done
+
   printf '\nTool-declared dependencies:\n' >&2
   for tj in "$DIR"/tools/*/tool.json; do
     [ -f "$tj" ] || continue
@@ -140,16 +173,17 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
         check_tool "$dep" conditional
       fi
     done < <(jq -r '.capabilities.requires.tools // [] | .[]' "$tj" 2>/dev/null)
-    # env vars
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      local_name=$(printf '%s' "$line" | jq -r '.name')
-      local_level=$(printf '%s' "$line" | jq -r '.level')
-      if ! is_env_seen "$local_name"; then
-        SEEN_ENVS+=("$local_name")
-        check_env "$local_name" "$local_level"
-      fi
-    done < <(jq -c '.capabilities.requires.env // [] | .[]' "$tj" 2>/dev/null)
+  done
+  # Report each unique env var once, at its strictest declared level. DEEPSEEK_API_KEY is
+  # skipped here — the unconditional check above already reported it, and SEEN_ENVS is seeded
+  # with it for exactly that.
+  i=0
+  while [ "$i" -lt "$ENV_COUNT" ]; do
+    if ! is_env_seen "${ENV_NAMES[$i]}"; then
+      SEEN_ENVS+=("${ENV_NAMES[$i]}")
+      check_env "${ENV_NAMES[$i]}" "${ENV_LEVELS[$i]}"
+    fi
+    i=$((i + 1))
   done
 
   # Config files a tool needs but nothing installs for it (e.g. the ci tool's ci.json).
