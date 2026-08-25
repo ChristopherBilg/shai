@@ -6,6 +6,8 @@
 # Exit: 0 if all core checks pass; 1 if any core check fails
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# shellcheck source=lib/workflow.sh
+source "$DIR/lib/workflow.sh"
 
 ERRORS=0
 WARNINGS=0
@@ -37,6 +39,21 @@ check_env() {
   else
     printf '  [WARN] %s\n' "$name" >&2
     WARNINGS=$((WARNINGS + 1))
+  fi
+}
+
+check_config() {
+  local name="$1" default="$2" unset_label="${3:-}"
+  local val="${!name:-}"
+  printf '  [OK]   %s\n' "$name" >&2
+  if [ -n "$val" ]; then
+    printf '         %s\n' "$val" >&2
+  elif [ -n "$default" ]; then
+    printf '         %s (default)\n' "$default" >&2
+  elif [ -n "$unset_label" ]; then
+    printf '         (%s)\n' "$unset_label" >&2
+  else
+    printf '         (unset)\n' >&2
   fi
 }
 
@@ -109,6 +126,23 @@ for t in "${COND_TOOLS[@]}"; do check_tool "$t" conditional; done
 
 printf '\nEnvironment:\n' >&2
 check_env DEEPSEEK_API_KEY core
+
+printf '\nConfiguration:\n' >&2
+check_config SHAI_HOME "$HOME/.shai"
+check_config SHAI_MODEL "deepseek-v4-flash"
+check_config SHAI_MAX_CONTEXT_BYTES "1300000"
+check_config SHAI_UNIT_DIR "$HOME/.config/systemd/user"
+check_config SHAI_SUGGEST "1"
+# SHAI_SUGGEST_REPO has no default: when unset, wf_suggest_repo resolves it from the install
+# dir's origin remote. Report what the detection finds so the section always shows the
+# effective value, not just the mechanism.
+suggest_repo_label="unset — auto-detected"
+if [ -z "${SHAI_SUGGEST_REPO:-}" ]; then
+  if detected=$(wf_suggest_repo 2>/dev/null); then
+    suggest_repo_label="unset — auto-detected: $detected"
+  fi
+fi
+check_config SHAI_SUGGEST_REPO "" "$suggest_repo_label"
 
 # Derive additional deps from tool plugins
 if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then

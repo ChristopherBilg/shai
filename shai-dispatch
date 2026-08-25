@@ -105,7 +105,7 @@ tool_is_read_only() {
 # adjacent paths are never auto-allowed. The exclusion list is a default, not a boundary: a
 # matching policy rule (allow/deny) or an explicit `default` is checked before this fallback
 # and wins. Only `.path` is consulted — the path-bearing read-only tools all use that field,
-# and path-less read-only tools (sleep, jira_issue_view) have no input path to exclude.
+# and path-less read-only tools (sleep) have no input path to exclude.
 read_only_fallback() {
   local tool_name="$1" tool_input="$2"
   local ro path

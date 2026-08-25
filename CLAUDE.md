@@ -60,7 +60,9 @@ Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.
 `SHAI_MODEL` (default `deepseek-v4-flash`), `SHAI_MAX_TOKENS` (output token budget for
 `shai-eval`, default `32000`; shared between reasoning and visible output when thinking is
 enabled), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
-windowing, default `1300000`), `SHAI_UNIT_DIR` (systemd unit directory, default
+windowing, default `1300000`), `SHAI_EVAL_RETRIES` (max retries on transient API failures —
+curl errors, HTTP 429, 5xx — with exponential backoff 1s/2s/4s/…; default `2`, max `10`, set to `0` to
+disable), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
 step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; overrides
 remote detection).
@@ -167,7 +169,11 @@ The scripts:
   sets the output token budget (shared between reasoning and visible output when thinking is
   enabled); `--max-tokens` overrides. **Invariant: it must never crash the loop.**
   Every API/curl/parse failure becomes an `error` event with exit 0 (the sole exception:
-  `--health-check` exits 1 when `DEEPSEEK_API_KEY` is missing). `--dry-run` prints the payload
+  `--health-check` exits 1 when `DEEPSEEK_API_KEY` is missing). Transient failures (curl errors,
+  HTTP 429, 5xx) are retried with exponential backoff (1s, 2s, 4s, …) up to
+  `SHAI_EVAL_RETRIES` times (default 2; max 10; set to 0 to disable); non-transient errors (4xx other
+  than 429) and retries-exhausted both emit a single error event immediately. Retry attempts
+  log to stderr so the user sees progress. `--dry-run` prints the payload
   without calling out; `--tools-file <path>` attaches the aggregated tool array at that path
   (built by `shai-tools`). Before each real call it best-effort dumps the exact request to
   `$SHAI_HOME/runs/<run_id>/<span_id>-request.json`. On success it parses `choices[0].message`
@@ -326,7 +332,6 @@ optional `capabilities` object holding `read_only` plus a `requires` block — s
 and an executable `run.sh` that takes the tool's JSON input
 as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CLI, write),
 `git` (generic Git CLI, write), `ci` (local CI checks, write), `jira` (generic Jira CLI, write),
-`jira_issue_view` (read-only),
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
 than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;

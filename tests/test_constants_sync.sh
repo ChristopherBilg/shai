@@ -23,6 +23,10 @@ SCRIPT
 cat >"$FIX/shai-context" <<'SCRIPT'
 MAX_BYTES="${SHAI_MAX_CONTEXT_BYTES:-777}"
 SCRIPT
+cat >"$FIX/shai-doctor" <<'SCRIPT'
+check_config SHAI_MODEL "testmodel"
+check_config SHAI_MAX_CONTEXT_BYTES "777"
+SCRIPT
 cat >"$FIX/tests/install-lint-tools.sh" <<'SCRIPT'
 SHELLCHECK_VERSION="v1.2.3"
 SHFMT_VERSION="v4.5.6"
@@ -60,5 +64,17 @@ OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from README.md → exit 1"
 assert_contains "$OUT" "README.md" "missing from README.md → names file"
 assert_contains "$OUT" "truncation limit" "missing from README.md → names constant"
+
+# --- missing from shai-doctor → fail ---
+cat >"$FIX/README.md" <<'EOF'
+truncation 888, head 666, tail 222
+EOF
+cat >"$FIX/shai-doctor" <<'SCRIPT'
+check_config SHAI_MODEL "other-model"
+SCRIPT
+OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
+assert_eq "$?" "1" "missing from shai-doctor → exit 1"
+assert_contains "$OUT" "shai-doctor" "missing from shai-doctor → names file"
+assert_contains "$OUT" "doctor default model" "missing from shai-doctor → names constant"
 
 finish
