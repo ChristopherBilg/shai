@@ -11,7 +11,8 @@
 #         metadata, to $SHAI_HOME/runs/<run_id>/<span_id>-{request,response}.json (best-effort);
 #         --dry-run prints payload; retry progress to stderr
 # Exit: 0 always; --health-check exits 1 if DEEPSEEK_API_KEY missing; 2 on bad CLI args or
-#        a non-integer SHAI_MAX_TOKENS
+#        a non-integer SHAI_MAX_TOKENS / SHAI_EVAL_TIMEOUT / SHAI_EVAL_RETRIES
+#        (or SHAI_EVAL_RETRIES above 10)
 set -euo pipefail
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
