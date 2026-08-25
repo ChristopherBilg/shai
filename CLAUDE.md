@@ -256,10 +256,14 @@ The scripts:
 - **`shai-stats [--session ID] [--after DATE] [--before DATE] [--json]`** (`shai-stats:1`) —
   aggregates metrics across sessions: session/run counts, status breakdown with percentages,
   token totals (in/out/total), Deepseek prompt-cache hit/miss counts, tool usage frequency,
-  averages per run, and average latency.
-  `--session` scopes to a single session (prefix matching). `--after`/`--before` filter by
-  session date. `--json` outputs a JSON summary object. Exit 0 on success; 1 on invalid
-  arguments or no match.
+  averages per run, and average latency. Also reads the failure store
+  (`$SHAI_HOME/failures/*.jsonl`, written by `fail_record`) as a peer data source and adds a
+  `Failures:` section — total count, per-category breakdown with counts and percentages, and
+  per-workflow breakdown — plus a `"failures"` key in `--json` output.
+  `--session` scopes to a single session (prefix matching); it does NOT filter failure data
+  (failures are per-workflow, not per-session). `--after`/`--before` filter by session date
+  and by failure-record timestamp. `--json` outputs a JSON summary object. Exit 0 on success;
+  1 on invalid arguments or no match.
 - **`shai-ledgers [--workflow NAME] [--recent N] [--after DATE] [--before DATE] [--json]`**
   (`shai-ledgers:1`) — lists workflow idempotency ledgers from `$SHAI_HOME/ledgers/*.jsonl`
   (written by `wf_mark`; see **Work ledger** below). Without `--workflow`: one row per ledger
