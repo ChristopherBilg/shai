@@ -9,12 +9,17 @@ echo "shai-eval"
 
 DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' "$DIR/shai-eval")
 DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="${SHAI_MAX_TOKENS:-\(.*\)}"/\1/p' "$DIR/shai-eval")
+DEFAULT_EVAL_TIMEOUT=$(sed -n 's/^EVAL_TIMEOUT="${SHAI_EVAL_TIMEOUT:-\(.*\)}"/\1/p' "$DIR/shai-eval")
 [ -n "$DEFAULT_MODEL" ] || {
   echo "FATAL: could not extract DEFAULT_MODEL from shai-eval" >&2
   exit 1
 }
 [ -n "$DEFAULT_MAX_TOKENS" ] || {
   echo "FATAL: could not extract DEFAULT_MAX_TOKENS from shai-eval" >&2
+  exit 1
+}
+[ -n "$DEFAULT_EVAL_TIMEOUT" ] || {
+  echo "FATAL: could not extract DEFAULT_EVAL_TIMEOUT from shai-eval" >&2
   exit 1
 }
 
@@ -424,5 +429,68 @@ make_stub_bin
 write_retry_curl_stub 1 503 '{"id":"msg_default","choices":[{"message":{"role":"assistant","content":"default ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | env -u SHAI_EVAL_RETRIES "$DIR/shai-eval" 2>/dev/null)
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: default retries recovers from transient 503"
+
+# --- SHAI_EVAL_TIMEOUT --------------------------------------------------------
+desc "SHAI_EVAL_TIMEOUT"
+
+assert_eq "$DEFAULT_EVAL_TIMEOUT" "300" "eval: default timeout is 300 seconds"
+
+# env var override: curl stub captures --max-time argument
+make_stub_bin
+cat >"$STUB/curl" <<'STUBEOF'
+#!/bin/bash
+for arg; do
+  if [ "$prev" = "--max-time" ]; then
+    printf '%s' "$arg" > "$(dirname "$0")/.captured_max_time"
+  fi
+  prev="$arg"
+done
+cat > /dev/null
+cat <<'JSON'
+{"id":"msg_to","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+JSON
+echo "200"
+STUBEOF
+chmod +x "$STUB/curl"
+echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_EVAL_TIMEOUT=600 "$DIR/shai-eval" >/dev/null
+assert_eq "$(cat "$STUB/.captured_max_time")" "600" "eval: SHAI_EVAL_TIMEOUT=600 passes --max-time 600 to curl"
+
+# default timeout passes to curl when env var is unset
+make_stub_bin
+cat >"$STUB/curl" <<'STUBEOF'
+#!/bin/bash
+for arg; do
+  if [ "$prev" = "--max-time" ]; then
+    printf '%s' "$arg" > "$(dirname "$0")/.captured_max_time"
+  fi
+  prev="$arg"
+done
+cat > /dev/null
+cat <<'JSON'
+{"id":"msg_tod","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+JSON
+echo "200"
+STUBEOF
+chmod +x "$STUB/curl"
+echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  env -u SHAI_EVAL_TIMEOUT "$DIR/shai-eval" >/dev/null
+assert_eq "$(cat "$STUB/.captured_max_time")" "300" "eval: default passes --max-time 300 to curl"
+
+# invalid SHAI_EVAL_TIMEOUT → exit 2
+TOERR=$(SHAI_EVAL_TIMEOUT=abc "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: SHAI_EVAL_TIMEOUT non-integer exits 2"
+assert_contains "$TOERR" "SHAI_EVAL_TIMEOUT" "eval: SHAI_EVAL_TIMEOUT non-integer → clear message"
+
+# zero is rejected (must be positive)
+TOERR=$(SHAI_EVAL_TIMEOUT=0 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: SHAI_EVAL_TIMEOUT=0 exits 2"
+
+# leading-zero is rejected (octal ambiguity)
+TOERR=$(SHAI_EVAL_TIMEOUT=0120 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: SHAI_EVAL_TIMEOUT with leading zero exits 2"
 
 finish
