@@ -136,8 +136,9 @@ Unstamped events from before the envelope still parse, so old session logs keep 
 
 The scripts:
 
-- **`shai-repl`** — the REPL. Health-checks the API key, loads the system prompt via `shai-prompt
-  system`, seeds it into a new session (an inherited `SHAI_SESSION_ID` always wins — an
+- **`shai-repl`** — the REPL. Health-checks the API key (on failure it prints a hint pointing at
+  `shai-doctor` to stderr and exits 1), loads the system prompt via `shai-prompt system`, seeds
+  it into a new session (an inherited `SHAI_SESSION_ID` always wins — an
   nvim/tmux/cron wrapper owns the session), and loads tool plugins via `shai-tools` into a temp
   file at startup (cleaned up on exit). Reads lines from stdin; each non-empty line mints a fresh
   `SHAI_RUN_ID` and is handed to `shai-loop --tools-file <tmp>`, which owns the run/span

@@ -68,8 +68,10 @@ assert_eq "$(printf '%s\n' "$BLANKHIST" | jq -sr '[.[] | select(.source=="assist
 # new: a failed startup health-check aborts before the loop (no session dir created)
 SHAI_TMP3="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP3")
-printf 'hello\nexit\n' | env -u DEEPSEEK_API_KEY SHAI_HOME="$SHAI_TMP3" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
+HEALTHERR=$(printf 'hello\nexit\n' | env -u DEEPSEEK_API_KEY SHAI_HOME="$SHAI_TMP3" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1 >/dev/null)
 assert_exit 1 "shai-repl: missing key aborts at health-check (exit 1)" -- bash -c 'printf "" | env -u DEEPSEEK_API_KEY SHAI_HOME="$1" SHAI_SESSION_ID=test "$2/shai-repl"' _ "$SHAI_TMP3" "$DIR"
+assert_contains "$HEALTHERR" "hint: run" "shai-repl: health-check failure prints a hint on stderr"
+assert_contains "$HEALTHERR" "shai-doctor" "shai-repl: hint points at shai-doctor"
 assert_eq "$(test -d "$SHAI_TMP3/sessions" && echo exists || echo absent)" "absent" "shai-repl: no session dir when health-check fails"
 
 # new: by default the REPL prints a "⏺ <tool>(<args>)" dispatch line for each tool call
