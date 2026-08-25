@@ -321,7 +321,6 @@ optional `capabilities` object holding `read_only` plus a `requires` block — s
 and an executable `run.sh` that takes the tool's JSON input
 as `$1` and prints its result to stdout. Built-in tools: `gh` (generic GitHub CLI, write),
 `git` (generic Git CLI, write), `ci` (local CI checks, write), `jira` (generic Jira CLI, write),
-`jira_issue_view` (read-only),
 `list_directory`, `print_file` (read-only; optional `line_numbers` prefixes and an inclusive
 `start_line`/`end_line` window, so `file:line` anchors need no hand counting and a file larger
 than the 32000-byte output cap can be read a window at a time), `search_files` (read-only;
