@@ -141,6 +141,19 @@ SQOUT=$(printf 'list the dir\nexit\n' | PATH="$CSTUB_SQ:$PATH" SHAI_HOME="$SHAI_
 assert_eq "$(grep -c '⏺' <<<"$SQOUT" || true)" "0" "shai-repl: -q suppresses dispatch markers (short form)"
 unset SHAI_ROUND_COUNT
 
+# new: a completed turn is followed by exactly one blank line before the next prompt — the
+# visual boundary between turns. bash only renders the `> ` prompt when stdin is a TTY, so in
+# piped output the blank line separates the reply text from the next turn's output (the spot
+# where the prompt would be); the separator is absent after exit/quit (the goodbye follows).
+SHAI_TMP_SEP="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_SEP")
+make_stub_bin
+write_gh_stub
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+chmod +x "$STUB/curl"
+SEPOUT=$(printf 'first question\nsecond question\n' | SHAI_HOME="$SHAI_TMP_SEP" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1)
+assert_contains "$SEPOUT" $'stub reply\n\nstub reply' "shai-repl: blank line separates a turn's reply from the next prompt"
+
 # --- envelope + trace propagation ---------------------------------------------
 ENVH="$(mktemp -d)"
 _CLEANUP_DIRS+=("$ENVH")

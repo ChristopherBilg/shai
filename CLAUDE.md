@@ -149,8 +149,9 @@ The scripts:
   bookkeeping, the event log, and the eval/dispatch loop (see below); `shai-repl` itself just
   redirects `shai-loop`'s human-readable stderr to its own stdout (`./shai-repl --quiet` / `-q`
   forwards through to suppress it) and discards `shai-loop`'s stdout (the final event JSON,
-  unused by the interactive REPL). `exit`/`quit` and EOF (Ctrl-D) all end the loop with a single
-  `Goodbye.` on stdout.
+  unused by the interactive REPL). After each completed turn a single blank line separates the
+  turn's output from the next prompt. `exit`/`quit` and EOF (Ctrl-D) all end the loop with a
+  single `Goodbye.` on stdout.
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
   Used by `shai-repl` at startup to load `prompts/system.txt`.

@@ -7,7 +7,8 @@
 # Writes: a one-line startup banner on stdout when stdout is a TTY (version/session/model; not
 #         suppressed by -q/--quiet), "Goodbye." on exit/quit/EOF; assistant turns via shai-loop,
 #         whose human-readable stderr is redirected to shai-repl's stdout (tool dispatches shown
-#         by default; -q/--quiet hides them); shai-loop buffers events in
+#         by default; -q/--quiet hides them) with a blank line between turns; shai-loop buffers
+#         events in
 #         $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits finalized events to
 #         $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes directly if the run
 #         dir is unavailable)
@@ -99,6 +100,12 @@ while read -r -p "> " line || [ -n "$line" ]; do
 
   # shellcheck disable=SC2069  # the swap (stderr to old stdout, then stdout to /dev/null) is deliberate, not a mis-ordered redirect
   printf '%s\n' "$line" | "$DIR/shai-loop" --tools-file "$TOOLS_FILE" ${LOOP_QUIET_FLAG:+"$LOOP_QUIET_FLAG"} 2>&1 >/dev/null
+
+  # one blank line after every completed turn (normal, error, or interrupted) separates it from
+  # the next prompt. Unconditional: exit/quit break before this, so the goodbye follows the last
+  # prompt directly; only on EOF (Ctrl-D, or piped input without exit) does the goodbye follow
+  # this separator — the intended trade-off per #300's "keep it unconditional" instruction.
+  printf '\n'
 done
 
 # exit/quit and EOF (Ctrl-D) all land here: one goodbye, printed once, on stdout
