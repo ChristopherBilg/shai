@@ -620,6 +620,8 @@ OUT=$("$FAILURES" list --json)
 assert_eq "$(printf '%s' "$OUT" | jq -r 'type')" "array" "list: --json is a JSON array"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "3" "list: three workflows"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].workflow')" "_repl" "list: rows sorted alphabetically by workflow"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[1].workflow')" "issue_worker" "list: second row by workflow name"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[2].workflow')" "pr_reviewer" "list: third row by workflow name"
 IW="$(printf '%s' "$OUT" | jq -c '[.[] | select(.workflow == "issue_worker")][0]')"
 assert_eq "$(printf '%s' "$IW" | jq -r '.failures')" "3" "list: issue_worker failure count"
 assert_eq "$(printf '%s' "$IW" | jq -r '.oldest')" "2026-08-20T09:00:00Z" "list: oldest ts"

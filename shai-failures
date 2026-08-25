@@ -229,16 +229,18 @@ cmd_list() {
   fi
 
   # Summary rows sort alphabetically by workflow name; entry rows are already
-  # chronological courtesy of jq's sort_by(.ts). Guard the empty case explicitly
-  # rather than feeding zero arguments through printf/sort/mapfile: printf '%s\n'
-  # with no arguments still emits one blank line, which would otherwise become a
-  # single bogus empty entry.
+  # chronological courtesy of jq's sort_by(.ts). Collation is pinned to C (byte)
+  # order so the row order is deterministic regardless of the caller's locale —
+  # under en_US.UTF-8 a plain `sort` would put `_repl` after letter-prefixed
+  # names. Guard the empty case explicitly rather than feeding zero arguments
+  # through printf/sort/mapfile: printf '%s\n' with no arguments still emits one
+  # blank line, which would otherwise become a single bogus empty entry.
   local sorted=()
   if [ "${#entries[@]}" -gt 0 ]; then
     if [ -n "$WORKFLOW" ]; then
       sorted=("${entries[@]}")
     else
-      mapfile -t sorted < <(printf '%s\n' "${entries[@]}" | sort)
+      mapfile -t sorted < <(printf '%s\n' "${entries[@]}" | LC_ALL=C sort)
     fi
   fi
 
