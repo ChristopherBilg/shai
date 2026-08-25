@@ -57,7 +57,9 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ```
 
 Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
-`SHAI_MODEL` (default `deepseek-v4-flash`), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
+`SHAI_MODEL` (default `deepseek-v4-flash`), `SHAI_MAX_TOKENS` (output token budget for
+`shai-eval`, default `32000`; shared between reasoning and visible output when thinking is
+enabled), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
 step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; overrides
@@ -161,7 +163,9 @@ The scripts:
 - **`shai-eval [--tools-file <path>|--model|--max-tokens|--dry-run|--health-check]`**
   (`shai-eval:1`) — the only network hop (`curl -H "Authorization: Bearer $DEEPSEEK_API_KEY"` →
   `https://api.deepseek.com/v1/chat/completions`, Deepseek's OpenAI-compatible chat-completions
-  endpoint). Emits an `assistant` or `error` event. **Invariant: it must never crash the loop.**
+  endpoint). Emits an `assistant` or `error` event. `SHAI_MAX_TOKENS` (default `32000`)
+  sets the output token budget (shared between reasoning and visible output when thinking is
+  enabled); `--max-tokens` overrides. **Invariant: it must never crash the loop.**
   Every API/curl/parse failure becomes an `error` event with exit 0 (the sole exception:
   `--health-check` exits 1 when `DEEPSEEK_API_KEY` is missing). `--dry-run` prints the payload
   without calling out; `--tools-file <path>` attaches the aggregated tool array at that path
@@ -203,6 +207,9 @@ The scripts:
   `shai-tools` internally; `--tools-file <path>` uses a pre-built file. Human-readable output
   goes to stderr; `--quiet` suppresses dispatch markers but still shows reply text. `shai-repl`
   delegates its inner loop to `shai-loop`; workflow scripts call it via `wf_llm`.
+  **Truncation detection**: after each eval, checks for `finish_reason: "length"` with no
+  tool_calls and no content — the model exhausted `max_tokens` on reasoning alone. Emits an
+  error event so the turn is not falsely marked as complete (see #271).
   **Invariant: it must never crash the pipeline** — errors become events, exit 0.
 - **`shai-workflow list|run|describe`** (`shai-workflow:1`) — workflow discovery and
   invocation. `list` scans `workflows/` and prints names with purpose lines. `run <name>

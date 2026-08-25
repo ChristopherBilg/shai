@@ -231,4 +231,60 @@ assert_eq "$BRC" "0" "loop: dispatch loop bound → loop stops, exit 0"
 assert_contains "$BOUT" '"type":"error"' "loop: dispatch loop bound → error event emitted"
 assert_contains "$BOUT" 're-eval loop exceeded 3 dispatch rounds' "loop: dispatch loop bound → error names the bound"
 
+# --- finish_reason "length" with no content/tool_calls: truncation error (#271) ---
+# When the model exhausts max_tokens on reasoning alone, it returns finish_reason "length"
+# with no visible output. shai-loop must detect this and emit an error event instead of
+# treating it as a successful (empty) completion.
+TMPTRUNC="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMPTRUNC")
+mkdir -p "$TMPTRUNC/sessions"
+printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMPTRUNC/sessions/test.jsonl"
+: >"$TMPTRUNC/sessions/test.latest.json"
+
+printf '{"id":"chatcmpl-trunc","choices":[{"message":{"role":"assistant","content":null},"finish_reason":"length"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":100,"completion_tokens":16000,"total_tokens":16100}}' |
+  write_curl_stub 200
+
+TRUNCOUT=$(printf 'implement this complex feature' | SHAI_HOME="$TMPTRUNC" SHAI_SESSION_ID=test "$DIR/shai-loop" 2>/dev/null)
+TRUNCRC=$?
+assert_eq "$TRUNCRC" "0" "loop: truncation → exit 0 (errors are events, not crashes)"
+assert_contains "$TRUNCOUT" '"type":"error"' "loop: truncation → error event emitted"
+assert_contains "$TRUNCOUT" 'truncat' "loop: truncation → error message mentions truncation"
+TRUNCHIST=$(cat "$TMPTRUNC/sessions/test.jsonl")
+TRUNC_ASST=$(printf '%s\n' "$TRUNCHIST" | jq -s '[.[] | select(.source=="assistant")] | length')
+assert_eq "$TRUNC_ASST" "0" "loop: truncation does not commit assistant events to session log"
+
+# --- finish_reason "length" WITH tool_calls: NOT a truncation (tools parsed successfully) ---
+# If the model hit the token limit but still produced parseable tool_calls, let dispatch
+# proceed normally — the response was usable.
+TMPTRUNC2="$(mktemp -d)"
+_CLEANUP_DIRS+=("$TMPTRUNC2")
+mkdir -p "$TMPTRUNC2/sessions"
+printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMPTRUNC2/sessions/test.jsonl"
+: >"$TMPTRUNC2/sessions/test.latest.json"
+
+CSTUBTR="$(mktemp -d)"
+_CLEANUP_DIRS+=("$CSTUBTR")
+export SHAI_ROUND_COUNT="$CSTUBTR/count"
+echo 0 >"$SHAI_ROUND_COUNT"
+cat >"$CSTUBTR/curl" <<'STUBEOF'
+#!/bin/bash
+cat > /dev/null
+n=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"
+if [ "$n" = "0" ]; then
+  cat <<'JSON'
+{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tu1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"length"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":16000,"total_tokens":16010}}
+JSON
+else
+  cat <<'JSON'
+{"id":"chatcmpl-ok","choices":[{"message":{"role":"assistant","content":"done after length"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+JSON
+fi
+echo "200"
+STUBEOF
+chmod +x "$CSTUBTR/curl"
+
+TRUNCOUT2=$(printf 'do something' | PATH="$CSTUBTR:$PATH" SHAI_HOME="$TMPTRUNC2" SHAI_SESSION_ID=test "$DIR/shai-loop" --tools 2>/dev/null)
+unset SHAI_ROUND_COUNT
+assert_contains "$TRUNCOUT2" 'done after length' "loop: finish_reason length WITH tool_calls → dispatch proceeds normally"
+
 finish

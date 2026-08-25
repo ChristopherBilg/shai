@@ -2,7 +2,8 @@
 # shai-eval — the only network hop: call the Deepseek API
 # Usage: cat request.json | shai-eval [--tools-file <path>|--model M|--max-tokens N|--dry-run|--health-check]
 # Reads: a {messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
-#        environment to locate the per-span request/response dumps
+#        environment to locate the per-span request/response dumps;
+#        SHAI_MAX_TOKENS (default 32000) for the output token budget
 # Writes: one assistant/error event (assistant events carry an `api` key: message_id, model,
 #         usage, latency_ms); on a real call, also dumps the request, and on success the response
 #         metadata, to $SHAI_HOME/runs/<run_id>/<span_id>-{request,response}.json (best-effort);
@@ -12,7 +13,7 @@ set -euo pipefail
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 MODEL="${SHAI_MODEL:-deepseek-v4-flash}"
-MAX_TOKENS="16000"
+MAX_TOKENS="${SHAI_MAX_TOKENS:-32000}"
 DRY_RUN=false
 HEALTH_CHECK=false
 API_URL="https://api.deepseek.com/v1/chat/completions"
