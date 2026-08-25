@@ -317,6 +317,21 @@ ERR=$("$STATS" 2>&1 >/dev/null)
 assert_eq "$(printf '%s' "$OUT" | jq '.failures.total')" "1" "malformed failure file excluded, good file still counted"
 assert_contains "$ERR" "wf_bad" "warning names the malformed failure file"
 
+desc "failures: non-string ts record cannot abort aggregation"
+setup_stats
+SID="sess_20260811T090000_aabb"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" '{"content":"a","finish_reason":"stop"}' "run_1" "$SID" "span_1"
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+fixture_failure "api_error" "wf_a" "2026-08-11T09:00:00Z" >"$SHAI_HOME/failures/wf_a.jsonl"
+# A parseable record with a non-string ts (numeric epoch) must not kill the run.
+printf '%s\n' '{"ts":1750000000,"workflow":"wf_odd","category":"tool_error","summary":"epoch ts"}' >"$SHAI_HOME/failures/wf_odd.jsonl"
+OUT=$("$STATS" --after 2026-08-10 --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.failures.total')" "1" "numeric-ts record excluded from date window, aggregation survives"
+OUT=$("$STATS" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.failures.total')" "2" "numeric-ts record counted when no date filter"
+
 desc "failures: peer source — failures shown with no sessions"
 setup_stats
 fixture_failure "api_error" "wf_a" "2026-08-11T09:00:00Z" >"$SHAI_HOME/failures/wf_a.jsonl"

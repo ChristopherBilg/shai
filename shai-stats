@@ -120,8 +120,9 @@ FAILURES='{"total":0,"by_category":[],"by_workflow":[]}'
 if [ ${#fail_files[@]} -gt 0 ]; then
   FAILURES=$(cat "${fail_files[@]}" | jq -sc --arg after "$AFTER" --arg before "$BEFORE" '
     def in_window:
-      (($after == "") or ((.ts // "")[0:10] >= $after)) and
-      (($before == "") or ((.ts // "")[0:10] <= $before));
+      ((.ts // "") | tostring) as $ts |
+      (($after == "") or (($ts | length) >= 10 and $ts[0:10] >= $after)) and
+      (($before == "") or (($ts | length) >= 10 and $ts[0:10] <= $before));
 
     [.[] | select(in_window)] as $recs |
     ($recs | length) as $total |
