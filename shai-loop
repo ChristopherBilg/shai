@@ -5,8 +5,8 @@
 #        SHAI_RETRY_ACTIVE from environment; session log from $SHAI_HOME/sessions/
 # Writes: events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl and
 #         $SHAI_HOME/runs/$SHAI_RUN_ID/events.jsonl; human-readable output to stderr
-# Exit: 0 on completion (including eval errors and dispatch failures — they are events, not
-#       crashes); 1 if SHAI_SESSION_ID is not set; 2 on usage error
+# Exit: 0 on completion (including eval errors, dispatch failures, and truncations — they are
+#       events, not crashes); 1 if SHAI_SESSION_ID is not set; 2 on usage error
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -158,6 +158,22 @@ emit_dispatch_error() {
   printf '%s\n' "$err_event" | print_event
 }
 
+# check_truncation: detect the zero-output false-completion mode (#271) — finish_reason
+# "length" with no content and no tool_calls means the model exhausted max_tokens on
+# reasoning alone and produced nothing, so the turn must not be marked complete.
+# Deliberately scoped to empty output: a response with visible content is committed as-is
+# (the model produced output, and in tool-driven workflows the deliverable is created via
+# tool calls, so a cut-off final message is not a false completion), and truncation WITH
+# parseable tool_calls proceeds because the calls are actionable. See CLAUDE.md.
+check_truncation() {
+  jq -e '
+    .type == "message" and .source == "assistant" and
+    .payload.finish_reason == "length" and
+    (.payload.tool_calls // null) == null and
+    ((.payload.content // null) == null or .payload.content == "")
+  ' "$LATEST" >/dev/null 2>&1
+}
+
 advance_span
 
 if [ "$RUN_LOG" != "/dev/null" ]; then
@@ -171,32 +187,40 @@ fi
 cat "$SESSION_LOG" "$RUN_LOG" | "$DIR/shai-context" | "$DIR/shai-eval" "${EVAL_OPTS[@]}" | "$DIR/shai-stamp" |
   tee -a "$LOOP_LOG" | tee "$LATEST" | print_event
 
-# The re-eval loop: shai-dispatch exits 1 when at least one tool ran (re-evaluate), 0 when the
-# turn is complete. ONLY 1 means "a tool ran": any other non-zero exit is a dispatch failure
-# and terminates the loop with an error event — shai-loop must never re-evaluate on a failure,
-# or a broken dispatch would spin forever, burning an API call per iteration (see #257).
-dispatch_round=0
-while :; do
-  dispatch_round=$((dispatch_round + 1))
-  if [ "$dispatch_round" -gt "$MAX_DISPATCH_ROUNDS" ]; then
-    emit_dispatch_error "re-eval loop exceeded $MAX_DISPATCH_ROUNDS dispatch rounds — stopping"
-    break
-  fi
-  if cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" >>"$LOOP_LOG"; then
-    break
-  else
-    # shai-dispatch exited non-zero. Only exit 1 means "a tool ran": any other non-zero exit
-    # is a dispatch failure and stops the loop with an error event instead of a re-eval spin.
-    # ($? here is the pipeline's raw status — do NOT use `if ! pipeline` for this, since `!`
-    # inverts $? and a failing dispatch would read as exit 0.)
-    dispatch_rc=$?
-    if [ "$dispatch_rc" -ne 1 ]; then
-      emit_dispatch_error "shai-dispatch failed (exit $dispatch_rc) — stopping the re-eval loop"
+if check_truncation; then
+  emit_dispatch_error "response truncated (finish_reason: length) — model exhausted max_tokens with no visible output"
+else
+  # The re-eval loop: shai-dispatch exits 1 when at least one tool ran (re-evaluate), 0 when the
+  # turn is complete. ONLY 1 means "a tool ran": any other non-zero exit is a dispatch failure
+  # and terminates the loop with an error event — shai-loop must never re-evaluate on a failure,
+  # or a broken dispatch would spin forever, burning an API call per iteration (see #257).
+  dispatch_round=0
+  while :; do
+    dispatch_round=$((dispatch_round + 1))
+    if [ "$dispatch_round" -gt "$MAX_DISPATCH_ROUNDS" ]; then
+      emit_dispatch_error "re-eval loop exceeded $MAX_DISPATCH_ROUNDS dispatch rounds — stopping"
       break
     fi
-    re_eval
-  fi
-done
+    if cat "$LATEST" | "$DIR/shai-dispatch" | "$DIR/shai-stamp" >>"$LOOP_LOG"; then
+      break
+    else
+      # shai-dispatch exited non-zero. Only exit 1 means "a tool ran": any other non-zero exit
+      # is a dispatch failure and stops the loop with an error event instead of a re-eval spin.
+      # ($? here is the pipeline's raw status — do NOT use `if ! pipeline` for this, since `!`
+      # inverts $? and a failing dispatch would read as exit 0.)
+      dispatch_rc=$?
+      if [ "$dispatch_rc" -ne 1 ]; then
+        emit_dispatch_error "shai-dispatch failed (exit $dispatch_rc) — stopping the re-eval loop"
+        break
+      fi
+      re_eval
+      if check_truncation; then
+        emit_dispatch_error "response truncated (finish_reason: length) — model exhausted max_tokens with no visible output"
+        break
+      fi
+    fi
+  done
+fi
 
 if [ "$RUN_LOG" != "/dev/null" ]; then
   commit_run

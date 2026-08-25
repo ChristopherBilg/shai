@@ -8,7 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "shai-eval"
 
 DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' "$DIR/shai-eval")
-DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="\(.*\)"/\1/p' "$DIR/shai-eval")
+DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="${SHAI_MAX_TOKENS:-\(.*\)}"/\1/p' "$DIR/shai-eval")
 [ -n "$DEFAULT_MODEL" ] || {
   echo "FATAL: could not extract DEFAULT_MODEL from shai-eval" >&2
   exit 1
@@ -101,6 +101,36 @@ MTBAD=$(echo '{"messages":[]}' | "$DIR/shai-eval" --dry-run --max-tokens abc 2>&
 RC=$?
 assert_eq "$RC" "2" "eval: --max-tokens non-integer exits 2"
 assert_contains "$MTBAD" "--max-tokens must be a positive integer" "eval: --max-tokens non-integer → clear message"
+
+# --- SHAI_MAX_TOKENS env var (#271) ---
+DRYENV=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_MAX_TOKENS=64000 "$DIR/shai-eval" --dry-run)
+assert_contains "$DRYENV" '"max_tokens":64000' "eval: SHAI_MAX_TOKENS env var overrides default in payload"
+
+# env var is overridden by --max-tokens CLI flag
+DRYBOTH=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_MAX_TOKENS=64000 "$DIR/shai-eval" --dry-run --max-tokens 99)
+assert_contains "$DRYBOTH" '"max_tokens":99' "eval: --max-tokens CLI flag wins over SHAI_MAX_TOKENS env var"
+
+# default is 32000
+DRYDEFAULT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  env -u SHAI_MAX_TOKENS "$DIR/shai-eval" --dry-run)
+assert_contains "$DRYDEFAULT" '"max_tokens":32000' "eval: default max_tokens is 32000"
+
+# SHAI_MAX_TOKENS non-integer → controlled exit 2 with a clear message, not a jq crash
+# (a bad value would otherwise abort shai-eval mid-payload-build and take shai-loop's
+# pipeline down with it under pipefail)
+MTENVBAD=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_MAX_TOKENS=abc "$DIR/shai-eval" --dry-run 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: SHAI_MAX_TOKENS non-integer exits 2"
+assert_contains "$MTENVBAD" "SHAI_MAX_TOKENS" "eval: SHAI_MAX_TOKENS non-integer → clear message"
+
+# validation runs on the final value: a valid --max-tokens flag overrides a bad env var
+DRYRESCUE=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
+  SHAI_MAX_TOKENS=abc "$DIR/shai-eval" --dry-run --max-tokens 99)
+RC=$?
+assert_eq "$RC" "0" "eval: --max-tokens flag rescues a bad SHAI_MAX_TOKENS env var"
+assert_contains "$DRYRESCUE" '"max_tokens":99' "eval: rescued payload uses the flag value"
 
 # new: empty stdin → exit 0, no output
 EEMPTY=$(printf '' | "$DIR/shai-eval")
