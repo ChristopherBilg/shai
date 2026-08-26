@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_shai_repl.sh — integration tests for shai-repl
-# Covers: shai-repl — REPL wiring, the dispatch re-eval loop round-trip, and -q/--quiet dispatch markers
+# Covers: shai-repl — REPL wiring, the dispatch re-eval loop round-trip, -q/--quiet dispatch
+#         markers, and SIGINT handling (Ctrl-C at the prompt or mid-turn never ends the session)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -258,5 +259,140 @@ assert_eq "$(printf '%s' "$MINTSESS" | grep -cE '^sess_[0-9]{8}T[0-9]{6}_[0-9a-f
   "shai-repl: minted session id keeps its sortable prefix + 8 hex chars"
 assert_eq "$(printf '%s' "$MINTRUN" | grep -cE '^run_[0-9]{8}T[0-9]{6}_[0-9a-f]{8}$')" "1" \
   "shai-repl: minted run id keeps its sortable prefix + 8 hex chars"
+
+# --- SIGINT: Ctrl-C must never end the session (see #299) --------------------
+# Both cases run the REPL under setsid (its own process group) with a FIFO for stdin, so a
+# `kill -INT -- -$PID` delivers SIGINT exactly like the terminal's foreground-process-group
+# broadcast on ^C — including to the mid-turn shai-loop pipeline. Skipped when setsid is
+# unavailable (precedent: shai-doctor treats `timeout` as conditional). Some harnesses run
+# with SIGINT ignored (e.g. a background ci runner): an ignored-at-entry SIGINT can neither
+# be trapped by a non-interactive bash nor killed in children, so `env --default-signal=INT`
+# (coreutils >= 9.0) restores the real terminal's default disposition first — without it,
+# the REPL's INT trap never installs and the tests would silently test nothing. Skipped when
+# env lacks the flag.
+if command -v setsid >/dev/null 2>&1 && env --default-signal=INT true >/dev/null 2>&1; then
+  # wait_for <seconds> <description> -- <cmd...>: poll until cmd succeeds or times out
+  wait_for() {
+    local secs="$1" desc="$2"
+    shift 2
+    [ "${1:-}" = "--" ] && shift
+    local i
+    for ((i = 0; i < secs * 10; i++)); do
+      if "$@" >/dev/null 2>&1; then return 0; fi
+      sleep 0.1
+    done
+    echo "  timeout (${secs}s) waiting for: $desc" >&2
+    return 1
+  }
+
+  # (a) SIGINT to the process group while a turn is in flight: the turn aborts with an
+  # Interrupted. notice, the next prompt works normally, the partial turn stays in its run
+  # log, and the session log is untouched by the aborted turn
+  SIG_HOME="$(mktemp -d)"
+  _CLEANUP_DIRS+=("$SIG_HOME")
+  mkfifo "$SIG_HOME/in"
+  : >"$SIG_HOME/out"
+  SIG_STUB="$(mktemp -d)"
+  _CLEANUP_DIRS+=("$SIG_STUB")
+  echo 0 >"$SIG_STUB/count"
+  # stateful curl stub: the first eval call (the turn to interrupt) blocks 30s so the turn is
+  # genuinely in flight; every later call (the post-interrupt turn) replies immediately
+  cat >"$SIG_STUB/curl" <<'SIGSTUB'
+#!/bin/bash
+cat > /dev/null
+n=$(cat "$SIG_STUB_COUNT"); echo $((n + 1)) > "$SIG_STUB_COUNT"
+if [ "$n" = "0" ]; then sleep 30; fi
+cat <<'JSON'
+{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"sig reply"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+JSON
+echo "200"
+SIGSTUB
+  chmod +x "$SIG_STUB/curl"
+
+  setsid env --default-signal=INT PATH="$SIG_STUB:$PATH" SIG_STUB_COUNT="$SIG_STUB/count" \
+    SHAI_HOME="$SIG_HOME" SHAI_SESSION_ID=sig "$DIR/shai-repl" \
+    <"$SIG_HOME/in" >"$SIG_HOME/out" 2>&1 &
+  SIG_REPL_PID=$!
+  exec 9>"$SIG_HOME/in" # open the FIFO's write end so the REPL's stdin open completes
+
+  # start the turn to interrupt (it sits in the FIFO until the REPL reaches the prompt)
+  printf 'first question\n' >&9
+
+  # the counter reaches 1 once the stub is inside its 30s sleep — the turn is in flight
+  wait_for 10 "first turn in flight (curl stub entered)" -- \
+    bash -c '[ "$(cat "$1/count" 2>/dev/null || echo 0)" = "1" ]' _ "$SIG_STUB"
+
+  # SIGINT the whole process group, exactly what the terminal delivers on ^C
+  kill -INT -- -"$SIG_REPL_PID" 2>/dev/null || true
+
+  wait_for 10 "Interrupted notice" -- bash -c 'grep -q "Interrupted\." "$1/out"' _ "$SIG_HOME"
+
+  # a subsequent prompt must work normally (a new run id is minted per turn)
+  printf 'second question\nexit\n' >&9
+
+  wait_for 15 "goodbye after mid-turn interrupt" -- bash -c 'grep -q "Goodbye\." "$1/out"' _ "$SIG_HOME"
+  kill "$SIG_REPL_PID" 2>/dev/null || true
+  wait "$SIG_REPL_PID" 2>/dev/null
+  SIG_RC=$?
+  exec 9>&-
+
+  SIGOUT=$(cat "$SIG_HOME/out")
+  assert_eq "$SIG_RC" "0" "shai-repl: exits 0 after a mid-turn Ctrl-C"
+  assert_contains "$SIGOUT" "Interrupted." "shai-repl: mid-turn Ctrl-C prints the Interrupted notice"
+  assert_contains "$SIGOUT" "partial turn kept in run" "shai-repl: Interrupted notice names the partial run for shai-retry --run"
+  assert_contains "$SIGOUT" "sig reply" "shai-repl: prompt after mid-turn Ctrl-C processes a new turn"
+  assert_contains "$SIGOUT" "Goodbye." "shai-repl: session ends with goodbye after an interrupted turn"
+  SIGSESS=$(cat "$SIG_HOME/sessions/sig.jsonl")
+  assert_eq "$(printf '%s\n' "$SIGSESS" | jq -sr 'length')" "3" \
+    "shai-repl: session log unchanged by the interrupted turn (system seed + second turn only)"
+  assert_eq "$(printf '%s\n' "$SIGSESS" | jq -r 'select(.source!="system") | .meta.run_id' | sort -u | wc -l)" "1" \
+    "shai-repl: only the post-interrupt turn is committed to the session log"
+  SIGRUN_IDS=$(ls "$SIG_HOME/runs")
+  assert_eq "$(printf '%s\n' "$SIGRUN_IDS" | wc -l)" "2" "shai-repl: interrupted run kept alongside the next run"
+  SIGCOMMITTED=$(printf '%s\n' "$SIGSESS" | jq -r 'select(.source!="system") | .meta.run_id' | sort -u)
+  SIGINTERRUPTED=$(printf '%s\n' "$SIGRUN_IDS" | grep -vxF "$SIGCOMMITTED" || true)
+  assert_contains "$(cat "$SIG_HOME/runs/$SIGINTERRUPTED/events.jsonl")" '"source":"user"' \
+    "shai-repl: interrupted turn's events stay buffered in its run log"
+
+  # (b) SIGINT while idle at the prompt: line cleared, REPL stays at the prompt, and the next
+  # prompt processes normally — no Interrupted notice, no session end
+  SIGB_HOME="$(mktemp -d)"
+  _CLEANUP_DIRS+=("$SIGB_HOME")
+  mkfifo "$SIGB_HOME/in"
+  : >"$SIGB_HOME/out"
+  SIGB_STUB="$(mktemp -d)"
+  _CLEANUP_DIRS+=("$SIGB_STUB")
+  printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"idle reply"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$SIGB_STUB/curl"
+  chmod +x "$SIGB_STUB/curl"
+
+  setsid env --default-signal=INT PATH="$SIGB_STUB:$PATH" SHAI_HOME="$SIGB_HOME" SHAI_SESSION_ID=sigb \
+    "$DIR/shai-repl" <"$SIGB_HOME/in" >"$SIGB_HOME/out" 2>&1 &
+  SIGB_REPL_PID=$!
+  exec 8>"$SIGB_HOME/in"
+
+  # the seeded system prompt in the session log means the REPL is at (or a hair before) the
+  # prompt; the extra beat lets it settle into the blocked read
+  wait_for 10 "prompt reached (system seed written)" -- \
+    bash -c 'jq -e "select(.source==\"system\")" "$1/sessions/sigb.jsonl" >/dev/null 2>&1' _ "$SIGB_HOME"
+  sleep 0.3
+  kill -INT -- -"$SIGB_REPL_PID" 2>/dev/null || true
+  sleep 0.3
+  printf 'idle question\nexit\n' >&8
+
+  wait_for 15 "goodbye after at-prompt interrupt" -- bash -c 'grep -q "Goodbye\." "$1/out"' _ "$SIGB_HOME"
+  kill "$SIGB_REPL_PID" 2>/dev/null || true
+  wait "$SIGB_REPL_PID" 2>/dev/null
+  SIGB_RC=$?
+  exec 8>&-
+
+  SIGBOUT=$(cat "$SIGB_HOME/out")
+  assert_eq "$SIGB_RC" "0" "shai-repl: exits 0 after a Ctrl-C at the prompt"
+  assert_contains "$SIGBOUT" "idle reply" "shai-repl: prompt after at-prompt Ctrl-C processes input normally"
+  assert_contains "$SIGBOUT" "Goodbye." "shai-repl: goodbye after at-prompt Ctrl-C"
+  assert_eq "$(grep -c 'Interrupted\.' <<<"$SIGBOUT" || true)" "0" \
+    "shai-repl: at-prompt Ctrl-C prints no Interrupted notice"
+else
+  echo "  (skipping SIGINT tests: setsid or env --default-signal unavailable)"
+fi
 
 finish
