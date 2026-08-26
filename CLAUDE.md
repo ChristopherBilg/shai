@@ -67,7 +67,7 @@ Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.
 `shai-eval`, default `32000`; shared between reasoning and visible output when thinking is
 enabled), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_EVAL_TIMEOUT` (curl `--max-time` ceiling in seconds for
-`shai-eval`'s API call, default `300`), `SHAI_EVAL_RETRIES` (max retries on transient API failures —
+`shai-eval`'s API call, default `600`), `SHAI_EVAL_RETRIES` (max retries on transient API failures —
 curl errors, HTTP 429, 5xx — with exponential backoff 1s/2s/4s/…; default `2`, max `10`, set to `0` to
 disable), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
@@ -196,7 +196,7 @@ The scripts:
   `https://api.deepseek.com/v1/chat/completions`, Deepseek's OpenAI-compatible chat-completions
   endpoint). Emits an `assistant` or `error` event. `SHAI_MAX_TOKENS` (default `32000`)
   sets the output token budget (shared between reasoning and visible output when thinking is
-  enabled); `--max-tokens` overrides. `SHAI_EVAL_TIMEOUT` (default `300`) sets the curl
+  enabled); `--max-tokens` overrides. `SHAI_EVAL_TIMEOUT` (default `600`) sets the curl
   `--max-time` ceiling in seconds. **Invariant: it must never crash the loop.**
   Every API/curl/parse failure becomes an `error` event with exit 0 (the sole exception:
   `--health-check` exits 1 when `DEEPSEEK_API_KEY` is missing). Transient failures (curl errors,
