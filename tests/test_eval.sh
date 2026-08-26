@@ -433,7 +433,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: default 
 # --- SHAI_EVAL_TIMEOUT --------------------------------------------------------
 desc "SHAI_EVAL_TIMEOUT"
 
-assert_eq "$DEFAULT_EVAL_TIMEOUT" "300" "eval: default timeout is 300 seconds"
+assert_eq "$DEFAULT_EVAL_TIMEOUT" "600" "eval: default timeout is 600 seconds"
 
 # env var override: curl stub captures --max-time argument
 make_stub_bin
@@ -475,7 +475,7 @@ STUBEOF
 chmod +x "$STUB/curl"
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
   env -u SHAI_EVAL_TIMEOUT "$DIR/shai-eval" >/dev/null
-assert_eq "$(cat "$STUB/.captured_max_time")" "300" "eval: default passes --max-time 300 to curl"
+assert_eq "$(cat "$STUB/.captured_max_time")" "600" "eval: default passes --max-time 600 to curl"
 
 # invalid SHAI_EVAL_TIMEOUT → exit 2
 TOERR=$(SHAI_EVAL_TIMEOUT=abc "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
