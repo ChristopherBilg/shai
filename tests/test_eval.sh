@@ -453,8 +453,8 @@ echo "200"
 STUBEOF
 chmod +x "$STUB/curl"
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
-  SHAI_EVAL_TIMEOUT=600 "$DIR/shai-eval" >/dev/null
-assert_eq "$(cat "$STUB/.captured_max_time")" "600" "eval: SHAI_EVAL_TIMEOUT=600 passes --max-time 600 to curl"
+  SHAI_EVAL_TIMEOUT=1200 "$DIR/shai-eval" >/dev/null
+assert_eq "$(cat "$STUB/.captured_max_time")" "1200" "eval: SHAI_EVAL_TIMEOUT=1200 passes --max-time 1200 to curl"
 
 # default timeout passes to curl when env var is unset
 make_stub_bin
