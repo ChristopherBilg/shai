@@ -267,7 +267,7 @@ assert_eq "$(printf '%s' "$MINTRUN" | grep -cE '^run_[0-9]{8}T[0-9]{6}_[0-9a-f]{
 # unavailable (precedent: shai-doctor treats `timeout` as conditional). Some harnesses run
 # with SIGINT ignored (e.g. a background ci runner): an ignored-at-entry SIGINT can neither
 # be trapped by a non-interactive bash nor killed in children, so `env --default-signal=INT`
-# (coreutils >= 8.90) restores the real terminal's default disposition first — without it,
+# (coreutils >= 9.0) restores the real terminal's default disposition first — without it,
 # the REPL's INT trap never installs and the tests would silently test nothing. Skipped when
 # env lacks the flag.
 if command -v setsid >/dev/null 2>&1 && env --default-signal=INT true >/dev/null 2>&1; then
