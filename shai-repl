@@ -12,8 +12,13 @@
 #         $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits finalized events to
 #         $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes directly if the run
 #         dir is unavailable)
-# Exit: 0 on clean exit (exit/quit/EOF); 1 if DEEPSEEK_API_KEY is missing (health check); 2 on
-#       unknown option; 3 if the system prompt is missing or empty (shai-prompt)
+# Exit: 0 on clean exit (exit/quit/EOF) and on any handled Ctrl-C — at the prompt the line is
+#       cleared and the session continues; mid-turn the in-flight turn is aborted with an
+#       Interrupted. notice (plus a "partial turn kept in run <id> — resume with: shai-retry
+#       --run <id>" hint; the aborted turn's events stay in its run log, never the session log)
+#       and the session continues (a handled interrupt never changes the exit status); 1 if
+#       DEEPSEEK_API_KEY is missing (health check); 2 on unknown option; 3 if the system prompt
+#       is missing or empty (shai-prompt)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -37,6 +42,14 @@ SYSTEM_PROMPT="$("$DIR/shai-prompt" system)"
 TOOLS_FILE=$(mktemp)
 chmod u+w "$TOOLS_FILE"
 trap 'rm -f "$TOOLS_FILE"' EXIT
+# SIGINT handling (see #299): Ctrl-C must never end the session. One INT trap for the whole
+# script sets a flag that the prompt loop interprets: at the prompt bash aborts the blocked
+# `read` and runs this trap (the flag, not read's status, is what distinguishes ^C from
+# EOF/Ctrl-D), and mid-turn the terminal's SIGINT to the whole foreground process group kills
+# the shai-loop pipeline, after which bash runs the trap. The flag is reset at the top of
+# every loop iteration so it only ever describes the read/pipeline about to run.
+interrupted=0
+trap 'interrupted=1' INT
 "$DIR/shai-tools" >"$TOOLS_FILE"
 
 # mint_id <prefix> — UTC-sortable id with 4 urandom bytes for collision resistance
@@ -84,8 +97,25 @@ if [ -t 1 ]; then
     "${SHAI_MODEL:+ — model $SHAI_MODEL}" "'exit' to quit"
 fi
 
-# `|| [ -n "$line" ]` keeps a final prompt that has no trailing newline (piped input)
-while read -r -p "> " line || [ -n "$line" ]; do
+while :; do
+  # the flag only ever describes the read/pipeline about to run — a stale interrupt (e.g. one
+  # that landed between turns or during startup) must not masquerade as this iteration's EOF
+  interrupted=0
+
+  # read fails on EOF (Ctrl-D, or end of piped input) and on ^C at the prompt. The INT trap
+  # separates them: flag set ⇒ ^C ⇒ clear the line and stay at the prompt, session continues;
+  # flag unset ⇒ EOF (a piped final line without a trailing newline still falls through and
+  # gets processed below). read's status is deliberately not consulted: with plain read ^C
+  # returns 130, but once `read -e` lands (#298) Readline swallows ^C and read may return a
+  # plain 1 — the flag is the only signal that works in both worlds.
+  if ! read -r -p "> " line; then
+    if [ "$interrupted" = 1 ]; then
+      printf '\n' # move past the echoed ^C; the next prompt redraws the line
+      continue
+    fi
+    [ -n "$line" ] || break
+  fi
+
   case "$line" in
     "") continue ;;
     exit | quit) break ;;
@@ -98,8 +128,26 @@ while read -r -p "> " line || [ -n "$line" ]; do
   SHAI_RUN_ID="$(mint_id run)"
   export SHAI_RUN_ID
 
+  # The if/else (not a bare statement) absorbs the pipeline's 130 status without tripping
+  # set -e: a mid-turn ^C delivers SIGINT to the whole foreground process group — nothing in
+  # the shai-loop pipeline traps it — and bash runs the INT trap once the pipeline completes,
+  # so flag set + non-zero rc is an interrupted turn, not a crash. Any other failure keeps the
+  # old behavior (the REPL exits with the pipeline's status).
   # shellcheck disable=SC2069  # the swap (stderr to old stdout, then stdout to /dev/null) is deliberate, not a mis-ordered redirect
-  printf '%s\n' "$line" | "$DIR/shai-loop" --tools-file "$TOOLS_FILE" ${LOOP_QUIET_FLAG:+"$LOOP_QUIET_FLAG"} 2>&1 >/dev/null
+  if printf '%s\n' "$line" | "$DIR/shai-loop" --tools-file "$TOOLS_FILE" ${LOOP_QUIET_FLAG:+"$LOOP_QUIET_FLAG"} 2>&1 >/dev/null; then
+    :
+  else
+    rc=$?
+    if [ "$interrupted" = 1 ]; then
+      # the aborted turn's events were buffered in runs/<run_id>/events.jsonl (buffer-then-
+      # commit) and never reached the session log; the run stays intact for shai-trace and
+      # shai-retry --run, so the notice points at it
+      printf 'Interrupted.\n'
+      printf 'partial turn kept in run %s — resume with: shai-retry --run %s\n' "$SHAI_RUN_ID" "$SHAI_RUN_ID"
+    else
+      exit "$rc"
+    fi
+  fi
 
   # one blank line after every completed turn (normal, error, or interrupted) separates it from
   # the next prompt. Unconditional: exit/quit break before this, so the goodbye follows the last
