@@ -1,17 +1,17 @@
 #!/bin/bash
 # shai-repl — REPL/orchestrator: seed the system prompt, then delegate the eval+dispatch loop to shai-loop
 # Usage: shai-repl [-q|--quiet]   (interactive; reads prompts until exit/quit/EOF)
-# Reads: interactive prompt lines on stdin (or piped input); SHAI_SESSION_ID / SHAI_SCHEMA_VERSION
-#        from the environment if already set (an inherited session id is never overwritten);
-#        SHAI_MODEL when explicitly set (shown in the startup banner, never defaulted here)
+# Reads: interactive prompt lines on stdin (or piped input); when stdin is a TTY, past prompts
+#        from $SHAI_HOME/history to seed readline's in-session history; SHAI_SESSION_ID /
+#        SHAI_SCHEMA_VERSION from the environment if already set (an inherited session id is
+#        never overwritten); SHAI_MODEL when explicitly set (shown in the startup banner)
 # Writes: a one-line startup banner on stdout when stdout is a TTY (version/session/model; not
-#         suppressed by -q/--quiet), "Goodbye." on exit/quit/EOF; assistant turns via shai-loop,
-#         whose human-readable stderr is redirected to shai-repl's stdout (tool dispatches shown
-#         by default; -q/--quiet hides them) with a blank line between turns; shai-loop buffers
-#         events in
-#         $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then commits finalized events to
-#         $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success (or writes directly if the run
-#         dir is unavailable)
+#         suppressed by -q/--quiet), "Goodbye." on exit/quit/EOF, and accepted prompts appended
+#         to $SHAI_HOME/history (one per line, plain text) when stdin is a TTY; assistant turns
+#         via shai-loop, whose human-readable stderr is redirected to shai-repl's stdout (tool
+#         dispatches shown by default; -q/--quiet hides them) with a blank line between turns;
+#         shai-loop buffers events in $SHAI_HOME/runs/<run_id>/events.jsonl during a turn, then
+#         commits finalized events to $SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl on success
 # Exit: 0 on clean exit (exit/quit/EOF) and on any handled Ctrl-C — at the prompt the line is
 #       cleared and the session continues; mid-turn the in-flight turn is aborted with an
 #       Interrupted. notice and the session continues (a handled interrupt never changes the
@@ -97,6 +97,20 @@ if [ -t 1 ]; then
     "${SHAI_MODEL:+ — model $SHAI_MODEL}" "'exit' to quit"
 fi
 
+# Readline editing + persistent prompt history (#298). Gated on stdin being a TTY: `read -e`
+# provides line editing (Ctrl-W/Ctrl-U), in-session up/down-arrow history, and Ctrl-R reverse
+# search, and the history builtin (history -r to seed, -s/-a per accepted prompt) persists
+# prompts to $SHAI_HOME/history (one per line, plain text) so they survive across launches.
+# Piped stdin keeps the plain `read -r` loop and never touches the history file — scripted/CI
+# input behaves exactly as before.
+READ_EDIT=""
+if [ -t 0 ]; then
+  READ_EDIT="-e"
+  HISTORY_FILE="$STATE_DIR/history"
+  # seed readline with past prompts; no file on the very first launch
+  history -r "$HISTORY_FILE" 2>/dev/null || true
+fi
+
 while :; do
   # the flag only ever describes the read/pipeline about to run — a stale interrupt (e.g. one
   # that landed between turns or during startup) must not masquerade as this iteration's EOF
@@ -106,9 +120,9 @@ while :; do
   # separates them: flag set ⇒ ^C ⇒ clear the line and stay at the prompt, session continues;
   # flag unset ⇒ EOF (a piped final line without a trailing newline still falls through and
   # gets processed below). read's status is deliberately not consulted: with plain read ^C
-  # returns 130, but once `read -e` lands (#298) Readline swallows ^C and read may return a
+  # returns 130, but with `read -e` (TTY only) Readline swallows ^C and read returns a
   # plain 1 — the flag is the only signal that works in both worlds.
-  if ! read -r -p "> " line; then
+  if ! read -r ${READ_EDIT:+"$READ_EDIT"} -p "> " line; then
     if [ "$interrupted" = 1 ]; then
       printf '\n' # move past the echoed ^C; the next prompt redraws the line
       continue
@@ -120,6 +134,19 @@ while :; do
     "") continue ;;
     exit | quit) break ;;
   esac
+
+  # TTY only: persist the accepted prompt for the next launch and keep it in readline's
+  # in-memory history for the rest of this session. `read -e` does NOT add lines to the
+  # history list in non-interactive bash (verified on bash 5.2.21: the history option is off
+  # and the list stays empty), so `history -s` adds the line explicitly; `history -a` then
+  # appends only the lines added since the last append, keeping $SHAI_HOME/history at one
+  # prompt per line. Blank lines are skipped above and exit/quit break before this point, so
+  # neither is recorded. Best-effort (|| true): an unwritable or missing $STATE_DIR must
+  # never abort the REPL.
+  if [ -n "$READ_EDIT" ]; then
+    history -s "$line" 2>/dev/null || true
+    history -a "$HISTORY_FILE" 2>/dev/null || true
+  fi
 
   # a run is one user turn; shai-loop mints/advances spans and manages the run log internally.
   # 2>&1 >/dev/null sends shai-loop's stderr (its human-readable shai-print output) to shai-repl's

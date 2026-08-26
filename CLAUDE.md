@@ -144,7 +144,11 @@ The scripts:
   one-line startup banner `shai <version> — session <id> — type 'exit' to quit` (a
   `— model <model>` segment is appended only when `SHAI_MODEL` is explicitly set; the
   `deepseek-v4-flash` default is never synthesized, so it cannot drift from
-  `shai-eval`/`shai-doctor`). Reads lines from stdin; each non-empty line mints a fresh
+  `shai-eval`/`shai-doctor`). Reads lines from stdin; when stdin is a TTY it reads with
+  `read -e` (Readline: line editing, in-session up/down-arrow history, and Ctrl-R reverse
+  search) and appends each accepted prompt to `$SHAI_HOME/history` (one per line, plain
+  text), reloaded at startup to seed the next session's history — piped stdin keeps the
+  plain `read -r` loop and never touches the history file. Each non-empty line mints a fresh
   `SHAI_RUN_ID` and is handed to `shai-loop --tools-file <tmp>`, which owns the run/span
   bookkeeping, the event log, and the eval/dispatch loop (see below); `shai-repl` itself just
   redirects `shai-loop`'s human-readable stderr to its own stdout (`./shai-repl --quiet` / `-q`

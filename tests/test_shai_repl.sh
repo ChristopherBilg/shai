@@ -77,6 +77,12 @@ _CLEANUP_DIRS+=("$SHAI_TMP_NB")
 NBOUT=$(printf 'exit\n' | SHAI_HOME="$SHAI_TMP_NB" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1)
 assert_eq "$(grep -cE '^shai ' <<<"$NBOUT" || true)" "0" "shai-repl: no startup banner when stdout is not a TTY"
 
+# new: piped input must NOT create or touch $SHAI_HOME/history — readline editing and
+# history persistence are gated on `[ -t 0 ]` (stdin is a TTY), so scripted/CI input
+# keeps the plain-read loop and leaves no history file behind
+assert_eq "$(test -e "$SHAI_TMP_NB/history" && echo exists || echo absent)" "absent" \
+  "shai-repl: no history file when stdin is piped"
+
 # new: the startup banner DOES print when stdout is a TTY — positive test for the
 # `[ -t 1 ]` gate via script(1)'s pty, covering the version/session line and the
 # SHAI_MODEL segment (absent when unset, appended when set)
@@ -92,6 +98,42 @@ assert_contains "$BANNEROUT" " — session banner_sess — type 'exit' to quit" 
 assert_eq "$(grep -c '— model' <<<"$BANNEROUT" || true)" "0" "shai-repl: banner omits model segment when SHAI_MODEL is unset"
 BANNEROUT_M=$(printf 'exit\n' | script -qec "SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess SHAI_MODEL=deepseek-chat '$DIR/shai-repl'" /dev/null)
 assert_contains "$BANNEROUT_M" " — model deepseek-chat" "shai-repl: banner appends — model segment when SHAI_MODEL is set"
+
+# new: under a TTY (script(1)'s pty, like the banner tests), each accepted prompt is
+# appended to $SHAI_HOME/history — one per line, plain text — and reloaded by the next
+# launch, so readline history persists across REPL sessions. Blank lines and exit/quit
+# must not be recorded.
+SHAI_TMP_H="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_H")
+make_stub_bin
+write_gh_stub
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+chmod +x "$STUB/curl"
+HOUT1=$(printf 'first prompt\n\nexit\n' | script -qec "SHAI_HOME='$SHAI_TMP_H' SHAI_SESSION_ID=hist '$DIR/shai-repl'" /dev/null)
+assert_contains "$HOUT1" "hi there" "shai-repl: turn still completes under a TTY with history enabled"
+HIST1=$(cat "$SHAI_TMP_H/history" 2>/dev/null || echo "")
+assert_contains "$HIST1" "first prompt" "shai-repl: TTY prompt recorded in \$SHAI_HOME/history"
+assert_eq "$(grep -cE '^[[:space:]]*$' <<<"$HIST1" || true)" "0" "shai-repl: blank lines not recorded in history"
+assert_eq "$(grep -cx 'exit' <<<"$HIST1" || true)" "0" "shai-repl: exit not recorded in history"
+
+# a second launch under the same SHAI_HOME seeds the first session's prompts into readline
+# and appends the new ones without duplicating the loaded lines
+printf 'second prompt\nexit\n' | script -qec "SHAI_HOME='$SHAI_TMP_H' SHAI_SESSION_ID=hist2 '$DIR/shai-repl'" /dev/null >/dev/null 2>&1
+HIST2=$(cat "$SHAI_TMP_H/history" 2>/dev/null || echo "")
+assert_contains "$HIST2" "first prompt" "shai-repl: history persists across launches"
+assert_contains "$HIST2" "second prompt" "shai-repl: second launch appends its prompts"
+assert_eq "$(wc -l <"$SHAI_TMP_H/history")" "2" "shai-repl: history holds exactly one line per accepted prompt"
+
+# a read-only history file must not abort the REPL — the history calls are best-effort
+SHAI_TMP_RO="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_RO")
+printf 'seeded\n' >"$SHAI_TMP_RO/history"
+chmod 444 "$SHAI_TMP_RO/history"
+ROOUT=$(printf 'third prompt\nexit\n' | script -qec "SHAI_HOME='$SHAI_TMP_RO' SHAI_SESSION_ID=rohist '$DIR/shai-repl'" /dev/null)
+RORC=$?
+chmod 644 "$SHAI_TMP_RO/history"
+assert_eq "$RORC" "0" "shai-repl: unwritable history file degrades, exit 0"
+assert_contains "$ROOUT" "Goodbye." "shai-repl: REPL still exits cleanly with an unwritable history file"
 
 # new: a blank line is skipped — it must not create an assistant event
 SHAI_TMP2="$(mktemp -d)"
