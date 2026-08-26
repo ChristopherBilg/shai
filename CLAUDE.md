@@ -154,11 +154,12 @@ The scripts:
   the line and redraws the prompt (an INT trap sets a flag, and the loop exits only on EOF, so
   ^C can never be mistaken for Ctrl-D); mid-turn it kills the in-flight `shai-loop` pipeline —
   the terminal delivers SIGINT to the whole foreground process group and nothing in the
-  pipeline traps it — whereupon the REPL prints `Interrupted.` plus a
-  `partial turn kept in run <id> — resume with: shai-retry --run <id>` hint and returns to the
-  prompt. The aborted turn's buffered events stay in `$SHAI_HOME/runs/<run_id>/events.jsonl`
-  (buffer-then-commit means they never reach the session log), so `shai-trace`/`shai-retry
-  --run` can still inspect or resume it. A handled interrupt never changes the exit status.
+  pipeline traps it — whereupon the REPL prints `Interrupted.` and returns to the prompt (plus
+  a `partial turn kept in run <id> — resume with: shai-retry --run <id>` hint when the runs
+  dir is writable). The aborted turn's buffered events stay in
+  `$SHAI_HOME/runs/<run_id>/events.jsonl` (buffer-then-commit means they never reach the
+  session log), so `shai-trace`/`shai-retry --run` can still inspect or resume it. A handled
+  interrupt never changes the exit status.
   `exit`/`quit` and EOF (Ctrl-D) all end the loop with a single `Goodbye.` on stdout.
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).

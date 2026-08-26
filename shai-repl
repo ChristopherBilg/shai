@@ -14,11 +14,11 @@
 #         dir is unavailable)
 # Exit: 0 on clean exit (exit/quit/EOF) and on any handled Ctrl-C — at the prompt the line is
 #       cleared and the session continues; mid-turn the in-flight turn is aborted with an
-#       Interrupted. notice (plus a "partial turn kept in run <id> — resume with: shai-retry
-#       --run <id>" hint; the aborted turn's events stay in its run log, never the session log)
-#       and the session continues (a handled interrupt never changes the exit status); 1 if
-#       DEEPSEEK_API_KEY is missing (health check); 2 on unknown option; 3 if the system prompt
-#       is missing or empty (shai-prompt)
+#       Interrupted. notice and the session continues (a handled interrupt never changes the
+#       exit status; when the runs dir is writable the notice adds a "partial turn kept in
+#       run <id> — resume with: shai-retry --run <id>" hint — the aborted turn's events stay
+#       in its run log, never the session log); 1 if DEEPSEEK_API_KEY is missing (health
+#       check); 2 on unknown option; 3 if the system prompt is missing or empty (shai-prompt)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -140,10 +140,15 @@ while :; do
     rc=$?
     if [ "$interrupted" = 1 ]; then
       # the aborted turn's events were buffered in runs/<run_id>/events.jsonl (buffer-then-
-      # commit) and never reached the session log; the run stays intact for shai-trace and
-      # shai-retry --run, so the notice points at it
+      # commit) and never reached the session log. When the runs dir is writable the run stays
+      # intact for shai-trace and shai-retry --run, so the notice points at it; when it is
+      # unwritable shai-loop fell back to RUN_LOG=/dev/null (no run log at all), so the hint
+      # is only printed when the log actually exists — otherwise it would promise a resume
+      # that shai-retry cannot deliver ("run log not found")
       printf 'Interrupted.\n'
-      printf 'partial turn kept in run %s — resume with: shai-retry --run %s\n' "$SHAI_RUN_ID" "$SHAI_RUN_ID"
+      if [ -f "$STATE_DIR/runs/$SHAI_RUN_ID/events.jsonl" ]; then
+        printf 'partial turn kept in run %s — resume with: shai-retry --run %s\n' "$SHAI_RUN_ID" "$SHAI_RUN_ID"
+      fi
     else
       exit "$rc"
     fi
