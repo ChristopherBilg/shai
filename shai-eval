@@ -4,7 +4,7 @@
 # Reads: a {messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
 #        environment to locate the per-span request/response dumps;
 #        SHAI_MAX_TOKENS (default 32000) for the output token budget;
-#        SHAI_EVAL_TIMEOUT (default 300) for the curl --max-time ceiling in seconds;
+#        SHAI_EVAL_TIMEOUT (default 600) for the curl --max-time ceiling in seconds;
 #        SHAI_EVAL_RETRIES (default 2, max 10) for retry count on transient failures
 # Writes: one assistant/error event (assistant events carry an `api` key: message_id, model,
 #         usage, latency_ms); on a real call, also dumps the request, and on success the response
@@ -23,7 +23,7 @@ HEALTH_CHECK=false
 API_URL="https://api.deepseek.com/v1/chat/completions"
 TOOLS_FILE=""
 
-EVAL_TIMEOUT="${SHAI_EVAL_TIMEOUT:-300}"
+EVAL_TIMEOUT="${SHAI_EVAL_TIMEOUT:-600}"
 case "$EVAL_TIMEOUT" in
   '' | 0* | *[!0-9]*)
     printf 'error: SHAI_EVAL_TIMEOUT must be a positive integer (got "%s")\n' "$EVAL_TIMEOUT" >&2
