@@ -135,6 +135,23 @@ chmod 644 "$SHAI_TMP_RO/history"
 assert_eq "$RORC" "0" "shai-repl: unwritable history file degrades, exit 0"
 assert_contains "$ROOUT" "Goodbye." "shai-repl: REPL still exits cleanly with an unwritable history file"
 
+# a single session that outlives the in-memory history list (HISTSIZE, default 500) must
+# still append exactly one line per accepted prompt — bash's `history -a` append-pointer
+# tracking across a list wrap is a known sharp edge, so force the wrap cheaply with a tiny
+# HISTSIZE: the file must hold every seeded + accepted line exactly once, no duplicates
+SHAI_TMP_W="$(mktemp -d)"
+_CLEANUP_DIRS+=("$SHAI_TMP_W")
+make_stub_bin
+write_gh_stub
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+chmod +x "$STUB/curl"
+printf 'seed1\nseed2\nseed3\n' >"$SHAI_TMP_W/history"
+printf 'w1\nw2\nw3\nw4\nw5\nw6\nw7\nw8\nexit\n' | script -qec "HISTSIZE=5 SHAI_HOME='$SHAI_TMP_W' SHAI_SESSION_ID=wrap '$DIR/shai-repl'" /dev/null >/dev/null 2>&1
+HISTW=$(cat "$SHAI_TMP_W/history")
+assert_contains "$HISTW" "seed1" "shai-repl: seeded lines survive the HISTSIZE wrap"
+assert_eq "$(wc -l <<<"$HISTW")" "11" "shai-repl: one line per accepted prompt past the HISTSIZE wrap (seeded 3 + 8 prompts)"
+assert_eq "$(sort <<<"$HISTW" | uniq -d | tr '\n' ' ')" "" "shai-repl: no duplicated lines when the in-session list wraps"
+
 # new: a blank line is skipped — it must not create an assistant event
 SHAI_TMP2="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP2")
@@ -433,6 +450,49 @@ SIGSTUB
   assert_contains "$SIGBOUT" "Goodbye." "shai-repl: goodbye after at-prompt Ctrl-C"
   assert_eq "$(grep -c 'Interrupted\.' <<<"$SIGBOUT" || true)" "0" \
     "shai-repl: at-prompt Ctrl-C prints no Interrupted notice"
+
+  # (c) ^C at the prompt under a REAL TTY, where `read -e` (Readline) is active — tests
+  # (a)/(b) exercise the plain-read FIFO path only. script(1)'s pty is a real terminal, so
+  # \003 is the INTR character and the kernel delivers SIGINT to the REPL's process group
+  # exactly as a human pressing Ctrl-C would; env --default-signal=INT restores the default
+  # SIGINT disposition (see the block comment above). This locks in the #299 guarantee for
+  # the interactive/readline path: the INT-trap flag, not read's status, must distinguish
+  # ^C from EOF.
+  TCC_HOME="$(mktemp -d)"
+  _CLEANUP_DIRS+=("$TCC_HOME")
+  mkfifo "$TCC_HOME/in"
+  : >"$TCC_HOME/out"
+  TCC_STUB="$(mktemp -d)"
+  _CLEANUP_DIRS+=("$TCC_STUB")
+  printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"tty alive"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$TCC_STUB/curl"
+  chmod +x "$TCC_STUB/curl"
+
+  env --default-signal=INT PATH="$TCC_STUB:$PATH" script -qec "SHAI_HOME='$TCC_HOME' SHAI_SESSION_ID=ttycc '$DIR/shai-repl'" /dev/null \
+    <"$TCC_HOME/in" >"$TCC_HOME/out" 2>&1 &
+  TCC_SCRIPT_PID=$!
+  exec 7>"$TCC_HOME/in" # open the FIFO's write end so script's stdin open completes
+
+  # the seeded system prompt in the session log means the REPL is at (or a hair before) the
+  # prompt; the extra beat lets it settle into the blocked readline read
+  wait_for 10 "tty prompt reached (system seed written)" -- \
+    bash -c 'jq -e "select(.source==\"system\")" "$1/sessions/ttycc.jsonl" >/dev/null 2>&1' _ "$TCC_HOME"
+  sleep 0.3
+  printf '\003' >&7 # ^C through the pty: INTR → SIGINT to the REPL's process group
+  sleep 0.3
+  printf 'tty question\nexit\n' >&7
+
+  wait_for 15 "goodbye after at-prompt ^C" -- bash -c 'grep -q "Goodbye\." "$1/out"' _ "$TCC_HOME"
+  kill "$TCC_SCRIPT_PID" 2>/dev/null || true
+  wait "$TCC_SCRIPT_PID" 2>/dev/null
+  TCC_RC=$?
+  exec 7>&-
+
+  TCCOUT=$(cat "$TCC_HOME/out")
+  assert_eq "$TCC_RC" "0" "shai-repl: exits 0 after ^C at the TTY prompt (read -e path)"
+  assert_contains "$TCCOUT" "tty alive" "shai-repl: prompt after ^C under a TTY processes a new turn"
+  assert_contains "$TCCOUT" "Goodbye." "shai-repl: goodbye after ^C at the TTY prompt"
+  assert_eq "$(grep -c 'Interrupted\.' <<<"$TCCOUT" || true)" "0" \
+    "shai-repl: ^C at the TTY prompt prints no Interrupted notice"
 else
   echo "  (skipping SIGINT tests: setsid or env --default-signal unavailable)"
 fi
