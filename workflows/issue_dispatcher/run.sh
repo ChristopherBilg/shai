@@ -1,7 +1,8 @@
 #!/bin/bash
 # issue_dispatcher/run.sh — poll GitHub for assigned issues and delegate each to issue_worker
 # Usage: workflows/issue_dispatcher/run.sh
-# Reads: gh auth from environment; searches open issues assigned to @me labeled shai-issue-dispatcher
+# Reads: gh auth from environment; searches open issues assigned to @me labeled shai-issue-dispatcher;
+#   checks each issue's blocked_by dependencies via gh api (defers issues with open blockers)
 # Writes: removes the shai-issue-dispatcher label; dispatches shai-workflow run issue_worker; ephemeral session log (prunable)
 # Exit: 0 on success (including idle tick with no matches); 1 on failure
 set -euo pipefail
@@ -37,6 +38,7 @@ fi
 DISPATCHED=0
 SKIPPED=0
 FAILED=0
+BLOCKED=0
 
 # Iterate matches as compact "repo<TAB>number" lines so a for-loop over word-split output
 # can't be tripped up by whitespace, and each field survives intact.
@@ -44,6 +46,22 @@ while IFS=$'\t' read -r REPO NUMBER; do
   [ -n "$REPO" ] || continue
 
   KEY="issue:$REPO:$NUMBER"
+
+  # Check dependencies — skip if any blocker is still open (label stays for next tick)
+  DEPS_JSON=$(gh api "repos/$REPO/issues/$NUMBER/dependencies/blocked_by" 2>/dev/null) || {
+    wf_output "WARNING: could not check dependencies for $REPO#$NUMBER, deferring"
+    BLOCKED=$((BLOCKED + 1))
+    continue
+  }
+  OPEN_DEPS=$(printf '%s' "$DEPS_JSON" | jq '[.[] | select(.state != "closed")] | length') || {
+    wf_output "WARNING: could not parse dependencies for $REPO#$NUMBER, deferring"
+    BLOCKED=$((BLOCKED + 1))
+    continue
+  }
+  if [ "$OPEN_DEPS" -gt 0 ]; then
+    BLOCKED=$((BLOCKED + 1))
+    continue
+  fi
 
   # Safety-net dedup: the label removal below is the primary guard, but a ledger hit means
   # this issue was already handed off in a prior tick before its label could be re-added.
@@ -81,7 +99,7 @@ while IFS=$'\t' read -r REPO NUMBER; do
   fi
 done < <(printf '%s' "$SEARCH_JSON" | jq -r '.[] | "\(.repository.nameWithOwner)\t\(.number)"')
 
-wf_output "dispatched=$DISPATCHED skipped=$SKIPPED failed=$FAILED"
+wf_output "dispatched=$DISPATCHED skipped=$SKIPPED failed=$FAILED blocked=$BLOCKED"
 if [ "$FAILED" -gt 0 ] && [ "$DISPATCHED" -eq 0 ]; then
   exit 1
 fi
