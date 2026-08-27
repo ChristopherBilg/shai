@@ -2,7 +2,8 @@
 # issue_dispatcher/run.sh — poll GitHub for assigned issues and delegate each to issue_worker
 # Usage: workflows/issue_dispatcher/run.sh
 # Reads: gh auth from environment; searches open issues assigned to @me labeled shai-issue-dispatcher;
-#   checks each issue's blocked_by dependencies via gh api (defers issues with open blockers)
+#   checks each issue's blocked_by dependencies via gh api --paginate (defers issues with open
+#   blockers; fails loudly when the endpoint is missing)
 # Writes: removes the shai-issue-dispatcher label; dispatches shai-workflow run issue_worker; ephemeral session log (prunable)
 # Exit: 0 on success (including idle tick with no matches); 1 on failure
 set -euo pipefail
@@ -47,10 +48,22 @@ while IFS=$'\t' read -r REPO NUMBER; do
 
   KEY="issue:$REPO:$NUMBER"
 
-  # Check dependencies — skip if any blocker is still open (label stays for next tick)
-  DEPS_JSON=$(gh api "repos/$REPO/issues/$NUMBER/dependencies/blocked_by" 2>/dev/null) || {
-    wf_output "WARNING: could not check dependencies for $REPO#$NUMBER, deferring"
-    BLOCKED=$((BLOCKED + 1))
+  # Check dependencies — skip if any blocker is still open (label stays for next tick).
+  # --paginate: blocked_by is paginated (30/page), so a blocker beyond the first page must
+  # not be missed. The error output is captured (not discarded) so the warning says why.
+  DEPS_JSON=$(gh api --paginate "repos/$REPO/issues/$NUMBER/dependencies/blocked_by" 2>&1) || {
+    case "$DEPS_JSON" in
+      *"HTTP 404"* | *"HTTP 410"*)
+        # Endpoint missing (e.g. older GHES) — deferring would stall dispatch forever while
+        # still exiting 0, so surface it as a failure instead of a silent indefinite block
+        wf_output "WARNING: dependency endpoint unavailable for $REPO#$NUMBER: $DEPS_JSON"
+        FAILED=$((FAILED + 1))
+        ;;
+      *)
+        wf_output "WARNING: could not check dependencies for $REPO#$NUMBER, deferring${DEPS_JSON:+: $DEPS_JSON}"
+        BLOCKED=$((BLOCKED + 1))
+        ;;
+    esac
     continue
   }
   OPEN_DEPS=$(printf '%s' "$DEPS_JSON" | jq '[.[] | select(.state != "closed")] | length') || {
