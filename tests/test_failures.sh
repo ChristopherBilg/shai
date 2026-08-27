@@ -527,6 +527,7 @@ cat >"$STUB/gh" <<GHSTUB
 #!/bin/bash
 case "\$*" in
   "search issues"*) cat "$SEARCH_FIXTURE" ;;
+  "api "*"/dependencies/blocked_by"*) echo '[]' ;;
   "issue edit"*) exit 0 ;;
   *) echo "stub gh: \$*" ;;
 esac
