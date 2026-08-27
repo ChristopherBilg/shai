@@ -1,9 +1,9 @@
 #!/bin/bash
 # test_issue_dispatcher.sh — unit tests for workflows/issue_dispatcher/run.sh
 # Covers: workflows/issue_dispatcher/run.sh — idle tick, gh search failure, dependency-aware
-#   dispatch (blocked, ready, API error, mixed), label removal before dispatch, sequential
-#   processing, dual idempotency (label + ledger), worker failure leaving ledger unmarked,
-#   and label-removal-failure skip-and-continue (including the already-seen path)
+#   dispatch (blocked, ready, API error, missing endpoint, mixed), label removal before dispatch,
+#   sequential processing, dual idempotency (label + ledger), worker failure leaving ledger
+#   unmarked, and label-removal-failure skip-and-continue (including the already-seen path)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -56,7 +56,11 @@ case "\$*" in
     num=\$(echo "\$*" | sed 's|.*issues/\([0-9][0-9]*\)/.*|\1|')
     rc_file="$DEPS_DIR/\${num}.rc"
     rc="\$(cat "\$rc_file" 2>/dev/null || cat "$DEPS_RC_FILE" 2>/dev/null || echo 0)"
-    [ "\$rc" = "0" ] || exit "\$rc"
+    if [ "\$rc" != "0" ]; then
+      msg_file="$DEPS_DIR/\${num}.msg"
+      [ -f "\$msg_file" ] && cat "\$msg_file" >&2
+      exit "\$rc"
+    fi
     fixture="$DEPS_DIR/\${num}.json"
     if [ -f "\$fixture" ]; then
       cat "\$fixture"
@@ -83,6 +87,31 @@ reset_state() {
   echo 0 >"$EDIT_RC_FILE"
   echo 0 >"$SEARCH_RC_FILE"
   echo 0 >"$DEPS_RC_FILE"
+}
+
+# issue_obj <number> <state>: emit a single issue object shaped like the real
+# `dependencies/blocked_by` response (full issue objects, not `{state, number}`), so the
+# suite pins that the dispatcher's `.state` filter tolerates the actual schema.
+issue_obj() {
+  jq -nc \
+    --arg num "$1" \
+    --arg state "$2" \
+    '{url: ("https://api.github.com/repos/owner/repo/issues/" + $num),
+      id: ($num | tonumber),
+      node_id: ("I_kwDOAB1234" + $num),
+      number: ($num | tonumber),
+      title: ("dependency " + $num),
+      state: $state,
+      state_reason: (if $state == "closed" then "completed" else null end),
+      locked: false,
+      comments: 0,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-02T00:00:00Z",
+      closed_at: (if $state == "closed" then "2026-01-02T00:00:00Z" else null end),
+      author_association: "OWNER",
+      html_url: ("https://github.com/owner/repo/issues/" + $num),
+      user: {login: "octocat"},
+      labels: []}'
 }
 
 # --- idle tick: no matching issues ---
@@ -231,9 +260,13 @@ reset_state
 cat >"$SEARCH_FIXTURE" <<'JSON'
 [{"repository":{"nameWithOwner":"owner/repo"},"number":42}]
 JSON
-cat >"$DEPS_DIR/42.json" <<'JSON'
-[{"state":"closed","number":10},{"state":"open","number":11}]
-JSON
+{
+  printf '['
+  issue_obj 10 closed
+  printf ','
+  issue_obj 11 open
+  printf ']\n'
+} >"$DEPS_DIR/42.json"
 OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
 RC=$?
 assert_eq "$RC" "0" "issue_dispatcher: exit 0 when only issue is blocked"
@@ -249,9 +282,13 @@ reset_state
 cat >"$SEARCH_FIXTURE" <<'JSON'
 [{"repository":{"nameWithOwner":"owner/repo"},"number":42}]
 JSON
-cat >"$DEPS_DIR/42.json" <<'JSON'
-[{"state":"closed","number":10},{"state":"closed","number":11}]
-JSON
+{
+  printf '['
+  issue_obj 10 closed
+  printf ','
+  issue_obj 11 closed
+  printf ']\n'
+} >"$DEPS_DIR/42.json"
 OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
 RC=$?
 assert_eq "$RC" "0" "issue_dispatcher: exit 0 when deps are all closed"
@@ -276,6 +313,24 @@ assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
 assert_eq "$(test -f "$EDIT_LOG" && echo yes || echo no)" "no" \
   "issue_dispatcher: label not removed when dependency check fails"
 
+# --- dependency endpoint missing (404): fail loudly instead of deferring forever ---
+desc "missing dependency endpoint fails loudly"
+reset_state
+cat >"$SEARCH_FIXTURE" <<'JSON'
+[{"repository":{"nameWithOwner":"owner/repo"},"number":42}]
+JSON
+echo 22 >"$DEPS_DIR/42.rc"
+echo "gh: HTTP 404: Not Found (https://api.github.com/repos/owner/repo/issues/42/dependencies/blocked_by)" >"$DEPS_DIR/42.msg"
+OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
+RC=$?
+assert_eq "$RC" "1" "issue_dispatcher: exit 1 when dependency endpoint is missing"
+assert_contains "$OUT" "WARNING" "issue_dispatcher: warns on missing dependency endpoint"
+assert_contains "$OUT" "failed=1" "issue_dispatcher: counts missing endpoint as failed"
+assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
+  "issue_dispatcher: no dispatch when dependency endpoint is missing"
+assert_eq "$(test -f "$EDIT_LOG" && echo yes || echo no)" "no" \
+  "issue_dispatcher: label not removed when dependency endpoint is missing"
+
 # --- mixed: one blocked, one ready ---
 desc "mixed blocked and ready issues"
 reset_state
@@ -283,9 +338,11 @@ cat >"$SEARCH_FIXTURE" <<'JSON'
 [{"repository":{"nameWithOwner":"owner/repo"},"number":1},
  {"repository":{"nameWithOwner":"owner/repo"},"number":7}]
 JSON
-cat >"$DEPS_DIR/1.json" <<'JSON'
-[{"state":"open","number":99}]
-JSON
+{
+  printf '['
+  issue_obj 99 open
+  printf ']\n'
+} >"$DEPS_DIR/1.json"
 OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
 RC=$?
 assert_eq "$RC" "0" "issue_dispatcher: exit 0 with mixed blocked and ready"
