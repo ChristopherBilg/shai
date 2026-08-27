@@ -560,15 +560,22 @@ checks configured), commits, pushes, and creates a draft PR with `Closes #<numbe
 **`workflows/issue_dispatcher/run.sh`** is a pure-bash dispatcher (no LLM calls — the LLM work
 happens inside `issue_worker`). It runs as a `shai-supervise` timer job, globally searching every
 repo via `gh search issues --assignee @me --label shai-issue-dispatcher --state open` for open issues
-assigned to the authenticated user. For each match it checks the `wf_seen`/`wf_mark` ledger (safety
-net, key `issue:<repo>:<number>`), **removes the `shai-issue-dispatcher` label before dispatch** (the
-primary dedup — an issue is never reprocessed even if the worker crashes; a human must re-apply the
-label to retry), then delegates to `shai-workflow run issue_worker <repo> <number>` and marks the
-ledger on success. All matching issues are processed sequentially per invocation. `SHAI_WORKFLOW`
-overrides the `shai-workflow` binary (used by the test suite). Error handling: no matches → exit 0
-(idle tick); `gh search` failure → `wf_fail`/exit 1 (next tick retries); label removal failure for
-one issue → warn, skip, continue (label stays for retry); worker failure → label already removed,
-ledger left unmarked (re-label to retry). Install via
+assigned to the authenticated user. For each match it first checks **issue dependencies** via
+`gh api --paginate repos/<repo>/issues/<number>/dependencies/blocked_by` (paginated: 30/page) — if
+any blocking issue has `state != "closed"`, the issue is deferred (label stays, next tick
+re-checks); a transient API failure also defers (fail-safe), while a missing endpoint
+(HTTP 404/410) fails loudly instead of stalling dispatch forever. Unblocked issues proceed: checks the
+`wf_seen`/`wf_mark` ledger (safety net, key `issue:<repo>:<number>`), **removes the
+`shai-issue-dispatcher` label before dispatch** (the primary dedup — an issue is never reprocessed
+even if the worker crashes; a human must re-apply the label to retry), then delegates to
+`shai-workflow run issue_worker <repo> <number>` and marks the ledger on success. All matching
+issues are processed sequentially per invocation. `SHAI_WORKFLOW` overrides the `shai-workflow`
+binary (used by the test suite). Error handling: no matches → exit 0 (idle tick); `gh search`
+failure → `wf_fail`/exit 1 (next tick retries); blocked dependencies → defer, label stays
+(next tick re-checks); dependency API failure → defer with warning (next tick retries);
+missing dependency endpoint (404/410) → fail loudly (exit 1, no silent stall); label
+removal failure for one issue → warn, skip, continue (label stays for retry); worker failure →
+label already removed, ledger left unmarked (re-label to retry). Install via
 `shai-supervise install workflows/issue_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
 
