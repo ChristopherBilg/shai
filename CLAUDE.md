@@ -75,13 +75,13 @@ step), `SHAI_SUGGEST_REPO` (`OWNER/REPO` that suggestion issues are filed on; ov
 remote detection), `SHAI_FAILURE_WORKFLOW` (failure store workflow name; used when `WF_NAME`
 is unset — see **Failure store** below).
 
-**Ambient trace context** — set by `shai-repl`/`shai-retry`, inherited by every child filter, read only
+**Ambient trace context** — set by `shai-repl`/`shai-ask`/`shai-retry`, inherited by every child filter, read only
 by `shai-stamp` (plus `SHAI_RUN_ID`/`SHAI_SPAN_ID` in `shai-eval`, to locate its request dump):
 
 | Variable              | Scope                                            | Notes                                                                           |
 | --------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------- |
 | `SHAI_SCHEMA_VERSION` | constant                                         | defaults to `1.0`                                                               |
-| `SHAI_SESSION_ID`     | one REPL launch (or one `shai-retry` invocation) | **an inherited value always wins** — an nvim/tmux/cron wrapper owns the session |
+| `SHAI_SESSION_ID`     | one REPL launch (or one `shai-ask`/`shai-retry` invocation) | **an inherited value always wins** — an nvim/tmux/cron wrapper owns the session |
 | `SHAI_RUN_ID`         | one user turn                                    | minted per turn, not per launch                                                 |
 | `SHAI_SPAN_ID`        | one eval iteration                               | plus the tool results that eval requested                                       |
 | `SHAI_PARENT_SPAN_ID` | previous span                                    | forms a linear chain within a run                                               |
@@ -165,7 +165,7 @@ The scripts:
   session log), so `shai-trace`/`shai-retry --run` can still inspect or resume it. A handled
   interrupt never changes the exit status.
   `exit`/`quit` and EOF (Ctrl-D) all end the loop with a single `Goodbye.` on stdout.
-- **`shai-ask [OPTIONS] [PROMPT ...]`** (`shai-ask:1`) — non-interactive one-shot mode:
+- **`shai-ask [-q|--quiet] [--no-tools] [--model MODEL] [--max-tokens N] [--external SOURCE] [PROMPT ...]`** (`shai-ask:1`) — non-interactive one-shot mode:
   `shai-repl` for humans, `shai-ask` for scripts, cron jobs, and pipes. Runs the full
   pipeline once — health check, system prompt via `shai-prompt system`, tools via
   `shai-tools` (enabled by default; `--no-tools` opts out), then one turn through
