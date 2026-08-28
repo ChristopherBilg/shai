@@ -151,7 +151,9 @@ def bhook_lines($scope; $indent):
         ]
       elif ($t.builtin == true) then
         [ $indent + "if [[ \"$prev\" == \"" + $fkey + "\" ]]; then"
+        , $indent + "  local IFS=$'\\n'"
         , $indent + "  COMPREPLY=( $(compgen -f -- \"$cur\") )"
+        , $indent + "  compopt -o filenames 2>/dev/null"
         , $indent + "  return"
         , $indent + "fi"
         ]
@@ -168,21 +170,51 @@ def bflag_block($scope; $indent):
     , $indent + "fi"
     ]
   else [] end;
+def bpos_scan($scope; $indent):
+  # Count consumed positional words before the cursor, skipping boolean flags
+  # and the value words of value-taking flags, so a flag value no longer hides
+  # the positional slot (e.g. `shai-supervise install --interval 15min <TAB>`).
+  [ $indent + "local _shai_pos=0 _shai_val=0 _shai_i"
+  , $indent + "for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do"
+  , $indent + "  case \"${COMP_WORDS[_shai_i]}\" in"
+  ]
+  + (($scope.flags // {}) | to_entries | map(select((.value.arg // "") != ""))
+       | map([.key] + (if (.value.short // "") != "" then [.value.short] else [] end)) | flatten
+       | map([
+           $indent + "    " + . + ")"
+         , $indent + "      if [ $((_shai_i + 1)) -ge \"$COMP_CWORD\" ]; then"
+         , $indent + "        _shai_val=1"
+         , $indent + "      fi"
+         , $indent + "      _shai_i=$((_shai_i + 1))"
+         , $indent + "      ;;"
+         , $indent + "    " + . + "=*) : ;;"
+         ]) | flatten)
+  + [ $indent + "    -*) : ;;"
+    , $indent + "    *)"
+    , $indent + "      _shai_pos=$((_shai_pos + 1))"
+    , $indent + "      ;;"
+    , $indent + "  esac"
+    , $indent + "done"
+    ];
 def bpos_block($scope; $posbase; $indent):
   if ((($scope.positional // []) | length) > 0) then
     ($root.types[($scope.positional // [])[0].type // ""] // {}) as $pt |
     if (($pt.command // "") != "") then
-      [ $indent + "if [ \"$COMP_CWORD\" -eq " + ($posbase | tostring) + " ]; then"
-      , $indent + "  _shai_bash_" + ($scope.positional // [])[0].type
-      , $indent + "  return"
-      , $indent + "fi"
-      ]
+      bpos_scan($scope; $indent)
+      + [ $indent + "if [ \"$_shai_val\" -eq 0 ] && [ \"$_shai_pos\" -eq " + (($posbase - 1) | tostring) + " ]; then"
+        , $indent + "  _shai_bash_" + ($scope.positional // [])[0].type
+        , $indent + "  return"
+        , $indent + "fi"
+        ]
     elif ($pt.builtin == true) then
-      [ $indent + "if [ \"$COMP_CWORD\" -eq " + ($posbase | tostring) + " ]; then"
-      , $indent + "  COMPREPLY=( $(compgen -f -- \"$cur\") )"
-      , $indent + "  return"
-      , $indent + "fi"
-      ]
+      bpos_scan($scope; $indent)
+      + [ $indent + "if [ \"$_shai_val\" -eq 0 ] && [ \"$_shai_pos\" -eq " + (($posbase - 1) | tostring) + " ]; then"
+        , $indent + "  local IFS=$'\\n'"
+        , $indent + "  COMPREPLY=( $(compgen -f -- \"$cur\") )"
+        , $indent + "  compopt -o filenames 2>/dev/null"
+        , $indent + "  return"
+        , $indent + "fi"
+        ]
     else [] end
   else [] end;
 def dirblock:

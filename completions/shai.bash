@@ -78,7 +78,9 @@ _shai_eval() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [[ "$prev" == "--tools-file" ]]; then
+    local IFS=$'\n'
     COMPREPLY=( $(compgen -f -- "$cur") )
+    compopt -o filenames 2>/dev/null
     return
   fi
   if [[ "$cur" == -* ]]; then
@@ -100,7 +102,9 @@ _shai_loop() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [[ "$prev" == "--tools-file" ]]; then
+    local IFS=$'\n'
     COMPREPLY=( $(compgen -f -- "$cur") )
+    compopt -o filenames 2>/dev/null
     return
   fi
   if [[ "$cur" == -* ]]; then
@@ -199,7 +203,30 @@ _shai_trace() {
     COMPREPLY=( $(compgen -W "--request --response --verbose --json" -- "$cur") )
     return
   fi
-  if [ "$COMP_CWORD" -eq 1 ]; then
+  local _shai_pos=0 _shai_val=0 _shai_i
+  for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+    case "${COMP_WORDS[_shai_i]}" in
+      --request)
+        if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+          _shai_val=1
+        fi
+        _shai_i=$((_shai_i + 1))
+        ;;
+      --request=*) : ;;
+      --response)
+        if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+          _shai_val=1
+        fi
+        _shai_i=$((_shai_i + 1))
+        ;;
+      --response=*) : ;;
+      -*) : ;;
+      *)
+        _shai_pos=$((_shai_pos + 1))
+        ;;
+    esac
+  done
+  if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 0 ]; then
     _shai_bash_run_id
     return
   fi
@@ -294,8 +321,19 @@ _shai_tools() {
   local cur prev
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  if [ "$COMP_CWORD" -eq 1 ]; then
+  local _shai_pos=0 _shai_val=0 _shai_i
+  for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+    case "${COMP_WORDS[_shai_i]}" in
+      -*) : ;;
+      *)
+        _shai_pos=$((_shai_pos + 1))
+        ;;
+    esac
+  done
+  if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 0 ]; then
+    local IFS=$'\n'
     COMPREPLY=( $(compgen -f -- "$cur") )
+    compopt -o filenames 2>/dev/null
     return
   fi
   COMPREPLY=()
@@ -305,7 +343,16 @@ _shai_prompt() {
   local cur prev
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
-  if [ "$COMP_CWORD" -eq 1 ]; then
+  local _shai_pos=0 _shai_val=0 _shai_i
+  for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+    case "${COMP_WORDS[_shai_i]}" in
+      -*) : ;;
+      *)
+        _shai_pos=$((_shai_pos + 1))
+        ;;
+    esac
+  done
+  if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 0 ]; then
     _shai_bash_prompt_name
     return
   fi
@@ -325,14 +372,32 @@ _shai_workflow() {
       COMPREPLY=()
       ;;
     run)
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
       COMPREPLY=()
       ;;
     describe)
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
@@ -358,28 +423,71 @@ _shai_supervise() {
         COMPREPLY=( $(compgen -W "--interval" -- "$cur") )
         return
       fi
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          --interval)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --interval=*) : ;;
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
       COMPREPLY=()
       ;;
     uninstall)
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
       COMPREPLY=()
       ;;
     start)
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
       COMPREPLY=()
       ;;
     stop)
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
@@ -390,14 +498,32 @@ _shai_supervise() {
         COMPREPLY=( $(compgen -W "--json" -- "$cur") )
         return
       fi
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
       COMPREPLY=()
       ;;
     logs)
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
@@ -430,7 +556,16 @@ _shai_completions() {
   fi
   case "${COMP_WORDS[1]}" in
     generate)
-      if [ "$COMP_CWORD" -eq 2 ]; then
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_shell
         return
       fi

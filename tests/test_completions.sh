@@ -18,6 +18,26 @@ assert_exit 2 "missing shell argument is a usage error" -- "$GEN" generate
 assert_exit 2 "unknown shell is a usage error" -- "$GEN" generate fish
 assert_exit 2 "extra argument is a usage error" -- "$GEN" generate zsh extra
 
+# --- generation failures exit 1 --------------------------------------------
+# The generator resolves completions.json next to the script itself, so failure
+# fixtures need their own copy of shai-completions.
+BADGEN="$(mktemp -d)"
+_CLEANUP_DIRS+=("$BADGEN")
+cp "$GEN" "$BADGEN/shai-completions"
+chmod +x "$BADGEN/shai-completions"
+
+# Path 1: a manifest that fails the jq -e shape guard.
+printf 'not a manifest\n' >"$BADGEN/completions.json"
+assert_exit 1 "invalid manifest is a generation failure (zsh)" -- "$BADGEN/shai-completions" generate zsh
+assert_exit 1 "invalid manifest is a generation failure (bash)" -- "$BADGEN/shai-completions" generate bash
+
+# Path 2: a referenced type with no command, builtin, or hint — the zsh
+# generator's type_action errors; docs.sh does not reject this shape.
+cat >"$BADGEN/completions.json" <<'EOF'
+{"scripts":{"shai-eval":{"flags":{},"positional":[{"name":"x","type":"ghost"}]}},"types":{"ghost":{"description":"no completion source"}}}
+EOF
+assert_exit 1 "type with no command, builtin, or hint is a generation failure" -- "$BADGEN/shai-completions" generate zsh
+
 # --- generation ------------------------------------------------------------
 ZSH_OUT="$("$GEN" generate zsh)"
 RC=$?
@@ -148,7 +168,7 @@ fi
 # directory at load time. A fake install dir exercises that path end to end.
 WF="$(mktemp -d)"
 _CLEANUP_DIRS+=("$WF")
-mkdir -p "$WF/workflows/heartbeat" "$WF/workflows/jira_worker" "$WF/prompts"
+mkdir -p "$WF/workflows/heartbeat" "$WF/workflows/jira_worker" "$WF/prompts" "$WF/work flows"
 cat >"$WF/workflows/heartbeat/run.sh" <<'EOF'
 #!/bin/bash
 # heartbeat/run.sh — pipeline liveness probe
@@ -187,6 +207,14 @@ assert_contains "$out" "jira_worker" "bash: shai-workflow run <TAB> completes ev
 out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_failures shai-failures list --workflow hea)"
 assert_contains "$out" "heartbeat" "bash: shai-failures list --workflow <TAB> completes workflow names"
 
+# A flag value between the subcommand and the cursor must not hide the
+# positional slot: track consumed positionals instead of the raw COMP_CWORD.
+out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_supervise shai-supervise install --interval 15min "")"
+assert_contains "$out" "heartbeat" \
+  "bash: shai-supervise install --interval 15min <TAB> completes workflow names"
+out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_supervise shai-supervise install --interval "")"
+assert_eq "$out" "" "bash: shai-supervise install --interval <TAB> completes nothing at the flag value"
+
 out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_prompt shai-prompt sy)"
 assert_contains "$out" "system" "bash: shai-prompt <TAB> completes prompt names"
 
@@ -199,6 +227,19 @@ out="$(PATH="$STUB_BIN:$PATH" bash -c '
   printf "%s\n" "${COMPREPLY[*]}"
 ' _ "$DIR" "$WF")"
 assert_contains "$out" "workflows" "bash: shai-tools <TAB> completes filesystem paths (file type)"
+
+# Paths containing spaces must arrive as single COMPREPLY entries (newline-only
+# word splitting + compopt -o filenames for readline), not fragmented words.
+out="$(PATH="$STUB_BIN:$PATH" bash -c '
+  source "$1/completions/shai.bash"
+  cd "$2" || exit
+  COMP_WORDS=(shai-tools "work f")
+  COMP_CWORD=1
+  _shai_tools
+  printf "%s\n" "${#COMPREPLY[@]}:${COMPREPLY[*]}"
+' _ "$DIR" "$WF")"
+assert_contains "$out" "1:" "bash: shai-tools completes a space-containing path as one candidate"
+assert_contains "$out" "work flows" "bash: the spaced candidate keeps its full name"
 
 # The readlink fallback: a real (non-wrapper) shai-repl script on $PATH resolves
 # to its own directory.
