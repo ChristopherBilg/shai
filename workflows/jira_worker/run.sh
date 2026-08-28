@@ -2,6 +2,7 @@
 # jira_worker/run.sh — implement a Jira ticket and open a draft pull request
 # Usage: workflows/jira_worker/run.sh <repo> <issue_key>
 # Reads: DEEPSEEK_API_KEY from environment; prompts/jira_worker.txt for LLM instructions
+# Requires: the go-jira `jira` CLI (github.com/go-jira/jira) for `jira issue view <key> --plain`
 # Writes: draft GitHub pull request; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error
 set -euo pipefail
