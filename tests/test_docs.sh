@@ -173,6 +173,40 @@ assert_contains "$OUT" "json parameters.properties missing or empty" "json: rena
 run_docs no-parameters.json
 assert_eq "$RC" "1" "json: missing parameters key fails instead of vacuous pass"
 assert_contains "$OUT" "json parameters.properties missing or empty" "json: no-parameters names the schema problem"
+
+# The docs rule enforces shape plus manifest integrity: all six required
+# types, string descriptions, and resolvable type references. Repo-wide
+# coverage (every git-tracked shai-* script has an entry) is #320's scope.
+GOOD_TYPES='{"session_id":{"description":"Session ID from SHAI_HOME/sessions/"},"run_id":{"description":"Run ID from SHAI_HOME/runs/"},"workflow_name":{"description":"Workflow name from install directory"},"prompt_name":{"description":"Prompt name from install directory"},"file":{"description":"Filesystem path","builtin":true},"date":{"description":"Date in YYYY-MM-DD format","hint":"YYYY-MM-DD"}}'
+printf '{"scripts":{"shai-version":{"description":"Print the installed shai version","flags":{}}},"types":%s}\n' "$GOOD_TYPES" >"$FIX/completions.json"
+mkdir -p "$FIX/bad-dir"
+printf '{"scripts":{"shai-version":{"description":"Print the installed shai version","flags":{"--json":{"description":""}}}},"types":%s}\n' "$GOOD_TYPES" >"$FIX/bad-dir/completions.json"
+mkdir -p "$FIX/nonstring-desc"
+printf '{"scripts":{"shai-version":{"description":123,"flags":{}}},"types":%s}\n' "$GOOD_TYPES" >"$FIX/nonstring-desc/completions.json"
+mkdir -p "$FIX/missing-type"
+printf '{"scripts":{"shai-version":{"description":"Print the installed shai version","flags":{}}},"types":{"session_id":{},"run_id":{},"workflow_name":{},"prompt_name":{},"file":{}}}\n' >"$FIX/missing-type/completions.json"
+mkdir -p "$FIX/unresolved-ref"
+printf '{"scripts":{"shai-retry":{"description":"Resume an interrupted run","flags":{"--run":{"arg":"RUN_ID","arg_type":"bogus","description":"Replay the failed run"}}}},"types":%s}\n' "$GOOD_TYPES" >"$FIX/unresolved-ref/completions.json"
+
+run_docs completions.json
+assert_eq "$RC" "0" "completions: valid manifest passes"
+assert_contains "$OUT" "completions manifest:" "completions: prints its own classification"
+
+run_docs bad-dir/completions.json
+assert_eq "$RC" "1" "completions: undescribed flag fails"
+assert_contains "$OUT" "completions manifest must" "completions: undescribed flag names the schema problem"
+
+run_docs nonstring-desc/completions.json
+assert_eq "$RC" "1" "completions: non-string script description fails"
+assert_contains "$OUT" "completions manifest must" "completions: non-string description names the schema problem"
+
+run_docs missing-type/completions.json
+assert_eq "$RC" "1" "completions: missing required type fails"
+assert_contains "$OUT" "completions manifest must" "completions: missing required type names the schema problem"
+
+run_docs unresolved-ref/completions.json
+assert_eq "$RC" "1" "completions: unresolved type reference fails"
+assert_contains "$OUT" "completions manifest must" "completions: unresolved reference names the schema problem"
 run_docs tools/renamed-key/tool.json
 assert_eq "$RC" "1" "tool schema: renamed parameters key fails instead of vacuous pass"
 assert_contains "$OUT" "tool schema parameters.properties missing or empty" "tool schema: renamed-key names the schema problem"
