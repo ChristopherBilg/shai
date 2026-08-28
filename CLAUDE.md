@@ -165,7 +165,7 @@ The scripts:
   session log), so `shai-trace`/`shai-retry --run` can still inspect or resume it. A handled
   interrupt never changes the exit status.
   `exit`/`quit` and EOF (Ctrl-D) all end the loop with a single `Goodbye.` on stdout.
-- **`shai-ask [-q|--quiet] [--no-tools] [--model MODEL] [--max-tokens N] [--external SOURCE] [PROMPT ...]`** (`shai-ask:1`) — non-interactive one-shot mode:
+- **`shai-ask [-q|--quiet] [--no-tools] [--model MODEL] [--max-tokens N] [PROMPT ... | --external SOURCE PROMPT ...]`** (`shai-ask:1`) — non-interactive one-shot mode:
   `shai-repl` for humans, `shai-ask` for scripts, cron jobs, and pipes. Runs the full
   pipeline once — health check, system prompt via `shai-prompt system`, tools via
   `shai-tools` (enabled by default; `--no-tools` opts out), then one turn through
