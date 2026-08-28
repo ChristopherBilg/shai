@@ -179,23 +179,36 @@ check_file() {
       fi
       return
       ;;
+    # Shape and manifest-integrity checks only. Repo-wide coverage (every
+    # git-tracked shai-* script has an entry, every parsed flag is declared)
+    # is #320's scope (`shai-completions check` + tests/completions-sync.sh),
+    # which needs the git context this per-file walker lacks in fixture runs.
     completions.json | */completions.json)
       if jq -e '
+        def described: type == "string" and length > 0;
         type == "object"
         and ((.scripts | type) == "object" and (.scripts | length) > 0)
         and ((.types | type) == "object" and (.types | length) > 0)
+        and (["session_id", "run_id", "workflow_name", "prompt_name", "file", "date"] - (.types | keys) | length == 0)
         and all(.scripts[];
-          ((.description // "") | length) > 0
+          ((.description // "") | described)
           and ((.flags | type) == "object")
-          and all(.flags[]; ((.description // "") | length) > 0)
+          and all(.flags[]; ((.description // "") | described))
           and all((.subcommands // {}) | .[];
-            ((.description // "") | length) > 0
+            ((.description // "") | described)
             and ((.flags | type) == "object")
-            and all(.flags[]; ((.description // "") | length) > 0)))
+            and all(.flags[]; ((.description // "") | described))))
+        and (([
+          .scripts[] |
+            [ .flags[] | .arg_type // empty ],
+            [ (.positional // [])[] | .type // empty ],
+            [ (.subcommands // {})[] | .flags[] | .arg_type // empty ],
+            [ (.subcommands // {})[] | (.positional // [])[] | .type // empty ]
+        ] | flatten | unique) - (.types | keys) | length == 0)
       ' "$f" >/dev/null 2>&1; then
         ok "completions manifest: $f"
       else
-        note "completions manifest must be an object with non-empty scripts/types and described scripts, subcommands, and flags: $f"
+        note "completions manifest must have non-empty scripts/types, all six required types, described scripts/subcommands/flags, and type references that resolve: $f"
       fi
       return
       ;;
