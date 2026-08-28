@@ -47,6 +47,9 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./shai-workflow run heartbeat          # run a workflow
 ./shai-workflow describe heartbeat     # show a workflow's doc header
 
+# Jira ticket worker (manual invocation):
+./shai-workflow run jira_worker OWNER/REPO PROJ-123
+
 # Process supervision (systemd --user):
 ./shai-supervise install workflows/heartbeat/run.sh                # install + enable the heartbeat timer
 ./shai-supervise install workflows/heartbeat/run.sh --interval 1h  # custom interval
@@ -611,6 +614,21 @@ removal failure for one issue → warn, skip, continue (label stays for retry); 
 label already removed, ledger left unmarked (re-label to retry). Install via
 `shai-supervise install workflows/issue_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
+
+**`workflows/jira_worker/run.sh`** takes `<repo> <issue_key>`, fetches the Jira ticket content
+via `jira issue view <key> --plain`, derives a branch name (`shai/<lowercased-key>`), and calls
+`wf_llm --tools` with a goal-oriented prompt. The LLM clones the repo, explores the codebase,
+implements the changes, verifies them locally with the `ci` tool (or records in the PR body that
+the repo has no checks configured), commits, pushes, and creates a draft PR with
+`Implements <key>` in the body. Jira access is read-only — the workflow fetches the ticket for
+context but never transitions its status. After CI passes, the LLM adds the
+`shai-review-dispatcher` label to queue the PR for review. **No idempotency** (no
+`wf_seen`/`wf_mark`) — safe to re-run. Exit 0 on success, 1 on failure, 2 on usage error.
+The expected `jira` binary is jira-cli (`github.com/ankitpokhrel/jira-cli`): `jira issue view
+<key> --plain` is its plain-text issue rendering (`--plain` disables its interactive
+templating), and `shai-doctor` checks the binary's presence (the `jira` tool's
+`requires.tools`) but not the CLI variant. jira-cli is configured via `jira init` (creates
+`~/.config/.jira/.config.yml`); `JIRA_API_TOKEN` provides the API token.
 
 **`workflows/review_dispatcher/run.sh`** is a pure-bash dispatcher (no LLM calls — the LLM work
 happens inside `pr_reviewer`). It runs as a `shai-supervise` timer job, searching for open PRs
