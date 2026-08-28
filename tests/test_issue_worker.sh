@@ -225,8 +225,8 @@ fi
 
 # --- regression: a literal ampersand in the issue body survives the ${PROMPT//...} splice ---
 # (a bare `&` in the replacement would expand to the whole {{ISSUE_BODY}} placeholder on
-# bash < 5.2 by default, and on 5.2+ only with the non-default patsub_replacement shopt,
-# so the `\&` escaping must render it literal on this environment's bash)
+# bash 5.2+ by default, where the patsub_replacement shopt is on; older bash treats `&`
+# literally, so the `\&` escaping must render it literal on this environment's bash)
 desc "literal & in issue body survives the prompt splice"
 write_issue_worker_gh_stub "Amp Test" 'Cost: 5 & 10 dollars'
 printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"done."},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |

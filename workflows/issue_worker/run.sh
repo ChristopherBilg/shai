@@ -48,10 +48,11 @@ BRANCH_NAME="shai/${NUMBER}-${SLUG}"
 # before they reach prompts/issue_worker.txt's external_data fences, so injected content
 # can't forge a closing tag and break out of the fence. The final `gsub("&"; "\\&")`
 # backslash-escapes ampersands: the ${PROMPT//...} substitution below expands a bare `&`
-# in the replacement to the whole matched text on bash < 5.2 (and on 5.2+ only when the
-# non-default `patsub_replacement` shopt is enabled), which would otherwise corrupt the
-# escaped form into the {{ISSUE_BODY}} placeholder itself; `\&` renders a literal `&`
-# on every bash version, so the escaping is cheap insurance across environments.
+# in the replacement to the whole matched text on bash 5.2+ (where the
+# `patsub_replacement` shopt is on by default) and treats it literally on older bash,
+# which would otherwise corrupt the escaped form into the {{ISSUE_BODY}} placeholder
+# itself; `\&` renders a literal `&` on every bash version, so the escaping is cheap
+# insurance across environments.
 ISSUE_BODY=$(head -c 32000 <<<"$ISSUE_BODY")
 
 ISSUE_TITLE=$(printf '%s' "$ISSUE_TITLE" | jq -Rrs 'gsub("<\\s*/\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i") | gsub("&"; "\\&")')

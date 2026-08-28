@@ -203,8 +203,8 @@ fi
 
 # --- regression: a literal ampersand in the ticket content survives the ${PROMPT//...} splice ---
 # (a bare `&` in the replacement would expand to the whole {{ISSUE_CONTENT}} placeholder on
-# bash < 5.2 by default, and on 5.2+ only with the non-default patsub_replacement shopt, so the
-# `\&` escaping must render it literal on this environment's bash)
+# bash 5.2+ by default, where the patsub_replacement shopt is on; older bash treats `&`
+# literally, so the `\&` escaping must render it literal on this environment's bash)
 desc "literal & in ticket content survives the prompt splice"
 write_jira_worker_jira_stub 'Cost: 5 & 10 dollars'
 printf '%s' "$STANDARD_OK" | write_curl_stub 200

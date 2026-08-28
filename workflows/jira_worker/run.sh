@@ -42,10 +42,10 @@ BRANCH_NAME="shai/${BRANCH_KEY}"
 # external_data fence, so injected content can't forge a closing tag and break out of the
 # fence. The final `gsub("&"; "\\&")` backslash-escapes ampersands: the ${PROMPT//...}
 # substitution below expands a bare `&` in the replacement to the whole matched text on
-# bash < 5.2 (and on 5.2+ only when the non-default `patsub_replacement` shopt is enabled),
-# which would otherwise corrupt the escaped form into the {{ISSUE_CONTENT}} placeholder
-# itself; `\&` renders a literal `&` on every bash version, so the escaping is cheap
-# insurance across environments.
+# bash 5.2+ (where the `patsub_replacement` shopt is on by default) and treats it
+# literally on older bash, which would otherwise corrupt the escaped form into the
+# {{ISSUE_CONTENT}} placeholder itself; `\&` renders a literal `&` on every bash
+# version, so the escaping is cheap insurance across environments.
 ISSUE_CONTENT=$(head -c 32000 <<<"$ISSUE_CONTENT")
 
 ISSUE_CONTENT=$(printf '%s' "$ISSUE_CONTENT" | jq -Rrs 'gsub("<\\s*/\\s*external_data\\s*>"; "&lt;/external_data&gt;"; "i") | gsub("&"; "\\&")')
