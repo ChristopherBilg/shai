@@ -172,23 +172,32 @@ The scripts:
   `shai-loop --tools-file <tmp>` — and prints just the answer. The prompt comes from
   positional args (all args joined with spaces) or, with no args, from stdin when stdin is
   not a TTY; with no args and a TTY stdin it is a usage error (exit 2), as are unknown
-  options, an empty prompt, and `--external` without a prompt argument. `--external SOURCE`
+  options, an empty prompt, `--external` without a prompt argument, and an empty
+  `--external SOURCE`. `--external SOURCE`
   treats stdin as external data: it is fenced via `shai-read --external SOURCE`, stamped
   into the session log as a user message of the same run, ahead of the prompt, so
   `shai-loop` sees it as prior context (empty stdin seeds nothing). Session behavior
   matches `shai-repl`: an inherited `SHAI_SESSION_ID` always wins, otherwise one is minted;
   the system prompt is seeded exactly once per session. Output contract: answer text only
   on stdout, tool dispatch markers (`⏺ name(args)` lines) on stderr (suppressed by
-  `-q`/`--quiet`, which forwards to `shai-loop`); `shai-ask` swaps `shai-loop`'s streams,
-  keeping its stdout (the final event JSON) in a temp file to read the exit verdict and
-  discarding it, and splits its stderr — marker lines to stderr, everything else (the
-  `shai-print` answer) to stdout. `--model MODEL` / `--max-tokens N` forward to `shai-loop`
+  `-q`/`--quiet`, which forwards to `shai-loop`); `shai-ask` keeps `shai-loop`'s stdout
+  (the final event JSON) in a temp file to read the exit verdict and discard it, and splits
+  its stderr — marker lines to stderr, the rest dropped (the answer on stdout is re-rendered
+  from the captured final event by `shai-ask`'s own `shai-print`, not routed by the
+  splitter). Because `shai-loop`'s stderr is a pipe, never a TTY, prompt-policy tools
+  always fail closed as "headless" even when a human runs `shai-ask` at a terminal —
+  intended: `shai-ask` is the non-interactive entry point, and interactive grants belong to
+  `shai-repl`. `--model MODEL` / `--max-tokens N` forward to `shai-loop`
   (and on to `shai-eval`). Exit 0 on success; 1 if `DEEPSEEK_API_KEY` is missing
-  (`shai-eval --health-check`) or the turn ended in an error event — `shai-loop` exits 0
+  (`shai-eval --health-check`), the turn ended in an error event — `shai-loop` exits 0
   even for error events (errors are events, not crashes), so `shai-ask` inspects the final
-  event to turn that into a non-zero exit; 2 on usage errors; 3 if the system prompt is
-  missing or empty (`shai-prompt`). No readline, no history, no INT handling, no
-  multi-turn, no startup banner.
+  event to turn that into a non-zero exit — or the pipeline crashed (`shai-loop` exited
+  non-zero, e.g. `shai-eval` rejecting a forwarded `--max-tokens` value; the dropped loop
+  stderr is re-emitted so the error text is not swallowed, and the raw code is never
+  propagated because `shai-loop` exits 2 for its own usage errors, which would collide with
+  the usage-error meaning above); 2 on usage errors; 3 if the system prompt is missing or
+  empty (`shai-prompt`). No readline, no history, no INT handling, no multi-turn, no
+  startup banner.
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
   Used by `shai-repl` and `shai-ask` at startup to load `prompts/system.txt`.
