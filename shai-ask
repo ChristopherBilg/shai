@@ -10,11 +10,14 @@
 #        SHAI_MODEL / SHAI_MAX_TOKENS unless --model / --max-tokens
 # Writes: the answer (the final event rendered by shai-print) to stdout; tool dispatch
 #         markers ("⏺ name(args)" lines) to stderr unless -q/--quiet (other pipeline
-#         stderr is discarded); the system prompt, the turn, and (with --external) a fenced
-#         user message to the session log; the final event JSON is never emitted
-# Exit: 0 on success (answer printed); 1 if DEEPSEEK_API_KEY is missing (health check) or
-#       the turn ended in an error event; 2 on usage error (no prompt, unknown option,
-#       --external without a prompt argument); 3 if the system prompt is missing or empty
+#         stderr is dropped on success, re-emitted on a hard failure); the system prompt,
+#         the turn, and (with --external) a fenced user message to the session log; the final event JSON is never emitted
+# Exit: 0 on success (answer printed); 1 if DEEPSEEK_API_KEY is missing (health check),
+#       the turn ended in an error event, or the pipeline crashed (shai-loop exited
+#       non-zero — its stderr is re-emitted, never its raw code, which would collide with
+#       the usage-error meaning of 2); 2 on usage error (no prompt, unknown option,
+#       --external without a prompt argument or with an empty SOURCE); 3 if the system
+#       prompt is missing or empty
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -65,7 +68,16 @@ while [ "$#" -gt 0 ]; do
       case "$flag" in
         --model) LOOP_OPTS+=(--model "$2") ;;
         --max-tokens) LOOP_OPTS+=(--max-tokens "$2") ;;
-        --external) EXT_SOURCE="$2" ;;
+        --external)
+          # an empty SOURCE would silently disable the fencing and flip stdin's meaning back
+          # to "prompt", breaking the --external contract — reject it as a usage error
+          if [ -z "$2" ]; then
+            printf 'shai-ask: --external requires a non-empty SOURCE\n' >&2
+            usage
+            exit 2
+          fi
+          EXT_SOURCE="$2"
+          ;;
       esac
       shift 2
       ;;
@@ -123,8 +135,11 @@ fi
 # shai-loop's stdout (the final event JSON) is kept in a file just long enough to read the
 # exit verdict; the raw JSON itself never reaches shai-ask's stdout.
 FINAL_EVENT=$(mktemp)
+# a copy of shai-loop's merged stderr, kept so a hard failure can re-emit the dropped
+# non-marker lines (they carry the error text); see the turn below
+LOOP_ERR=$(mktemp)
 # shellcheck disable=SC2064  # expanded when the trap fires, by which point the values are final
-trap 'rm -f "$FINAL_EVENT"; [ -n "${TOOLS_FILE:-}" ] && rm -f "$TOOLS_FILE"' EXIT
+trap 'rm -f "$FINAL_EVENT" "$LOOP_ERR"; [ -n "${TOOLS_FILE:-}" ] && rm -f "$TOOLS_FILE"' EXIT
 if [ "$NO_TOOLS" != true ]; then
   "$DIR/shai-tools" >"$TOOLS_FILE"
 fi
@@ -189,12 +204,41 @@ fi
 # plugin stderr), so only "⏺ name(args)" dispatch-marker lines are forwarded (to stderr);
 # everything else is dropped — the answer on stdout and the session/run logs are the record.
 # In -q/--quiet mode shai-loop prints no markers, so nothing reaches stderr.
+# The if/else (not a bare statement) absorbs the pipeline's status without tripping set -e:
+# a hard failure inside shai-loop (e.g. shai-eval rejecting a forwarded --max-tokens value)
+# aborts the turn with no final event, and must surface instead of exiting silently with
+# shai-loop's raw code — exit 2 is shai-ask's usage-error code, and shai-loop exits 2 for
+# its own usage errors. tee keeps a copy of the merged stderr so the failure path below can
+# re-emit the dropped non-marker lines, which carry the error text.
 # shellcheck disable=SC2069  # the swap (stderr to old stdout, then stdout to file) is deliberate, not a mis-ordered redirect
-printf '%s\n' "$PROMPT" | "$DIR/shai-loop" "${LOOP_OPTS[@]}" 2>&1 1>"$FINAL_EVENT" | while IFS= read -r line; do
-  case "$line" in
-    "⏺ "*) printf '%s\n' "$line" >&2 ;;
-  esac
-done
+if printf '%s\n' "$PROMPT" | "$DIR/shai-loop" "${LOOP_OPTS[@]}" 2>&1 1>"$FINAL_EVENT" | tee "$LOOP_ERR" |
+  while IFS= read -r line; do
+    case "$line" in
+      "⏺ "*) printf '%s\n' "$line" >&2 ;;
+    esac
+  done then
+  LOOP_RC=0
+else
+  LOOP_RC=$?
+fi
+
+# A crashed pipeline produced no final event, so the dropped non-marker stderr — the only
+# record of why the turn died — is re-emitted and the exit code is 1 (a runtime failure, not
+# a usage error). If a final event exists despite the non-zero status, the answer is rendered
+# so it is not swallowed; the exit code is still 1.
+if [ "$LOOP_RC" -ne 0 ]; then
+  if [ -s "$FINAL_EVENT" ]; then
+    "$DIR/shai-print" <"$FINAL_EVENT"
+  else
+    while IFS= read -r line; do
+      case "$line" in
+        "⏺ "*) ;; # already forwarded live above
+        *) printf '%s\n' "$line" >&2 ;;
+      esac
+    done <"$LOOP_ERR"
+  fi
+  exit 1
+fi
 
 # The answer: the final event, rendered once through shai-print, is the only thing on stdout.
 "$DIR/shai-print" <"$FINAL_EVENT"
