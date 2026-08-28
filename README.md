@@ -28,6 +28,17 @@ export DEEPSEEK_API_KEY=sk-...
 > exit
 ```
 
+`shai-repl` is for humans. For scripts, cron jobs, and pipes, `shai-ask` runs the same full
+pipeline (tools included) once and prints just the answer:
+
+```shell
+./shai-ask "summarize PR 123 in owner/repo"          # prompt as arguments
+echo "explain this repo" | ./shai-ask                # prompt from stdin
+cat diff.txt | ./shai-ask --external gh-diff "review this"   # stdin as fenced external data
+./shai-ask --no-tools "pure Q&A"                     # disable tool dispatch
+./shai-ask -q "quiet mode"                           # hide tool dispatch markers
+```
+
 State lives in `~/.shai/`: `sessions/<session_id>.jsonl` (per-session append-only logs), `sessions/<session_id>.latest.json` (the most recent event), and `runs/<run_id>/` holding a per-turn `events.jsonl`, a `<span_id>-request.json` for each API call, and a `<span_id>-response.json` for each successful response. Rewind the assistant's memory by slicing the log, e.g. `head -n 20 ~/.shai/sessions/<session_id>.jsonl` or truncating the file.
 
 ## Composability
