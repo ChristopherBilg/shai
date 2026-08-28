@@ -179,6 +179,26 @@ check_file() {
       fi
       return
       ;;
+    completions.json | */completions.json)
+      if jq -e '
+        type == "object"
+        and ((.scripts | type) == "object" and (.scripts | length) > 0)
+        and ((.types | type) == "object" and (.types | length) > 0)
+        and all(.scripts[];
+          ((.description // "") | length) > 0
+          and ((.flags | type) == "object")
+          and all(.flags[]; ((.description // "") | length) > 0)
+          and all((.subcommands // {}) | .[];
+            ((.description // "") | length) > 0
+            and ((.flags | type) == "object")
+            and all(.flags[]; ((.description // "") | length) > 0)))
+      ' "$f" >/dev/null 2>&1; then
+        ok "completions manifest: $f"
+      else
+        note "completions manifest must be an object with non-empty scripts/types and described scripts, subcommands, and flags: $f"
+      fi
+      return
+      ;;
     *.json.example)
       if json_example_ok "$f"; then
         ok "json example: $f"

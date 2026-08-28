@@ -173,6 +173,18 @@ assert_contains "$OUT" "json parameters.properties missing or empty" "json: rena
 run_docs no-parameters.json
 assert_eq "$RC" "1" "json: missing parameters key fails instead of vacuous pass"
 assert_contains "$OUT" "json parameters.properties missing or empty" "json: no-parameters names the schema problem"
+
+printf '{"scripts":{"shai-version":{"description":"Print the installed shai version","flags":{}}},"types":{"date":{"description":"Date in YYYY-MM-DD format","hint":"YYYY-MM-DD"}}}\n' >"$FIX/completions.json"
+mkdir -p "$FIX/bad-dir"
+printf '{"scripts":{"shai-version":{"description":"Print the installed shai version","flags":{"--json":{"description":""}}}},"types":{}}\n' >"$FIX/bad-dir/completions.json"
+
+run_docs completions.json
+assert_eq "$RC" "0" "completions: valid manifest passes"
+assert_contains "$OUT" "completions manifest:" "completions: prints its own classification"
+
+run_docs bad-dir/completions.json
+assert_eq "$RC" "1" "completions: undescribed flag fails"
+assert_contains "$OUT" "completions manifest must" "completions: names the schema problem"
 run_docs tools/renamed-key/tool.json
 assert_eq "$RC" "1" "tool schema: renamed parameters key fails instead of vacuous pass"
 assert_contains "$OUT" "tool schema parameters.properties missing or empty" "tool schema: renamed-key names the schema problem"

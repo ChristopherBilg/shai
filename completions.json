@@ -1,0 +1,525 @@
+{
+  "scripts": {
+    "shai-read": {
+      "description": "Wrap raw stdin text into a message event",
+      "flags": {
+        "--system": {
+          "description": "Tag the stdin text as a system message"
+        },
+        "--external": {
+          "arg": "SOURCE",
+          "description": "Fence stdin as external_data attributed to SOURCE"
+        }
+      }
+    },
+    "shai-context": {
+      "description": "Build the Deepseek messages request from the event log",
+      "flags": {
+        "--max-bytes": {
+          "arg": "N",
+          "description": "Cap the request size at N bytes"
+        }
+      }
+    },
+    "shai-eval": {
+      "description": "Call the Deepseek API for one eval turn",
+      "flags": {
+        "--tools-file": {
+          "arg": "PATH",
+          "arg_type": "file",
+          "description": "Send the tool array from this JSON file"
+        },
+        "--model": {
+          "arg": "MODEL",
+          "description": "Override the model name"
+        },
+        "--max-tokens": {
+          "arg": "N",
+          "description": "Output token budget"
+        },
+        "--dry-run": {
+          "description": "Print the request payload without calling the API"
+        },
+        "--health-check": {
+          "description": "Verify DEEPSEEK_API_KEY is set and exit"
+        }
+      }
+    },
+    "shai-dispatch": {
+      "description": "Run tool_calls from the latest assistant event; emit tool_result events",
+      "flags": {}
+    },
+    "shai-loop": {
+      "description": "Eval/dispatch loop filter: prompt in, final assistant event out",
+      "flags": {
+        "--tools": {
+          "description": "Aggregate tools via shai-tools and send them"
+        },
+        "--tools-file": {
+          "arg": "PATH",
+          "arg_type": "file",
+          "description": "Send the tool array from this JSON file"
+        },
+        "--model": {
+          "arg": "MODEL",
+          "description": "Override the model name"
+        },
+        "--max-tokens": {
+          "arg": "N",
+          "description": "Output token budget"
+        },
+        "--quiet": {
+          "short": "-q",
+          "description": "Suppress dispatch markers"
+        }
+      }
+    },
+    "shai-print": {
+      "description": "Render an event to human-readable text",
+      "flags": {
+        "--debug": {
+          "description": "Include tool_use and tool_result detail"
+        },
+        "--dispatches": {
+          "description": "Add tool-call marker lines"
+        }
+      }
+    },
+    "shai-stamp": {
+      "description": "Add the execution envelope (version + meta) to each event",
+      "flags": {}
+    },
+    "shai-ask": {
+      "description": "Non-interactive one-shot mode: run the full pipeline and print the answer",
+      "flags": {
+        "--quiet": {
+          "short": "-q",
+          "description": "Suppress tool dispatch markers on stderr"
+        },
+        "--no-tools": {
+          "description": "Disable tool dispatch (pure Q&A mode)"
+        },
+        "--model": {
+          "arg": "MODEL",
+          "description": "Override the model for this ask"
+        },
+        "--max-tokens": {
+          "arg": "N",
+          "description": "Output token budget"
+        },
+        "--external": {
+          "arg": "SOURCE",
+          "description": "Treat stdin as external data from SOURCE"
+        }
+      }
+    },
+    "shai-repl": {
+      "description": "Interactive REPL",
+      "flags": {
+        "--quiet": {
+          "short": "-q",
+          "description": "Suppress dispatch markers"
+        }
+      }
+    },
+    "shai-retry": {
+      "description": "Resume an interrupted run or replay a failed one",
+      "flags": {
+        "--quiet": {
+          "short": "-q",
+          "description": "Suppress dispatch markers"
+        },
+        "--run": {
+          "arg": "RUN_ID",
+          "arg_type": "run_id",
+          "description": "Replay the named failed run"
+        }
+      }
+    },
+    "shai-sessions": {
+      "description": "List sessions with summary metadata (events, runs, tokens)",
+      "flags": {
+        "--recent": {
+          "arg": "N",
+          "description": "Show only the last N sessions"
+        },
+        "--after": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only sessions at or after DATE"
+        },
+        "--before": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only sessions at or before DATE"
+        },
+        "--json": {
+          "description": "Emit JSON"
+        }
+      }
+    },
+    "shai-runs": {
+      "description": "List runs with span count, tool count, status, and token totals",
+      "flags": {
+        "--session": {
+          "arg": "ID",
+          "arg_type": "session_id",
+          "description": "Only runs from this session (id or prefix)"
+        },
+        "--recent": {
+          "arg": "N",
+          "description": "Show only the last N runs"
+        },
+        "--failed": {
+          "description": "Only runs whose status is error"
+        },
+        "--after": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only runs at or after DATE"
+        },
+        "--before": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only runs at or before DATE"
+        },
+        "--json": {
+          "description": "Emit JSON"
+        }
+      }
+    },
+    "shai-trace": {
+      "description": "Render a run's full span chain with inputs, outputs, and metrics",
+      "positional": [
+        {
+          "name": "run_id",
+          "type": "run_id",
+          "description": "Run to trace (id or prefix)"
+        }
+      ],
+      "flags": {
+        "--request": {
+          "arg": "SPAN",
+          "description": "Dump the span's request JSON"
+        },
+        "--response": {
+          "arg": "SPAN",
+          "description": "Dump the span's response JSON"
+        },
+        "--verbose": {
+          "description": "Show full event content without preview truncation"
+        },
+        "--json": {
+          "description": "Emit the raw event stream as JSON"
+        }
+      }
+    },
+    "shai-stats": {
+      "description": "Aggregate metrics across sessions, runs, and failures",
+      "flags": {
+        "--session": {
+          "arg": "ID",
+          "arg_type": "session_id",
+          "description": "Aggregate only this session (id or prefix)"
+        },
+        "--after": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only events at or after DATE"
+        },
+        "--before": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only events at or before DATE"
+        },
+        "--json": {
+          "description": "Emit JSON"
+        }
+      }
+    },
+    "shai-failures": {
+      "description": "Inspect failure records written by lib/failure.sh",
+      "flags": {},
+      "subcommands": {
+        "list": {
+          "description": "List failure records, or one row per workflow",
+          "flags": {
+            "--workflow": {
+              "arg": "NAME",
+              "arg_type": "workflow_name",
+              "description": "Only this workflow's records (name or prefix)"
+            },
+            "--category": {
+              "arg": "CAT",
+              "description": "Only records of this category"
+            },
+            "--after": {
+              "arg": "DATE",
+              "arg_type": "date",
+              "description": "Only records at or after DATE"
+            },
+            "--before": {
+              "arg": "DATE",
+              "arg_type": "date",
+              "description": "Only records at or before DATE"
+            },
+            "--recent": {
+              "arg": "N",
+              "description": "Show only the last N rows"
+            },
+            "--json": {
+              "description": "Emit JSON"
+            }
+          }
+        },
+        "show": {
+          "description": "Show full detail of one failure record",
+          "flags": {
+            "--json": {
+              "description": "Emit JSON"
+            }
+          }
+        },
+        "summary": {
+          "description": "Aggregate totals across all workflows",
+          "flags": {
+            "--after": {
+              "arg": "DATE",
+              "arg_type": "date",
+              "description": "Only records at or after DATE"
+            },
+            "--before": {
+              "arg": "DATE",
+              "arg_type": "date",
+              "description": "Only records at or before DATE"
+            },
+            "--json": {
+              "description": "Emit JSON"
+            }
+          }
+        }
+      }
+    },
+    "shai-ledgers": {
+      "description": "List workflow ledger entries and summaries",
+      "flags": {
+        "--workflow": {
+          "arg": "NAME",
+          "arg_type": "workflow_name",
+          "description": "Only this workflow's ledger (name or prefix)"
+        },
+        "--recent": {
+          "arg": "N",
+          "description": "Show only the last N entries"
+        },
+        "--after": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only entries at or after DATE"
+        },
+        "--before": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only entries at or before DATE"
+        },
+        "--json": {
+          "description": "Emit JSON"
+        }
+      }
+    },
+    "shai-doctor": {
+      "description": "Validate environment prerequisites for shai",
+      "flags": {}
+    },
+    "shai-version": {
+      "description": "Print the installed shai version",
+      "flags": {}
+    },
+    "shai-tools": {
+      "description": "Scan, validate, and aggregate tool plugin directories",
+      "positional": [
+        {
+          "name": "tools_dir",
+          "type": "file",
+          "description": "Plugin directory to scan (default: the install's tools/)"
+        }
+      ],
+      "flags": {}
+    },
+    "shai-prompt": {
+      "description": "Load a named prompt from the prompts/ directory",
+      "positional": [
+        {
+          "name": "name",
+          "type": "prompt_name",
+          "description": "Prompt to print (prompts/NAME.txt)"
+        }
+      ],
+      "flags": {}
+    },
+    "shai-workflow": {
+      "description": "Discover and run shai workflow scripts",
+      "flags": {},
+      "subcommands": {
+        "list": {
+          "description": "List installed workflows",
+          "flags": {}
+        },
+        "run": {
+          "description": "Run a workflow script",
+          "positional": [
+            {
+              "name": "name",
+              "type": "workflow_name",
+              "description": "Workflow to run"
+            }
+          ],
+          "flags": {}
+        },
+        "describe": {
+          "description": "Show a workflow's header documentation",
+          "positional": [
+            {
+              "name": "name",
+              "type": "workflow_name",
+              "description": "Workflow to describe"
+            }
+          ],
+          "flags": {}
+        }
+      }
+    },
+    "shai-supervise": {
+      "description": "Manage shai workflows under systemd --user",
+      "flags": {},
+      "subcommands": {
+        "install": {
+          "description": "Install a workflow's systemd service and timer",
+          "positional": [
+            {
+              "name": "script",
+              "type": "workflow_name",
+              "description": "Script or workflow to supervise"
+            }
+          ],
+          "flags": {
+            "--interval": {
+              "arg": "TIMESPAN",
+              "description": "Timer interval (e.g. 15min)"
+            }
+          }
+        },
+        "uninstall": {
+          "description": "Remove a workflow's systemd units",
+          "positional": [
+            {
+              "name": "script",
+              "type": "workflow_name",
+              "description": "Script or workflow to unsupervise"
+            }
+          ],
+          "flags": {}
+        },
+        "start": {
+          "description": "Start a workflow's systemd timer",
+          "positional": [
+            {
+              "name": "script",
+              "type": "workflow_name",
+              "description": "Script or workflow to start"
+            }
+          ],
+          "flags": {}
+        },
+        "stop": {
+          "description": "Stop a workflow's systemd timer",
+          "positional": [
+            {
+              "name": "script",
+              "type": "workflow_name",
+              "description": "Script or workflow to stop"
+            }
+          ],
+          "flags": {}
+        },
+        "status": {
+          "description": "Show timer state for supervised workflows",
+          "positional": [
+            {
+              "name": "script",
+              "type": "workflow_name",
+              "description": "Script or workflow to inspect (default: all)"
+            }
+          ],
+          "flags": {
+            "--json": {
+              "description": "Emit JSON"
+            }
+          }
+        },
+        "logs": {
+          "description": "Follow a workflow's journald output",
+          "positional": [
+            {
+              "name": "script",
+              "type": "workflow_name",
+              "description": "Script or workflow to tail"
+            }
+          ],
+          "flags": {}
+        }
+      }
+    },
+    "shai-prune": {
+      "description": "Remove old session logs, run directories, ledgers, and failure records",
+      "flags": {
+        "--sessions": {
+          "description": "Prune session logs"
+        },
+        "--runs": {
+          "description": "Prune run directories"
+        },
+        "--ledgers": {
+          "description": "Prune workflow ledgers"
+        },
+        "--failures": {
+          "description": "Prune failure records"
+        },
+        "--dry-run": {
+          "description": "List what would be removed without removing it"
+        },
+        "--before": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only remove items older than DATE"
+        }
+      }
+    }
+  },
+  "types": {
+    "session_id": {
+      "description": "Session ID from SHAI_HOME/sessions/",
+      "command": "ls \"${SHAI_HOME:-$HOME/.shai}/sessions/\" 2>/dev/null | sed 's/\\.jsonl$//'"
+    },
+    "run_id": {
+      "description": "Run ID from SHAI_HOME/runs/",
+      "command": "ls \"${SHAI_HOME:-$HOME/.shai}/runs/\" 2>/dev/null"
+    },
+    "workflow_name": {
+      "description": "Workflow name from install directory",
+      "command": "for d in \"${_shai_dir}/workflows/\"*/run.sh; do d=\"${d%/run.sh}\"; echo \"${d##*/}\"; done 2>/dev/null"
+    },
+    "prompt_name": {
+      "description": "Prompt name from install directory",
+      "command": "ls \"${_shai_dir}/prompts/\" 2>/dev/null | sed 's/\\.txt$//'"
+    },
+    "file": {
+      "description": "Filesystem path",
+      "builtin": true
+    },
+    "date": {
+      "description": "Date in YYYY-MM-DD format",
+      "hint": "YYYY-MM-DD"
+    }
+  }
+}
