@@ -2,7 +2,7 @@
 # test_jira_worker.sh — unit tests for workflows/jira_worker/run.sh
 # Covers: workflows/jira_worker/run.sh — arg parsing, Jira key validation, branch name
 #   derivation, LLM dispatch, external_data fencing/sanitization of ticket content,
-#   jira stderr isolation, body truncation, non-idempotency
+#   jira stderr handling, body truncation, non-idempotency
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -62,6 +62,12 @@ assert_eq "$RC" "2" "jira_worker: exit 2 on plain number instead of a Jira key"
 
 make_stub_bin
 
+# No `gh` call happens on the paths under test today (the fetch tool is `jira`, not `gh`), but
+# stub it defensively anyway — same practice as test_issue_worker.sh — so that if wf_suggest's
+# implementation, or any future code path, ever shells out to `gh`, the suite fails loudly on
+# its own assertions instead of silently invoking the real binary.
+write_gh_stub
+
 # jira stub that returns plain-text ticket content for `issue view` and echoes args otherwise
 write_jira_worker_jira_stub() {
   local content="$1"
@@ -98,8 +104,12 @@ assert_contains "$OUT" "ERROR" "jira_worker: prints ERROR on jira failure"
 # BRANCH_NAME never reaches stdout — the only place it surfaces is the LLM prompt (the
 # template's "Use branch name `{{BRANCH_NAME}}` exactly" line), so verify it by inspecting the
 # exact request payload shai-eval dumps per span. A plain end_turn reply never loops, so span_1
-# is always the only request for a given invocation; runs/ is cleared beforehand so the glob
-# below can only match that one call.
+# is always the only request within a given run; runs/ is cleared beforehand so the glob below
+# starts from a known-empty state. Note this can still match two files, not one: on success,
+# wf_suggest fires a second wf_llm call in its own fresh run directory (also its own span_1),
+# so $REQ below may be the concatenation of both requests. That's fine for a substring check —
+# the branch name only ever appears in the main call's payload — but do not tighten this into
+# an exact-match assertion without accounting for it.
 desc "branch name derivation"
 write_jira_worker_jira_stub "Summary: Fix login"
 printf '%s' "$STANDARD_OK" | write_curl_stub 200
