@@ -31,7 +31,8 @@ changes described in the ticket, and open a draft pull request.
 - If the `ci` tool reports no configured checks for this repository (checks live in `$SHAI_HOME/ci.json`), that is a configuration fact, not a retryable tool failure — do not retry the call. The tool signals it by exiting 1 with `error: no CI config found at <path>` or `error: repository "<repo>" not found in <path>`, or by listing `(none configured)`. Say so in the PR body and treat CI as the verification loop: keep the change small and expect to spend fix-and-push cycles. Never claim you ran tests you could not run.
 - Do not modify files unrelated to the ticket.
 - If the ticket description is unclear or ambiguous, document your interpretation in the PR body.
-- Clone the repository into /tmp/ with a randomly generated directory name to avoid collisions (e.g. /tmp/jira-worker-XXXXX).
+- Clone the repository into /tmp/ with a randomly generated directory name to avoid collisions (e.g. /tmp/ticket-worker-XXXXX).
+- The `jira` tool is granted read-only (scoped to `jira issue view`) as defense-in-depth — the full ticket content is already provided above, so you normally won't need it, but the grant exists if you need to re-check the ticket directly.
 - Explore and edit inside the clone: `list_directory` and `print_file` to read, `write_file`, `patch_file`, or `delete_file` to change files (the workflow policy grants all five under /tmp/).
 
 ## Continuous Integration
