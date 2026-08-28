@@ -284,4 +284,46 @@ else
   echo -e "  ${GREEN}✓${NC} jira_worker: content truncated at 32000 bytes"
 fi
 
+# --- policy regression: /tmp-scoped path rules must not admit `..` traversal ---
+# policy.json's args patterns match the RAW path string, so write_file with path
+# /tmp/../home/u/.bashrc matches the /tmp/* allow rule and resolves outside /tmp
+# (tools/write_file/run.sh does not normalize). The deny-first rules added to
+# policy.json close that escape: `*/../*` catches a `..` component in the middle of a
+# path (including a trailing-slash tail), `*/..` catches a trailing `..`, and both are
+# ranked above the per-tool /tmp/* allow so first-match-wins denies them.
+run_jira_worker_check_policy() {
+  local tool_name="$1" tool_input="$2"
+  # shellcheck disable=SC2034  # consumed by the eval'd shai-dispatch code below, not directly
+  local SHAI_TOOLS_DIR="$DIR/tools"
+  # Same extraction as tests/test_policy.sh: shai-dispatch runs its loop at the global
+  # scope, so eval just the function definitions (up to the loop's tool_calls counter).
+  eval "$(sed -n '1,/^tool_calls=/p' "$DIR/shai-dispatch" | head -n -1 |
+    sed -e "s|\$DIR/lib/read-only.sh|$DIR/lib/read-only.sh|g" \
+      -e "s|\$DIR/lib/failure.sh|$DIR/lib/failure.sh|g")"
+  check_policy "$tool_name" "$tool_input"
+}
+
+OVERLAY="$DIR/workflows/jira_worker/policy.json"
+RES=$(SHAI_HOME="$TMP" SHAI_POLICY_OVERLAY="$OVERLAY" run_jira_worker_check_policy \
+  write_file '{"path":"/tmp/../home/u/.bashrc"}')
+assert_contains "$RES" $'deny\t' "jira_worker policy: write_file path escaping /tmp via .. is denied"
+RES=$(SHAI_HOME="$TMP" SHAI_POLICY_OVERLAY="$OVERLAY" run_jira_worker_check_policy \
+  write_file '{"path":"/tmp/jira-worker-abc/file.txt"}')
+assert_contains "$RES" $'allow\t' "jira_worker policy: write_file under /tmp is still allowed"
+RES=$(SHAI_HOME="$TMP" SHAI_POLICY_OVERLAY="$OVERLAY" run_jira_worker_check_policy \
+  patch_file '{"path":"/tmp/x/../y","old_string":"a","new_string":"b"}')
+assert_contains "$RES" $'deny\t' "jira_worker policy: patch_file mid-path .. component denied"
+RES=$(SHAI_HOME="$TMP" SHAI_POLICY_OVERLAY="$OVERLAY" run_jira_worker_check_policy \
+  delete_file '{"path":"/tmp/x/.."}')
+assert_contains "$RES" $'deny\t' "jira_worker policy: delete_file trailing .. denied"
+RES=$(SHAI_HOME="$TMP" SHAI_POLICY_OVERLAY="$OVERLAY" run_jira_worker_check_policy \
+  ci '{"action":"list","cwd":"/tmp/../home/u/project"}')
+assert_contains "$RES" $'deny\t' "jira_worker policy: ci cwd escaping /tmp via .. is denied"
+RES=$(SHAI_HOME="$TMP" SHAI_POLICY_OVERLAY="$OVERLAY" run_jira_worker_check_policy \
+  print_file '{"path":"/tmp/../home/u/.ssh/id_rsa"}')
+assert_contains "$RES" $'deny\t' "jira_worker policy: print_file .. escape denied even though read-only"
+RES=$(SHAI_HOME="$TMP" SHAI_POLICY_OVERLAY="$OVERLAY" run_jira_worker_check_policy \
+  print_file '{"path":"/tmp/jira-worker-abc/file.txt"}')
+assert_contains "$RES" $'allow\t' "jira_worker policy: read under /tmp is still allowed"
+
 finish
