@@ -5,7 +5,7 @@ Date: 2026-08-27
 ## Context
 
 An audit of shai's top-level script surface area against best practices for a
-Unix-philosophy CLI tool suite of this maturity. The project currently has 22
+Unix-philosophy CLI tool suite of this maturity. The project currently has 23
 top-level scripts, 8 workflows, and 11 tool plugins. This document identifies
 gaps across new features, observability, and maintenance.
 
@@ -13,7 +13,7 @@ gaps across new features, observability, and maintenance.
 
 | Category | Scripts |
 |----------|---------|
-| Pipeline core | `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-loop`, `shai-print`, `shai-stamp` |
+| Pipeline core | `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-loop`, `shai-print`, `shai-stamp`, `shai-ask` |
 | REPL + retry | `shai-repl`, `shai-retry` |
 | Observability | `shai-sessions`, `shai-runs`, `shai-trace`, `shai-stats`, `shai-failures`, `shai-ledgers` |
 | Infrastructure | `shai-doctor`, `shai-version`, `shai-tools`, `shai-prompt`, `shai-workflow`, `shai-supervise`, `shai-prune` |
@@ -22,17 +22,18 @@ gaps across new features, observability, and maintenance.
 
 ### `shai-ask` — non-interactive one-shot mode
 
-The biggest Unix-philosophy gap. Currently, scripting shai means hand-piping
-`shai-read | shai-context | shai-eval | shai-print`, and that loses the tool
-dispatch loop entirely. `shai-ask "summarize this PR"` (or
-`echo "..." | shai-ask`) would run the full pipeline — including tool dispatch —
-and print just the answer to stdout.
+**Implemented** — `shai-ask` is now a top-level script (see #315), closing the
+biggest Unix-philosophy gap: `shai-ask "summarize this PR"` (or
+`echo "..." | shai-ask`) runs the full pipeline — including tool dispatch —
+and prints just the answer to stdout. Before it existed, scripting shai meant
+hand-piping `shai-read | shai-context | shai-eval | shai-print`, which lost the
+tool dispatch loop entirely.
 
 `shai-repl` is for humans; `shai-ask` is for scripts, cron jobs, and pipes.
 
 ### `shai-completions` — shell tab completion (zsh/bash)
 
-22 scripts, 8 workflows, per-command flags, session/run IDs, workflow names —
+23 scripts, 8 workflows, per-command flags, session/run IDs, workflow names —
 this is a lot of surface area to remember. Tab completion is standard practice
 for any CLI tool suite of this size.
 
