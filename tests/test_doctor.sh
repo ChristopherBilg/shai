@@ -240,7 +240,7 @@ chmod +x "$STUB/git"
   OUT=$(run_doctor)
   assert_contains "$OUT" "Configuration:" "doctor: prints the Configuration section"
   assert_contains "$OUT" "[OK]   SHAI_MODEL" "doctor: SHAI_MODEL listed"
-  assert_contains "$OUT" "deepseek-v4-flash (default)" "doctor: SHAI_MODEL shows default value"
+  assert_contains "$OUT" "deepseek-v4-pro (default)" "doctor: SHAI_MODEL shows default value"
   assert_contains "$OUT" "1300000 (default)" "doctor: SHAI_MAX_CONTEXT_BYTES shows default value"
   assert_contains "$OUT" "1 (default)" "doctor: SHAI_SUGGEST shows default value"
   assert_contains "$OUT" "(unset — auto-detected: Owner/Custom-Repo)" "doctor: SHAI_SUGGEST_REPO shows the auto-detected repo"

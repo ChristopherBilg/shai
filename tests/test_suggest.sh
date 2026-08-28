@@ -182,7 +182,7 @@ _CLEANUP_DIRS+=("$TMP6")
 EXISTING_POLICY="$TMP6/existing_policy.json"
 write_overlay "$EXISTING_POLICY"
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"no suggestions"},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"no suggestions"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # shellcheck disable=SC2030,SC2031

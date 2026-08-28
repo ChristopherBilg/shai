@@ -89,7 +89,7 @@ fi
 
 # one-line startup banner, stdout TTY only ([ -t 1 ]): version + session + model when SHAI_MODEL
 # is explicitly set. It is startup info, not per-turn dispatch noise, so -q/--quiet does not
-# suppress it. The deepseek-v4-flash default is never synthesized here — constants-sync.sh keeps
+# suppress it. The deepseek-v4-pro default is never synthesized here — constants-sync.sh keeps
 # that default in sync across shai-eval/CLAUDE.md/shai-doctor, and a third copy would drift.
 if [ -t 1 ]; then
   printf 'shai %s — session %s%s — type %s\n' \

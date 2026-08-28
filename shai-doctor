@@ -129,7 +129,7 @@ check_env DEEPSEEK_API_KEY core
 
 printf '\nConfiguration:\n' >&2
 check_config SHAI_HOME "$HOME/.shai"
-check_config SHAI_MODEL "deepseek-v4-flash"
+check_config SHAI_MODEL "deepseek-v4-pro"
 check_config SHAI_MAX_CONTEXT_BYTES "1300000"
 check_config SHAI_UNIT_DIR "$HOME/.config/systemd/user"
 check_config SHAI_SUGGEST "1"

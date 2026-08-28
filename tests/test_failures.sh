@@ -445,7 +445,7 @@ mkdir -p "$FAKE_INSTALL/lib"
 cp "$DIR/lib/failure.sh" "$FAKE_INSTALL/lib/"
 chmod +x "$FAKE_INSTALL"/shai-*
 
-TOOLCALL_JSON='{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tl1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
+TOOLCALL_JSON='{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tl1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
 printf '%s\n' "$TOOLCALL_JSON" | write_curl_stub 200
 
 # timeout guards the assertion itself: if the loop fails to stop, the suite fails fast
@@ -527,6 +527,7 @@ cat >"$STUB/gh" <<GHSTUB
 #!/bin/bash
 case "\$*" in
   "search issues"*) cat "$SEARCH_FIXTURE" ;;
+  "api "*"/dependencies/blocked_by"*) echo '[]' ;;
   "issue edit"*) exit 0 ;;
   *) echo "stub gh: \$*" ;;
 esac
