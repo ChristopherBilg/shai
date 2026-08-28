@@ -67,10 +67,10 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 
 Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
 `SHAI_MODEL` (default `deepseek-v4-pro`), `SHAI_MAX_TOKENS` (output token budget for
-`shai-eval`, default `32000`; shared between reasoning and visible output when thinking is
+`shai-eval`, default `384000`; shared between reasoning and visible output when thinking is
 enabled), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_EVAL_TIMEOUT` (curl `--max-time` ceiling in seconds for
-`shai-eval`'s API call, default `600`), `SHAI_EVAL_RETRIES` (max retries on transient API failures —
+`shai-eval`'s API call, default `7200`), `SHAI_EVAL_RETRIES` (max retries on transient API failures —
 curl errors, HTTP 429, 5xx — with exponential backoff 1s/2s/4s/…; default `2`, max `10`, set to `0` to
 disable), `SHAI_UNIT_DIR` (systemd unit directory, default
 `~/.config/systemd/user`), `SHAI_SUGGEST` (set to `0` to disable the post-workflow suggestion
@@ -230,9 +230,9 @@ The scripts:
 - **`shai-eval [--tools-file <path>|--model|--max-tokens|--dry-run|--health-check]`**
   (`shai-eval:1`) — the only network hop (`curl -H "Authorization: Bearer $DEEPSEEK_API_KEY"` →
   `https://api.deepseek.com/v1/chat/completions`, Deepseek's OpenAI-compatible chat-completions
-  endpoint). Emits an `assistant` or `error` event. `SHAI_MAX_TOKENS` (default `32000`)
+  endpoint). Emits an `assistant` or `error` event. `SHAI_MAX_TOKENS` (default `384000`)
   sets the output token budget (shared between reasoning and visible output when thinking is
-  enabled); `--max-tokens` overrides. `SHAI_EVAL_TIMEOUT` (default `600`) sets the curl
+  enabled); `--max-tokens` overrides. `SHAI_EVAL_TIMEOUT` (default `7200`) sets the curl
   `--max-time` ceiling in seconds. **Invariant: it must never crash the loop.**
   Every API/curl/parse failure becomes an `error` event with exit 0 (the sole exception:
   `--health-check` exits 1 when `DEEPSEEK_API_KEY` is missing). Transient failures (curl errors,
