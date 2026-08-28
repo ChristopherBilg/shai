@@ -240,5 +240,7 @@ EMPT_OUT=$(SHAI_HOME="$A18/home" SHAI_SESSION_ID=ask18 "$A18/shai-ask" "hi" 2>&1
 EMPT_RC=$?
 assert_eq "$EMPT_RC" "3" "shai-ask: empty system prompt exits 3"
 assert_contains "$EMPT_OUT" "prompt is empty" "shai-ask: empty system prompt names the failure"
+assert_eq "$(test -d "$A18/home/sessions" && echo exists || echo absent)" "absent" \
+  "shai-ask: empty system prompt creates no session dir"
 
 finish
