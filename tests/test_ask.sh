@@ -51,9 +51,13 @@ assert_eq "$(printf '%s\n' "$HIST3" | jq -sr '[.[] | select(.source=="user") | .
 assert_contains "$HIST3" '"text":"use the args"' "shai-ask: positional args are the prompt when stdin is also piped"
 
 # --- no prompt and stdin is a TTY → usage error, exit 2 (script(1) pty) ---
+# The command string is built with printf %q: script -c hands it to an inner shell that
+# re-parses it, so splicing $A4/$DIR in raw (the #154 pattern) would break a checkout path
+# containing shell metacharacters.
 A4="$(mktemp -d)"
 _CLEANUP_DIRS+=("$A4")
-TTYOUT=$(script -qec "SHAI_HOME='$A4' SHAI_SESSION_ID=ask4 '$DIR/shai-ask'" /dev/null 2>&1)
+TTY_CMD=$(printf 'SHAI_HOME=%q SHAI_SESSION_ID=ask4 %q' "$A4" "$DIR/shai-ask")
+TTYOUT=$(script -qec "$TTY_CMD" /dev/null 2>&1)
 TTYRC=$?
 assert_eq "$TTYRC" "2" "shai-ask: TTY stdin with no prompt exits 2"
 assert_contains "$TTYOUT" "Usage: shai-ask" "shai-ask: TTY no-prompt prints the usage message"
@@ -70,6 +74,9 @@ assert_exit 2 "shai-ask: unknown option exits 2" -- bash -c 'SHAI_HOME="$1" "$2/
 
 # --- --external without positional args → exit 2 ---
 assert_exit 2 "shai-ask: --external without a prompt exits 2" -- bash -c 'printf "data" | SHAI_HOME="$1" "$2/shai-ask" --external gh-diff' _ "$A5" "$DIR"
+
+# --- --external with an empty SOURCE → exit 2 (empty SOURCE would silently disable the fencing) ---
+assert_exit 2 "shai-ask: --external with an empty SOURCE exits 2" -- bash -c 'printf "data" | SHAI_HOME="$1" "$2/shai-ask" --external "" "review this"' _ "$A5" "$DIR"
 
 # --- an invalid inherited session id is rejected (path traversal guard) ---
 assert_exit 1 "shai-ask: invalid SHAI_SESSION_ID exits 1" -- bash -c 'SHAI_HOME="$1" SHAI_SESSION_ID="a/b" "$2/shai-ask" "hi"' _ "$A5" "$DIR"
@@ -93,6 +100,16 @@ assert_contains "$ERROUT" "Error: boom" "shai-ask: error text still rendered on 
 
 printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
+
+# --- a hard failure inside shai-loop exits 1 (never 2: that is the usage-error code) and
+#     re-emits the dropped loop stderr, whose non-marker lines carry the error text ---
+A17="$(mktemp -d)"
+_CLEANUP_DIRS+=("$A17")
+HARDOUT=$(SHAI_HOME="$A17" SHAI_SESSION_ID=ask17 "$DIR/shai-ask" --max-tokens abc "hi" 2>"$A17/err")
+HARDRC=$?
+assert_eq "$HARDRC" "1" "shai-ask: hard shai-loop failure exits 1, not the raw 2 (usage-error code stays reserved)"
+assert_eq "$HARDOUT" "" "shai-ask: hard shai-loop failure prints no answer on stdout"
+assert_contains "$(cat "$A17/err")" "must be a positive integer" "shai-ask: hard shai-loop failure re-emits the dropped loop stderr"
 
 # --- tools on by default: dispatch markers on stderr, answer only on stdout ---
 A8="$(mktemp -d)"
