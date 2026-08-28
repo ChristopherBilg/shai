@@ -45,7 +45,7 @@ Categories (use as title prefix):
 
 - Creating zero issues is a valid outcome — do not fabricate suggestions
 - One issue per distinct suggestion
-- Create at most 1 issue per run — this step runs after every workflow execution, so an
+- Create at most 2 issues per run — this step runs after every workflow execution, so an
   unbounded number per run would grow the suggestion backlog faster than it can be triaged.
   If you spot more, file only the highest-value; the rest will still be observable later.
 - Only suggest improvements to shai itself, never to the external repository
