@@ -72,8 +72,6 @@ JSON
 
 # --- Test 1: all checks pass ---
 export DEEPSEEK_API_KEY="test-key"
-export JIRA_BASE_URL="https://test.atlassian.net"
-export JIRA_USER_EMAIL="test@example.com"
 export JIRA_API_TOKEN="test-token"
 
 OUT=$(run_doctor)
@@ -111,28 +109,27 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   exit "$FAILED"
 ) || FAILED=1
 
-# --- Test 5: conditional env var missing (JIRA_BASE_URL) → exit 0 + WARN ---
+# --- Test 5: conditional env var missing (JIRA_API_TOKEN) → exit 0 + WARN ---
 (
-  unset JIRA_BASE_URL
+  unset JIRA_API_TOKEN
   OUT=$(run_doctor)
   RC=$?
   assert_eq "$RC" "0" "doctor: missing JIRA var → exit 0"
   assert_contains "$OUT" "[WARN]" "doctor: missing JIRA var shows WARN"
-  assert_contains "$OUT" "JIRA_BASE_URL" "doctor: WARN line names the var"
+  assert_contains "$OUT" "JIRA_API_TOKEN" "doctor: WARN line names the var"
   exit "$FAILED"
 ) || FAILED=1
 
 # --- Test 6: summary line accuracy ---
 (
-  unset JIRA_BASE_URL
-  unset JIRA_USER_EMAIL
+  unset JIRA_API_TOKEN
   # 'od' (not 'jq') stands in for the failing core tool here: jq gates the tool.json
   # dependency scan below, so failing jq would also suppress the gh/JIRA checks this
   # test relies on (see Test 7 for that scenario).
-  # Warning count: gh (1) + the two unset JIRA vars (2) = 3.
+  # Warning count: gh (1) + the unset JIRA_API_TOKEN (1) = 2.
   OUT=$(run_doctor od gh)
   SUMMARY=$(printf '%s' "$OUT" | tail -n1)
-  assert_eq "$SUMMARY" "1 error, 3 warnings" "doctor: summary line exact match"
+  assert_eq "$SUMMARY" "1 error, 2 warnings" "doctor: summary line exact match"
   exit "$FAILED"
 ) || FAILED=1
 

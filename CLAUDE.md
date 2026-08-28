@@ -624,10 +624,11 @@ the repo has no checks configured), commits, pushes, and creates a draft PR with
 context but never transitions its status. After CI passes, the LLM adds the
 `shai-review-dispatcher` label to queue the PR for review. **No idempotency** (no
 `wf_seen`/`wf_mark`) — safe to re-run. Exit 0 on success, 1 on failure, 2 on usage error.
-The expected `jira` binary is go-jira (`github.com/go-jira/jira`): `jira issue view <key>
---plain` is its plain-text issue rendering (`--plain` disables its interactive templating),
-and `shai-doctor` checks the binary's presence (the `jira` tool's `requires.tools`) but not
-the CLI variant.
+The expected `jira` binary is jira-cli (`github.com/ankitpokhrel/jira-cli`): `jira issue view
+<key> --plain` is its plain-text issue rendering (`--plain` disables its interactive
+templating), and `shai-doctor` checks the binary's presence (the `jira` tool's
+`requires.tools`) but not the CLI variant. jira-cli is configured via `jira init` (creates
+`~/.config/.jira/.config.yml`); `JIRA_API_TOKEN` provides the API token.
 
 **`workflows/review_dispatcher/run.sh`** is a pure-bash dispatcher (no LLM calls — the LLM work
 happens inside `pr_reviewer`). It runs as a `shai-supervise` timer job, searching for open PRs

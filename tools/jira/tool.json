@@ -1,13 +1,11 @@
 {
   "name": "jira",
-  "description": "Run a Jira CLI (jira) command. Pass the subcommand and arguments as an array of strings.",
+  "description": "Run a jira-cli (github.com/ankitpokhrel/jira-cli) command. Pass the subcommand and arguments as an array of strings.",
   "capabilities": {
     "read_only": false,
     "requires": {
       "tools": ["jira"],
       "env": [
-        { "name": "JIRA_BASE_URL", "level": "conditional" },
-        { "name": "JIRA_USER_EMAIL", "level": "conditional" },
         { "name": "JIRA_API_TOKEN", "level": "conditional" }
       ]
     }
