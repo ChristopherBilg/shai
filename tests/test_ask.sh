@@ -2,7 +2,8 @@
 # test_ask.sh — integration tests for shai-ask
 # Covers: shai-ask — positional/stdin/--external prompt input, answer-only stdout with
 #         dispatch markers on stderr, -q/--quiet, --no-tools, --model/--max-tokens
-#         forwarding, session persistence + inherited session id, and exit codes
+#         forwarding, session persistence + inherited session id, exit codes, and the
+#         missing/empty system prompt contract (exit 3)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -215,5 +216,29 @@ MINTF=$(ls "$A16/sessions/"*.jsonl)
 MINTSESS=$(basename "$MINTF" .jsonl)
 assert_eq "$(printf '%s' "$MINTSESS" | grep -cE '^sess_[0-9]{8}T[0-9]{6}_[0-9a-f]{8}$')" "1" \
   "shai-ask: minted session id keeps its sortable prefix + 8 hex chars"
+
+# --- missing system prompt → exit 3 (the prompt is loaded before the health check, so a
+#     missing prompts/system.txt aborts at shai-prompt's exit 3). Run a copy of shai-ask +
+#     shai-prompt from a fixture dir with no prompts/ so the real repo tree stays untouched
+#     (the same copy-the-script technique test_dispatch.sh uses for a missing lib/).
+A18="$(mktemp -d)"
+_CLEANUP_DIRS+=("$A18")
+cp "$DIR/shai-ask" "$A18/shai-ask"
+cp "$DIR/shai-prompt" "$A18/shai-prompt"
+chmod +x "$A18/shai-ask" "$A18/shai-prompt"
+MISS_OUT=$(SHAI_HOME="$A18/home" SHAI_SESSION_ID=ask18 "$A18/shai-ask" "hi" 2>&1)
+MISS_RC=$?
+assert_eq "$MISS_RC" "3" "shai-ask: missing system prompt exits 3"
+assert_contains "$MISS_OUT" "prompt not found or unreadable" "shai-ask: missing system prompt names the missing prompt file"
+assert_eq "$(test -d "$A18/home/sessions" && echo exists || echo absent)" "absent" \
+  "shai-ask: missing system prompt creates no session dir"
+
+# --- an empty system prompt is the same contract (exit 3) ---
+mkdir -p "$A18/prompts"
+printf '' >"$A18/prompts/system.txt"
+EMPT_OUT=$(SHAI_HOME="$A18/home" SHAI_SESSION_ID=ask18 "$A18/shai-ask" "hi" 2>&1)
+EMPT_RC=$?
+assert_eq "$EMPT_RC" "3" "shai-ask: empty system prompt exits 3"
+assert_contains "$EMPT_OUT" "prompt is empty" "shai-ask: empty system prompt names the failure"
 
 finish
