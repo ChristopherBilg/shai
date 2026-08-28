@@ -1,0 +1,207 @@
+#!/bin/bash
+# shai-ask — non-interactive one-shot mode: run the full pipeline (incl. tool dispatch) once and print the answer
+# Usage: shai-ask [OPTIONS] [PROMPT ...]
+#        shai-ask [OPTIONS] < prompt.txt
+#        cat diff.txt | shai-ask [OPTIONS] --external SOURCE [PROMPT ...]
+# Reads: the prompt from positional args (joined with spaces) or, when there are no args,
+#        from stdin when stdin is not a TTY; with --external, stdin is the external data and
+#        the prompt must be positional; SHAI_SESSION_ID / SHAI_SCHEMA_VERSION from the
+#        environment if already set (an inherited session id is never overwritten);
+#        SHAI_MODEL / SHAI_MAX_TOKENS unless --model / --max-tokens
+# Writes: the answer (the final event rendered by shai-print) to stdout; tool dispatch
+#         markers ("⏺ name(args)" lines) to stderr unless -q/--quiet (other pipeline
+#         stderr is discarded); the system prompt, the turn, and (with --external) a fenced
+#         user message to the session log; the final event JSON is never emitted
+# Exit: 0 on success (answer printed); 1 if DEEPSEEK_API_KEY is missing (health check) or
+#       the turn ended in an error event; 2 on usage error (no prompt, unknown option,
+#       --external without a prompt argument); 3 if the system prompt is missing or empty
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: shai-ask [OPTIONS] [PROMPT ...]
+       shai-ask [OPTIONS] < prompt.txt
+       cat diff.txt | shai-ask [OPTIONS] --external SOURCE [PROMPT ...]
+
+shai-repl is for humans; shai-ask is for scripts, cron jobs, and pipes: it runs the full
+pipeline (system prompt, tools, eval + tool dispatch) for one prompt and prints the answer
+to stdout. Options must precede the prompt; every argument after the first non-option is
+prompt text, joined with spaces.
+
+  -q, --quiet        suppress tool dispatch markers on stderr
+  --no-tools         disable tool dispatch (pure Q&A mode)
+  --model MODEL      override SHAI_MODEL for this ask
+  --max-tokens N     override SHAI_MAX_TOKENS for this ask
+  --external SOURCE  treat stdin as external data, fenced via shai-read --external SOURCE
+                     and seeded into the session before the prompt; the prompt must then
+                     come from positional args
+  --                 end of options; remaining args are prompt text
+EOF
+}
+
+QUIET=false
+NO_TOOLS=false
+EXT_SOURCE=""
+LOOP_OPTS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -q | --quiet)
+      QUIET=true
+      shift
+      ;;
+    --no-tools)
+      NO_TOOLS=true
+      shift
+      ;;
+    --model | --max-tokens | --external)
+      flag="$1"
+      [ "$#" -ge 2 ] || {
+        printf 'shai-ask: %s requires a value\n' "$flag" >&2
+        usage
+        exit 2
+      }
+      case "$flag" in
+        --model) LOOP_OPTS+=(--model "$2") ;;
+        --max-tokens) LOOP_OPTS+=(--max-tokens "$2") ;;
+        --external) EXT_SOURCE="$2" ;;
+      esac
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      printf 'shai-ask: unknown option: %s\n' "$1" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+# The prompt comes from positional args (joined with spaces) or from stdin, never both: with
+# --external, stdin is the external data, so the prompt must be positional.
+if [ "$#" -gt 0 ]; then
+  PROMPT="$*"
+elif [ -n "$EXT_SOURCE" ]; then
+  printf 'shai-ask: --external requires a prompt argument (stdin is the external data)\n' >&2
+  usage
+  exit 2
+elif [ -t 0 ]; then
+  printf 'shai-ask: nothing to ask — pass a prompt argument or pipe one on stdin\n' >&2
+  usage
+  exit 2
+else
+  PROMPT="$(cat)"
+fi
+if [ -z "$PROMPT" ]; then
+  printf 'shai-ask: nothing to ask — empty prompt\n' >&2
+  usage
+  exit 2
+fi
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+
+# The system prompt is authored content, not code: it lives in prompts/system.txt and is
+# loaded via shai-prompt, which fails loudly (exit 3) if the file is missing or empty. Under
+# `set -e` that aborts before we ever seed a blank system turn into the session.
+SYSTEM_PROMPT="$("$DIR/shai-prompt" system)"
+
+# Tools are enabled by default — running the full pipeline is the whole point; --no-tools
+# opts out. The aggregated tool array is built once, like shai-repl, and passed to every
+# shai-eval --tools-file.
+TOOLS_FILE=""
+if [ "$NO_TOOLS" != true ]; then
+  TOOLS_FILE=$(mktemp)
+  chmod u+w "$TOOLS_FILE"
+fi
+# shai-loop's stdout (the final event JSON) is kept in a file just long enough to read the
+# exit verdict; the raw JSON itself never reaches shai-ask's stdout.
+FINAL_EVENT=$(mktemp)
+# shellcheck disable=SC2064  # expanded when the trap fires, by which point the values are final
+trap 'rm -f "$FINAL_EVENT"; [ -n "${TOOLS_FILE:-}" ] && rm -f "$TOOLS_FILE"' EXIT
+if [ "$NO_TOOLS" != true ]; then
+  "$DIR/shai-tools" >"$TOOLS_FILE"
+fi
+
+# mint_id <prefix> — UTC-sortable id with 4 urandom bytes for collision resistance
+mint_id() {
+  printf '%s_%s_%s' "$1" "$(date -u +%Y%m%dT%H%M%S)" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')"
+}
+
+# an inherited SHAI_SESSION_ID always wins: an nvim/tmux/cron wrapper owns the session
+SHAI_SESSION_ID="${SHAI_SESSION_ID:-$(mint_id sess)}"
+if [[ "$SHAI_SESSION_ID" =~ [/] ]] || [[ "$SHAI_SESSION_ID" == *..* ]]; then
+  printf 'error: SHAI_SESSION_ID must not contain / or .. (got "%s")\n' "$SHAI_SESSION_ID" >&2
+  exit 1
+fi
+export SHAI_SESSION_ID
+export SHAI_SCHEMA_VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
+
+SESSIONS_DIR="$STATE_DIR/sessions"
+SESSION_LOG="$SESSIONS_DIR/$SHAI_SESSION_ID.jsonl"
+
+# the system prompt is seeded outside any turn, so it has to stamp with a null run/span; the
+# run for this ask is minted below, after the seed
+export SHAI_RUN_ID=""
+export SHAI_SPAN_ID=""
+export SHAI_PARENT_SPAN_ID=""
+
+if ! "$DIR/shai-eval" --health-check; then
+  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl, config, and this API key)\n" "$DIR" >&2
+  exit 1
+fi
+
+mkdir -p "$SESSIONS_DIR"
+
+if [ ! -s "$SESSION_LOG" ]; then
+  # stamped with the session but no run/span: seeding happens outside any turn
+  printf '%s' "$SYSTEM_PROMPT" | "$DIR/shai-read" --system | "$DIR/shai-stamp" >>"$SESSION_LOG"
+fi
+
+# one ask is one run; shai-loop mints/advances spans and manages the run log internally
+SHAI_RUN_ID="$(mint_id run)"
+export SHAI_RUN_ID
+
+if [ -n "$EXT_SOURCE" ]; then
+  # fence stdin as external data and seed it as a user message of this run, ahead of the
+  # prompt, so shai-loop's context sees it as prior input. Empty stdin seeds nothing
+  # (shai-read: empty in → empty out).
+  "$DIR/shai-read" --external "$EXT_SOURCE" | "$DIR/shai-stamp" >>"$SESSION_LOG"
+fi
+
+if [ "$NO_TOOLS" != true ]; then
+  LOOP_OPTS+=(--tools-file "$TOOLS_FILE")
+fi
+if [ "$QUIET" = true ]; then
+  LOOP_OPTS+=(--quiet)
+fi
+
+# The turn: shai-loop's stdout is the final event JSON, captured for the exit verdict and
+# answer rendering below — the raw JSON itself is never emitted (the REPL does the same with
+# >/dev/null). shai-loop's stderr mixes the human-readable shai-print output with the
+# pipeline's own progress noise (shai-dispatch "policy:" lines, shai-eval retry notices, tool
+# plugin stderr), so only "⏺ name(args)" dispatch-marker lines are forwarded (to stderr);
+# everything else is dropped — the answer on stdout and the session/run logs are the record.
+# In -q/--quiet mode shai-loop prints no markers, so nothing reaches stderr.
+# shellcheck disable=SC2069  # the swap (stderr to old stdout, then stdout to file) is deliberate, not a mis-ordered redirect
+printf '%s\n' "$PROMPT" | "$DIR/shai-loop" "${LOOP_OPTS[@]}" 2>&1 1>"$FINAL_EVENT" | while IFS= read -r line; do
+  case "$line" in
+    "⏺ "*) printf '%s\n' "$line" >&2 ;;
+  esac
+done
+
+# The answer: the final event, rendered once through shai-print, is the only thing on stdout.
+"$DIR/shai-print" <"$FINAL_EVENT"
+
+# shai-loop exits 0 even when the turn ends in an error event (errors are events, not
+# crashes), so the final event decides the exit code: a turn that ended in an error is not a
+# success even though shai-loop completed.
+if [ ! -s "$FINAL_EVENT" ] || jq -e '.type == "error"' "$FINAL_EVENT" >/dev/null 2>&1; then
+  exit 1
+fi

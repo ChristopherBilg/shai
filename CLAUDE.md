@@ -165,9 +165,33 @@ The scripts:
   session log), so `shai-trace`/`shai-retry --run` can still inspect or resume it. A handled
   interrupt never changes the exit status.
   `exit`/`quit` and EOF (Ctrl-D) all end the loop with a single `Goodbye.` on stdout.
+- **`shai-ask [OPTIONS] [PROMPT ...]`** (`shai-ask:1`) — non-interactive one-shot mode:
+  `shai-repl` for humans, `shai-ask` for scripts, cron jobs, and pipes. Runs the full
+  pipeline once — health check, system prompt via `shai-prompt system`, tools via
+  `shai-tools` (enabled by default; `--no-tools` opts out), then one turn through
+  `shai-loop --tools-file <tmp>` — and prints just the answer. The prompt comes from
+  positional args (all args joined with spaces) or, with no args, from stdin when stdin is
+  not a TTY; with no args and a TTY stdin it is a usage error (exit 2), as are unknown
+  options, an empty prompt, and `--external` without a prompt argument. `--external SOURCE`
+  treats stdin as external data: it is fenced via `shai-read --external SOURCE`, stamped
+  into the session log as a user message of the same run, ahead of the prompt, so
+  `shai-loop` sees it as prior context (empty stdin seeds nothing). Session behavior
+  matches `shai-repl`: an inherited `SHAI_SESSION_ID` always wins, otherwise one is minted;
+  the system prompt is seeded exactly once per session. Output contract: answer text only
+  on stdout, tool dispatch markers (`⏺ name(args)` lines) on stderr (suppressed by
+  `-q`/`--quiet`, which forwards to `shai-loop`); `shai-ask` swaps `shai-loop`'s streams,
+  keeping its stdout (the final event JSON) in a temp file to read the exit verdict and
+  discarding it, and splits its stderr — marker lines to stderr, everything else (the
+  `shai-print` answer) to stdout. `--model MODEL` / `--max-tokens N` forward to `shai-loop`
+  (and on to `shai-eval`). Exit 0 on success; 1 if `DEEPSEEK_API_KEY` is missing
+  (`shai-eval --health-check`) or the turn ended in an error event — `shai-loop` exits 0
+  even for error events (errors are events, not crashes), so `shai-ask` inspects the final
+  event to turn that into a non-zero exit; 2 on usage errors; 3 if the system prompt is
+  missing or empty (`shai-prompt`). No readline, no history, no INT handling, no
+  multi-turn, no startup banner.
 - **`shai-prompt NAME`** (`shai-prompt:1`) — loads a named prompt from `prompts/NAME.txt` and
   prints it to stdout. Validates that NAME contains no `/` or `..` (path-traversal guard).
-  Used by `shai-repl` at startup to load `prompts/system.txt`.
+  Used by `shai-repl` and `shai-ask` at startup to load `prompts/system.txt`.
 - **`shai-version`** (`shai-version:1`) — prints the installed version to stdout as a bare string,
   resolved in order: the `VERSION` file next to the script (written by release tarballs), then
   `git describe --tags` in the install directory (dev clones), then the literal `dev`. Single
@@ -178,8 +202,8 @@ The scripts:
   `capabilities`, if present, is an object. Strips `capabilities` from each entry, wraps it as
   `{type:"function", function:{name, description, parameters}}`, and prints the aggregated
   Deepseek tool array to stdout. An empty or missing tools directory prints `[]`.
-  Used by `shai-repl` and `shai-retry` at startup to build the file passed to every `shai-eval
-  --tools-file`. Exit 1 on the first invalid plugin found.
+  Used by `shai-repl`, `shai-ask`, and `shai-retry` at startup to build the file passed to
+  every `shai-eval --tools-file`. Exit 1 on the first invalid plugin found.
 - **`shai-read [--system|--external SOURCE]`** (`shai-read:1`) — wraps raw stdin text into a `message` event. `--external SOURCE` fences the text in `<external_data source="SOURCE">…</external_data>` (source sanitized; closing external_data tags escaped as `&lt;/external_data&gt;`) as a `user` message; interactive REPL input stays unwrapped.
 - **`shai-context [--max-bytes N]`** (`shai-context:1`) — a pure `jq` reducer. Reads the whole
   JSONL log, extracts the system prompt, and keeps as many recent **turn groups** as fit within
