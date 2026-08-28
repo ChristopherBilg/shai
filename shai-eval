@@ -159,7 +159,12 @@ while true; do
   # arithmetic, since `$(( ))` cannot safely catch its own malformed-operand error via `|| fallback`.
   # Captured per attempt so latency_ms reflects the successful call, not the backoff sleeps.
   _START_MS=$(date +%s%3N 2>/dev/null || printf '0')
-  RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time "$EVAL_TIMEOUT" -w '\n%{http_code}' -X POST "$API_URL" \
+  # --connect-timeout bounds only the TCP/TLS handshake, so a stalled connect fails in 30s and
+  # reaches the retry loop instead of consuming the whole SHAI_EVAL_TIMEOUT (up to 2h per attempt).
+  # Deliberately no --speed-limit/--speed-time: this is a non-streaming request, so curl receives
+  # no body bytes while the model generates — a speed-based bound would abort every legitimate
+  # long generation, which is exactly what the raised timeout exists to allow.
+  RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --connect-timeout 30 --max-time "$EVAL_TIMEOUT" -w '\n%{http_code}' -X POST "$API_URL" \
     -H "content-type: application/json" \
     -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
     -d @-) || CURL_FAILED=true

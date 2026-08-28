@@ -464,6 +464,9 @@ for arg; do
   if [ "$prev" = "--max-time" ]; then
     printf '%s' "$arg" > "$(dirname "$0")/.captured_max_time"
   fi
+  if [ "$prev" = "--connect-timeout" ]; then
+    printf '%s' "$arg" > "$(dirname "$0")/.captured_connect_timeout"
+  fi
   prev="$arg"
 done
 cat > /dev/null
@@ -476,6 +479,7 @@ chmod +x "$STUB/curl"
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
   env -u SHAI_EVAL_TIMEOUT "$DIR/shai-eval" >/dev/null
 assert_eq "$(cat "$STUB/.captured_max_time")" "7200" "eval: default passes --max-time 7200 to curl"
+assert_eq "$(cat "$STUB/.captured_connect_timeout")" "30" "eval: connect phase bounded by --connect-timeout 30"
 
 # invalid SHAI_EVAL_TIMEOUT → exit 2
 TOERR=$(SHAI_EVAL_TIMEOUT=abc "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
