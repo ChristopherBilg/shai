@@ -63,7 +63,7 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ```
 
 Environment: `DEEPSEEK_API_KEY` (required), `SHAI_HOME` (state dir, default `~/.shai`),
-`SHAI_MODEL` (default `deepseek-v4-flash`), `SHAI_MAX_TOKENS` (output token budget for
+`SHAI_MODEL` (default `deepseek-v4-pro`), `SHAI_MAX_TOKENS` (output token budget for
 `shai-eval`, default `32000`; shared between reasoning and visible output when thinking is
 enabled), `SHAI_MAX_CONTEXT_BYTES` (byte budget for context
 windowing, default `1300000`), `SHAI_EVAL_TIMEOUT` (curl `--max-time` ceiling in seconds for
@@ -143,7 +143,7 @@ The scripts:
   file at startup (cleaned up on exit). After the health check, when stdout is a TTY it prints a
   one-line startup banner `shai <version> — session <id> — type 'exit' to quit` (a
   `— model <model>` segment is appended only when `SHAI_MODEL` is explicitly set; the
-  `deepseek-v4-flash` default is never synthesized, so it cannot drift from
+  `deepseek-v4-pro` default is never synthesized, so it cannot drift from
   `shai-eval`/`shai-doctor`). Reads lines from stdin; when stdin is a TTY it reads with
   `read -e` (Readline: line editing, in-session up/down-arrow history, and Ctrl-R reverse
   search) and appends each accepted prompt to `$SHAI_HOME/history` (one per line, plain
