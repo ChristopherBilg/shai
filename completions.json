@@ -494,6 +494,23 @@
           "description": "Only remove items older than DATE"
         }
       }
+    },
+    "shai-completions": {
+      "description": "Generate self-contained shell tab completions from the manifest",
+      "flags": {},
+      "subcommands": {
+        "generate": {
+          "description": "Emit a self-contained completion script to stdout",
+          "positional": [
+            {
+              "name": "shell",
+              "type": "shell",
+              "description": "Target shell: zsh or bash"
+            }
+          ],
+          "flags": {}
+        }
+      }
     }
   },
   "types": {
@@ -507,7 +524,7 @@
     },
     "workflow_name": {
       "description": "Workflow name from install directory",
-      "command": "for d in \"${_shai_dir}/workflows/\"*/run.sh; do d=\"${d%/run.sh}\"; echo \"${d##*/}\"; done 2>/dev/null"
+      "command": "for d in \"${_shai_dir}/workflows/\"*/run.sh; do [ -f \"$d\" ] || continue; d=\"${d%/run.sh}\"; n=\"${d##*/}\"; p=\"$(sed -n '2s/^# //p' \"$d/run.sh\" 2>/dev/null)\"; p=\"${p##*— }\"; printf '%s\\t%s\\n' \"$n\" \"$p\"; done 2>/dev/null"
     },
     "prompt_name": {
       "description": "Prompt name from install directory",
@@ -520,6 +537,10 @@
     "date": {
       "description": "Date in YYYY-MM-DD format",
       "hint": "YYYY-MM-DD"
+    },
+    "shell": {
+      "description": "Completion target shell",
+      "command": "printf '%s\\n' zsh bash"
     }
   }
 }
