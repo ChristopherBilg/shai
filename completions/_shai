@@ -100,7 +100,7 @@ _shai_type_tool_name() {
     while IFS= read -r line; do
       [ -n "$line" ] || continue
       items+=("${line/$'\t'/:}")
-    done < <(for d in "${_shai_dir}/tools/"*/; do [ -d "$d" ] || continue; d="${d%/}"; n="${d##*/}"; p="$(jq -r '.description // empty' "$d/tool.json" 2>/dev/null)"; printf '%s\t%s\n' "$n" "$p"; done 2>/dev/null)
+    done < <(for d in "${_shai_dir}/tools/"*/run.sh; do [ -x "$d" ] || continue; d="${d%/run.sh}"; n="${d##*/}"; p="$(jq -r '.description // empty' "$d/tool.json" 2>/dev/null)"; printf '%s\t%s\n' "$n" "$p"; done 2>/dev/null)
   fi
   _describe -t tool_name 'Tool name from install directory' items
 }

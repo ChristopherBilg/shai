@@ -499,10 +499,15 @@ assert_contains "$out" "heartbeat" "bash: shai-failures list --workflow <TAB> co
 
 # shai-events --tool completes tool names from the install dir's tools/
 # (the tool_name type, #327): same _shai_dir resolution as workflow_name,
-# with the tool.json description attached for zsh's listing. The fixture
-# names share no prefix so a single TAB already lists candidates (a common
+# gated on an executable run.sh (the dispatch gate in shai-dispatch), with
+# the tool.json description attached for zsh's listing. The fixture names
+# share no prefix so a single TAB already lists candidates (a common
 # prefix would only be inserted, matching zsh's default completion flow).
-mkdir -p "$WF/tools/gh" "$WF/tools/delete_file"
+mkdir -p "$WF/tools/gh" "$WF/tools/delete_file" "$WF/tools/no_runner"
+printf '#!/bin/bash\n# gh/run.sh — GitHub CLI helper\nexit 0\n' >"$WF/tools/gh/run.sh"
+chmod +x "$WF/tools/gh/run.sh"
+printf '#!/bin/bash\n# delete_file/run.sh — Delete a file\nexit 0\n' >"$WF/tools/delete_file/run.sh"
+chmod +x "$WF/tools/delete_file/run.sh"
 cat >"$WF/tools/gh/tool.json" <<'EOF'
 {
   "name": "gh",
@@ -517,9 +522,24 @@ cat >"$WF/tools/delete_file/tool.json" <<'EOF'
   "parameters": { "type": "object", "properties": {} }
 }
 EOF
+# A tool dir without an executable run.sh is not dispatchable (shai-dispatch
+# rejects it), so tool_name must not offer it.
+cat >"$WF/tools/no_runner/tool.json" <<'EOF'
+{
+  "name": "no_runner",
+  "description": "Missing run.sh",
+  "parameters": { "type": "object", "properties": {} }
+}
+EOF
 out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_events shai-events --tool "")"
 assert_contains "$out" "gh" "bash: shai-events --tool <TAB> completes tool names"
 assert_contains "$out" "delete_file" "bash: shai-events --tool <TAB> completes every tool name"
+if [[ "$out" != *no_runner* ]]; then
+  echo -e "  ${GREEN}✓${NC} bash: --tool completion skips dirs without an executable run.sh (no_runner not offered)"
+else
+  echo -e "  ${RED}✗${NC} bash: --tool completion offered a non-dispatchable dir (got $out)"
+  FAILED=1
+fi
 out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_events shai-events --tool del)"
 assert_contains "$out" "delete_file" "bash: shai-events --tool del<TAB> completes delete_file"
 if [[ "$out" != *gh* ]]; then
@@ -579,6 +599,8 @@ NOSTUB="$(mktemp -d)"
 _CLEANUP_DIRS+=("$NOSTUB")
 out="$(PATH="$NOSTUB" run_bash _shai_workflow shai-workflow run "")"
 assert_eq "$out" "" "bash: no shai-repl on PATH means no workflow candidates"
+out="$(PATH="$NOSTUB" run_bash _shai_events shai-events --tool "")"
+assert_eq "$out" "" "bash: no shai-repl on PATH means no tool candidates"
 
 # --- zsh syntax + runtime --------------------------------------------------
 if command -v zsh &>/dev/null; then

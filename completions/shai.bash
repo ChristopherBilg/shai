@@ -67,7 +67,7 @@ _shai_bash_tool_name() {
     COMPREPLY=()
     return
   fi
-  COMPREPLY=( $(compgen -W "$(for d in "${_shai_dir}/tools/"*/; do [ -d "$d" ] || continue; d="${d%/}"; n="${d##*/}"; p="$(jq -r '.description // empty' "$d/tool.json" 2>/dev/null)"; printf '%s\t%s\n' "$n" "$p"; done 2>/dev/null | cut -f1)" -- "$cur") )
+  COMPREPLY=( $(compgen -W "$(for d in "${_shai_dir}/tools/"*/run.sh; do [ -x "$d" ] || continue; d="${d%/run.sh}"; n="${d##*/}"; p="$(jq -r '.description // empty' "$d/tool.json" 2>/dev/null)"; printf '%s\t%s\n' "$n" "$p"; done 2>/dev/null | cut -f1)" -- "$cur") )
 }
 
 _shai_read() {
