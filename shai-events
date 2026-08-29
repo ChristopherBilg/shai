@@ -1,0 +1,291 @@
+#!/bin/bash
+# shai-events -- query individual events across session logs
+# Usage: shai-events [--type message|tool_result|error] [--source user|assistant|system|tool]
+#        [--tool NAME] [--session ID] [--run ID] [--after DATE] [--before DATE]
+#        [--recent N] [--json]
+# Reads: $SHAI_HOME/sessions/*.jsonl
+# Writes: stdout (event listing or JSON array)
+# Exit: 0 on success; 1 on invalid arguments or no prefix match
+set -euo pipefail
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+SESSIONS_DIR="$STATE_DIR/sessions"
+
+TYPE="" SOURCE="" TOOL="" SESSION="" RUN="" AFTER="" BEFORE="" RECENT="" JSON=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type)
+      shift
+      TYPE="${1:-}"
+      if [ -z "$TYPE" ]; then
+        printf 'error: --type requires a value\n' >&2
+        exit 1
+      fi
+      ;;
+    --source)
+      shift
+      SOURCE="${1:-}"
+      if [ -z "$SOURCE" ]; then
+        printf 'error: --source requires a value\n' >&2
+        exit 1
+      fi
+      ;;
+    --tool)
+      shift
+      TOOL="${1:-}"
+      if [ -z "$TOOL" ]; then
+        printf 'error: --tool requires a value\n' >&2
+        exit 1
+      fi
+      ;;
+    --session)
+      shift
+      SESSION="${1:-}"
+      if [ -z "$SESSION" ]; then
+        printf 'error: --session requires an ID or prefix\n' >&2
+        exit 1
+      fi
+      ;;
+    --run)
+      shift
+      RUN="${1:-}"
+      if [ -z "$RUN" ]; then
+        printf 'error: --run requires an ID or prefix\n' >&2
+        exit 1
+      fi
+      ;;
+    --after)
+      shift
+      AFTER="${1:-}"
+      if [ -z "$AFTER" ]; then
+        printf 'error: --after requires a date (YYYY-MM-DD)\n' >&2
+        exit 1
+      fi
+      if ! [[ "$AFTER" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        printf 'error: --after date must be YYYY-MM-DD\n' >&2
+        exit 1
+      fi
+      ;;
+    --before)
+      shift
+      BEFORE="${1:-}"
+      if [ -z "$BEFORE" ]; then
+        printf 'error: --before requires a date (YYYY-MM-DD)\n' >&2
+        exit 1
+      fi
+      if ! [[ "$BEFORE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        printf 'error: --before date must be YYYY-MM-DD\n' >&2
+        exit 1
+      fi
+      ;;
+    --recent)
+      shift
+      RECENT="${1:-}"
+      if [ -z "$RECENT" ]; then
+        printf 'error: --recent requires a value\n' >&2
+        exit 1
+      fi
+      if ! [[ "$RECENT" =~ ^[0-9]+$ ]]; then
+        printf 'error: --recent value must be an integer\n' >&2
+        exit 1
+      fi
+      ;;
+    --json) JSON=true ;;
+    *)
+      printf 'error: unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# id_date <session_id>: "YYYY-MM-DD" from sess_YYYYMMDDTHHMMSS_XXXXXXXX
+id_date() {
+  local ts="${1#*_}"
+  ts="${ts%%T*}"
+  printf '%s-%s-%s' "${ts:0:4}" "${ts:4:2}" "${ts:6:2}"
+}
+
+# resolve_prefix <prefix> <dir> <suffix>: the single "<dir>/<prefix>*<suffix>" match,
+# printed to stdout with no trailing newline. No match or an ambiguous match is an
+# error on stderr (listing the candidates) and a non-zero return.
+resolve_prefix() {
+  local prefix="$1" dir="$2" suffix="${3:-}"
+  local matches=()
+  for entry in "$dir"/"${prefix}"*"$suffix"; do
+    [ -e "$entry" ] || continue
+    matches+=("$entry")
+  done
+  if [ ${#matches[@]} -eq 0 ]; then
+    printf 'error: no match for "%s"\n' "$prefix" >&2
+    return 1
+  elif [ ${#matches[@]} -gt 1 ]; then
+    printf 'error: ambiguous prefix "%s" matches:\n' "$prefix" >&2
+    for m in "${matches[@]}"; do printf '  %s\n' "$(basename "$m" "$suffix")" >&2; done
+    return 1
+  fi
+  printf '%s' "${matches[0]}"
+}
+
+# Open-ended date bounds: an event's timestamp must sort inside [after, before].
+# "" sorts before every date and "9999-99-99" after every date, so one comparison
+# covers all four flag combinations (same scheme as shai-ledgers/shai-failures).
+AFTER_BOUND="$AFTER"
+BEFORE_BOUND="${BEFORE:-9999-99-99}"
+
+# Collect the session files to scan. The date window short-circuits at the file
+# level: a session file whose *filename* timestamp (sess_YYYYMMDDTHHMMSS_*) falls
+# outside --after/--before is never opened, before any JSONL is parsed. Inside a
+# matched file the events are still filtered by their own meta.timestamp, so the
+# file-level skip is purely an optimization for out-of-window sessions.
+files=()
+if [ -n "$SESSION" ]; then
+  f=$(resolve_prefix "$SESSION" "$SESSIONS_DIR" ".jsonl") || exit 1
+  sid=$(basename "$f" .jsonl)
+  date=$(id_date "$sid")
+  in_window=true
+  if [ -n "$AFTER" ] && [[ "$date" < "$AFTER" ]]; then in_window=false; fi
+  if [ -n "$BEFORE" ] && [[ "$date" > "$BEFORE" ]]; then in_window=false; fi
+  if [ "$in_window" = true ]; then files+=("$f"); fi
+else
+  for f in "$SESSIONS_DIR"/*.jsonl; do
+    [ -e "$f" ] || continue
+    sid=$(basename "$f" .jsonl)
+    date=$(id_date "$sid")
+    if [ -n "$AFTER" ] && [[ "$date" < "$AFTER" ]]; then continue; fi
+    if [ -n "$BEFORE" ] && [[ "$date" > "$BEFORE" ]]; then continue; fi
+    files+=("$f")
+  done
+fi
+
+# One jq -R pass per file: each line is parsed individually, so a malformed line
+# (a crash mid-append — the same realistic failure the other observability tools
+# guard against) is skipped with a warning and the remaining events still return.
+# --tool matches assistant events whose payload.tool_calls[].function.name equals
+# the value; tool_result events don't carry a tool name, so they can never match.
+# Events without a usable meta.timestamp are excluded when a date bound is active.
+# Rows join ts and the compact event with a literal tab (join("\t")) rather than
+# @tsv: @tsv escapes backslashes, which corrupts event JSON containing \" escapes.
+EXTRACT='
+  def in_window:
+    ((.meta.timestamp // "") | tostring) as $ts |
+    (($after == "") or (($ts | length) >= 10 and $ts[0:10] >= $after)) and
+    (($before == "") or (($ts | length) >= 10 and $ts[0:10] <= $before));
+  . as $line
+  | (try fromjson catch null) as $e
+  | if ($e | type) == "object" then
+      $e
+      | select(
+          (($type == "") or (.type == $type))
+          and (($source == "") or (.source == $source))
+          and (($tool == "") or (.type == "message" and .source == "assistant"
+            and any(.payload.tool_calls[]?; .function.name == $tool)))
+          and (($run == "") or ((.meta.run_id // "") | tostring | startswith($run)))
+          and in_window)
+      | [((.meta.timestamp // "") | tostring), tojson]
+      | join("\t")
+    else
+      "warning: skipping " + $file + " line " + (input_line_number | tostring) + " (parse error)"
+      | stderr
+      | empty
+    end
+'
+
+# Fields are joined with a real tab; jq's compact output never emits a raw tab
+# byte (control characters are escaped as \t inside JSON strings), so a literal
+# tab is a safe, unambiguous separator. The sort key is the event timestamp plus
+# a zero-padded scan ordinal, so events that share a timestamp (second-resolution
+# ISO-8601) keep their in-file order instead of being reordered arbitrarily.
+TAB=$'\t'
+
+entries=()
+ordinal=0
+for f in "${files[@]}"; do
+  # `|| true`: jq exits 4 ("no valid result ever produced") when nothing in the
+  # file matched, which is a legitimate empty result, not a failure.
+  rows=$(jq -Rrc --arg file "$f" --arg type "$TYPE" --arg source "$SOURCE" \
+    --arg tool "$TOOL" --arg run "$RUN" --arg after "$AFTER_BOUND" --arg before "$BEFORE_BOUND" \
+    "$EXTRACT" "$f") || true
+  if [ -n "$rows" ]; then
+    while IFS= read -r row; do
+      ts="${row%%"$TAB"*}"
+      json="${row#*"$TAB"}"
+      entries+=("$ts$TAB$(printf '%08d' "$ordinal")$TAB$json")
+      ordinal=$((ordinal + 1))
+    done <<<"$rows"
+  fi
+done
+
+# Sort chronologically by timestamp. Guard the empty case explicitly rather than
+# feeding zero arguments through printf/sort/mapfile: printf '%s\n' with no
+# arguments still emits one blank line, which would otherwise become a single
+# bogus empty entry.
+sorted=()
+if [ "${#entries[@]}" -gt 0 ]; then
+  mapfile -t sorted < <(printf '%s\n' "${entries[@]}" | sort)
+fi
+
+# Apply --recent. Handled as its own branch: `${arr[@]: -0}` is not "the last
+# zero elements" -- a negative offset of -0 is arithmetically 0, so bash would
+# treat it as "from the start" and return the whole array instead of none.
+if [ -n "$RECENT" ]; then
+  if [ "$RECENT" -eq 0 ]; then
+    sorted=()
+  elif [ "${#sorted[@]}" -gt "$RECENT" ]; then
+    sorted=("${sorted[@]: -$RECENT}")
+  fi
+fi
+
+if [ "${#sorted[@]}" -eq 0 ]; then
+  if [ "$JSON" = true ]; then printf '[]\n'; fi
+  exit 0
+fi
+
+if [ "$JSON" = true ]; then
+  # JSON output is an array of the full event objects, unmodified (no fields
+  # added or dropped): the composability point for `jq` pipelines downstream.
+  printf '['
+  first=true
+  for entry in "${sorted[@]}"; do
+    json="${entry##*"$TAB"}"
+    "$first" || printf ','
+    first=false
+    printf '%s' "$json"
+  done
+  printf ']\n'
+  exit 0
+fi
+
+# Human output: one line per event. The summary column is truncated to 80 chars
+# and tool calls render as name(...) instead of raw JSON.
+SUMMARY_PROG='
+  def summary:
+    if .type == "tool_result" then
+      (.payload.content
+        | if type == "array" then (map(.text // (. | tostring)) | join(" "))
+          elif . == null then ""
+          else tostring end)
+    elif .type == "error" then
+      (.payload.text // "" | tostring)
+    elif .type == "message" and .source == "assistant" then
+      ([
+        (.payload.content // "" | tostring | select(length > 0)),
+        (.payload.tool_calls[]?.function.name // empty | . + "(...)")
+      ] | join("; "))
+    else
+      (.payload.text // "" | tostring)
+    end
+    | .[0:80];
+  [(.meta.timestamp // ""), (.type // ""), (.source // ""), summary] | @tsv
+'
+
+printf '%-20s %-12s %-10s %s\n' "TIMESTAMP" "TYPE" "SOURCE" "SUMMARY"
+for entry in "${sorted[@]}"; do
+  json="${entry##*"$TAB"}"
+  row=$(printf '%s' "$json" | jq -r "$SUMMARY_PROG")
+  IFS=$'\t' read -r ts type source summary <<<"$row" || true
+  ts="${ts:0:20}"
+  [ -n "$ts" ] || ts="--"
+  printf '%-20s %-12s %-10s %s\n' "$ts" "$type" "$source" "$summary"
+done

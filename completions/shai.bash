@@ -90,6 +90,25 @@ _shai_eval() {
   COMPREPLY=()
 }
 complete -F _shai_eval shai-eval
+_shai_events() {
+  local cur prev
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [[ "$prev" == "--session" ]]; then
+    _shai_bash_session_id
+    return
+  fi
+  if [[ "$prev" == "--run" ]]; then
+    _shai_bash_run_id
+    return
+  fi
+  if [[ "$cur" == -* ]]; then
+    COMPREPLY=( $(compgen -W "--type --source --tool --session --run --after --before --recent --json" -- "$cur") )
+    return
+  fi
+  COMPREPLY=()
+}
+complete -F _shai_events shai-events
 _shai_dispatch() {
   local cur prev
   cur="${COMP_WORDS[COMP_CWORD]}"
