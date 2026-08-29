@@ -128,11 +128,13 @@ resolve_prefix() {
   printf '%s' "${matches[0]}"
 }
 
-# Open-ended date bounds: an event's timestamp must sort inside [after, before].
-# "" sorts before every date and "9999-99-99" after every date, so one comparison
-# covers all four flag combinations (same scheme as shai-ledgers/shai-failures).
+# Date bounds pass to jq raw (empty when the flag is absent); the jq filter
+# guards on the empty string rather than sentinel bounds: an event's timestamp
+# must sort inside [after, before], and an event without a usable
+# meta.timestamp is excluded when either bound is active (matching shai-runs'
+# undated-run semantics) and included otherwise.
 AFTER_BOUND="$AFTER"
-BEFORE_BOUND="${BEFORE:-9999-99-99}"
+BEFORE_BOUND="$BEFORE"
 
 # Collect the session files to scan. The date window short-circuits at the file
 # level: a session file whose *filename* timestamp (sess_YYYYMMDDTHHMMSS_*) falls
