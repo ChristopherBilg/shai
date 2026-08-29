@@ -8,6 +8,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "install.sh"
 
+# Regression guard for #331: lib.sh unsets an inherited XDG_DATA_HOME, which is
+# this suite's only protection against writing completions outside the fixture.
+# Fail loudly in environments that export it if that unset is ever removed.
+assert_eq "${XDG_DATA_HOME+x}" "" "install: lib.sh neutralizes an inherited XDG_DATA_HOME"
+
 WORK="$(mktemp -d)"
 _CLEANUP_DIRS+=("$WORK")
 
