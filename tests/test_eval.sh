@@ -117,10 +117,10 @@ DRYBOTH=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_MAX_TOKENS=64000 "$DIR/shai-eval" --dry-run --max-tokens 99)
 assert_contains "$DRYBOTH" '"max_tokens":99' "eval: --max-tokens CLI flag wins over SHAI_MAX_TOKENS env var"
 
-# default is 32000
+# default is 384000
 DRYDEFAULT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   env -u SHAI_MAX_TOKENS "$DIR/shai-eval" --dry-run)
-assert_contains "$DRYDEFAULT" '"max_tokens":32000' "eval: default max_tokens is 32000"
+assert_contains "$DRYDEFAULT" '"max_tokens":384000' "eval: default max_tokens is 384000"
 
 # SHAI_MAX_TOKENS non-integer → controlled exit 2 with a clear message, not a jq crash
 # (a bad value would otherwise abort shai-eval mid-payload-build and take shai-loop's
@@ -433,7 +433,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: default 
 # --- SHAI_EVAL_TIMEOUT --------------------------------------------------------
 desc "SHAI_EVAL_TIMEOUT"
 
-assert_eq "$DEFAULT_EVAL_TIMEOUT" "600" "eval: default timeout is 600 seconds"
+assert_eq "$DEFAULT_EVAL_TIMEOUT" "7200" "eval: default timeout is 7200 seconds"
 
 # env var override: curl stub captures --max-time argument
 make_stub_bin
@@ -464,6 +464,9 @@ for arg; do
   if [ "$prev" = "--max-time" ]; then
     printf '%s' "$arg" > "$(dirname "$0")/.captured_max_time"
   fi
+  if [ "$prev" = "--connect-timeout" ]; then
+    printf '%s' "$arg" > "$(dirname "$0")/.captured_connect_timeout"
+  fi
   prev="$arg"
 done
 cat > /dev/null
@@ -475,7 +478,8 @@ STUBEOF
 chmod +x "$STUB/curl"
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
   env -u SHAI_EVAL_TIMEOUT "$DIR/shai-eval" >/dev/null
-assert_eq "$(cat "$STUB/.captured_max_time")" "600" "eval: default passes --max-time 600 to curl"
+assert_eq "$(cat "$STUB/.captured_max_time")" "7200" "eval: default passes --max-time 7200 to curl"
+assert_eq "$(cat "$STUB/.captured_connect_timeout")" "30" "eval: connect phase bounded by --connect-timeout 30"
 
 # invalid SHAI_EVAL_TIMEOUT → exit 2
 TOERR=$(SHAI_EVAL_TIMEOUT=abc "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)

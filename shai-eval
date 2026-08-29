@@ -3,8 +3,8 @@
 # Usage: cat request.json | shai-eval [--tools-file <path>|--model M|--max-tokens N|--dry-run|--health-check]
 # Reads: a {messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
 #        environment to locate the per-span request/response dumps;
-#        SHAI_MAX_TOKENS (default 32000) for the output token budget;
-#        SHAI_EVAL_TIMEOUT (default 600) for the curl --max-time ceiling in seconds;
+#        SHAI_MAX_TOKENS (default 384000) for the output token budget;
+#        SHAI_EVAL_TIMEOUT (default 7200) for the curl --max-time ceiling in seconds;
 #        SHAI_EVAL_RETRIES (default 2, max 10) for retry count on transient failures
 # Writes: one assistant/error event (assistant events carry an `api` key: message_id, model,
 #         usage, latency_ms); on a real call, also dumps the request, and on success the response
@@ -17,13 +17,13 @@ set -euo pipefail
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 MODEL="${SHAI_MODEL:-deepseek-v4-pro}"
-MAX_TOKENS="${SHAI_MAX_TOKENS:-32000}"
+MAX_TOKENS="${SHAI_MAX_TOKENS:-384000}"
 DRY_RUN=false
 HEALTH_CHECK=false
 API_URL="https://api.deepseek.com/v1/chat/completions"
 TOOLS_FILE=""
 
-EVAL_TIMEOUT="${SHAI_EVAL_TIMEOUT:-600}"
+EVAL_TIMEOUT="${SHAI_EVAL_TIMEOUT:-7200}"
 case "$EVAL_TIMEOUT" in
   '' | 0* | *[!0-9]*)
     printf 'error: SHAI_EVAL_TIMEOUT must be a positive integer (got "%s")\n' "$EVAL_TIMEOUT" >&2
@@ -159,7 +159,12 @@ while true; do
   # arithmetic, since `$(( ))` cannot safely catch its own malformed-operand error via `|| fallback`.
   # Captured per attempt so latency_ms reflects the successful call, not the backoff sleeps.
   _START_MS=$(date +%s%3N 2>/dev/null || printf '0')
-  RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --max-time "$EVAL_TIMEOUT" -w '\n%{http_code}' -X POST "$API_URL" \
+  # --connect-timeout bounds only the TCP/TLS handshake, so a stalled connect fails in 30s and
+  # reaches the retry loop instead of consuming the whole SHAI_EVAL_TIMEOUT (up to 2h per attempt).
+  # Deliberately no --speed-limit/--speed-time: this is a non-streaming request, so curl receives
+  # no body bytes while the model generates — a speed-based bound would abort every legitimate
+  # long generation, which is exactly what the raised timeout exists to allow.
+  RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --connect-timeout 30 --max-time "$EVAL_TIMEOUT" -w '\n%{http_code}' -X POST "$API_URL" \
     -H "content-type: application/json" \
     -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
     -d @-) || CURL_FAILED=true
