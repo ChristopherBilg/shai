@@ -50,6 +50,25 @@ _shai_bash_shell() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   COMPREPLY=( $(compgen -W "$(printf '%s\n' zsh bash | cut -f1)" -- "$cur") )
 }
+_shai_bash_event_type() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=( $(compgen -W "$(printf '%s\n' message tool_result error | cut -f1)" -- "$cur") )
+}
+_shai_bash_event_source() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=( $(compgen -W "$(printf '%s\n' user assistant system tool | cut -f1)" -- "$cur") )
+}
+_shai_bash_tool_name() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  if [ -z "${_shai_dir:-}" ] || [ ! -d "${_shai_dir:-}" ]; then
+    COMPREPLY=()
+    return
+  fi
+  COMPREPLY=( $(compgen -W "$(for d in "${_shai_dir}/tools/"*/run.sh; do [ -x "$d" ] || continue; d="${d%/run.sh}"; n="${d##*/}"; p="$(jq -r '.description // empty' "$d/tool.json" 2>/dev/null)"; printf '%s\t%s\n' "$n" "$p"; done 2>/dev/null | cut -f1)" -- "$cur") )
+}
 
 _shai_read() {
   local cur prev
@@ -94,6 +113,18 @@ _shai_events() {
   local cur prev
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [[ "$prev" == "--type" ]]; then
+    _shai_bash_event_type
+    return
+  fi
+  if [[ "$prev" == "--source" ]]; then
+    _shai_bash_event_source
+    return
+  fi
+  if [[ "$prev" == "--tool" ]]; then
+    _shai_bash_tool_name
+    return
+  fi
   if [[ "$prev" == "--session" ]]; then
     _shai_bash_session_id
     return
