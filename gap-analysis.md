@@ -5,8 +5,8 @@ Date: 2026-08-27
 ## Context
 
 An audit of shai's top-level script surface area against best practices for a
-Unix-philosophy CLI tool suite of this maturity. The project currently has 23
-top-level scripts, 8 workflows, and 11 tool plugins. This document identifies
+Unix-philosophy CLI tool suite of this maturity. The project currently has 25
+top-level scripts, 9 workflows, and 11 tool plugins. This document identifies
 gaps across new features, observability, and maintenance.
 
 ## Current Inventory
@@ -15,8 +15,8 @@ gaps across new features, observability, and maintenance.
 |----------|---------|
 | Pipeline core | `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-loop`, `shai-print`, `shai-stamp`, `shai-ask` |
 | REPL + retry | `shai-repl`, `shai-retry` |
-| Observability | `shai-sessions`, `shai-runs`, `shai-trace`, `shai-stats`, `shai-failures`, `shai-ledgers` |
-| Infrastructure | `shai-doctor`, `shai-version`, `shai-tools`, `shai-prompt`, `shai-workflow`, `shai-supervise`, `shai-prune` |
+| Observability | `shai-sessions`, `shai-runs`, `shai-events`, `shai-trace`, `shai-stats`, `shai-failures`, `shai-ledgers` |
+| Infrastructure | `shai-doctor`, `shai-version`, `shai-tools`, `shai-prompt`, `shai-workflow`, `shai-supervise`, `shai-prune`, `shai-completions` |
 
 ## New Features
 
@@ -43,7 +43,11 @@ directory if needed (see #321). `install.sh` runs both installs on every
 release install, and `shai-doctor` reports whether the files are present — a
 warning, never an error. The generated files are checked in
 (`completions/_shai`, `completions/shai.bash`) and kept byte-identical to
-`generate` output by `tests/test_completions.sh`.
+`generate` output by `tests/test_completions.sh`. `shai-completions check`
+(see #320) is the fail-closed gate behind that freshness: every git-tracked
+`shai-*` script must have a manifest entry, every parsed `--flag` must be
+declared in it, and `generate` must reproduce the checked-in files byte for
+byte — the `completions` CI job runs it on every push.
 
 ### `shai-config` — programmatic configuration management
 
@@ -76,12 +80,18 @@ filtering by event type.
 
 ### `shai-events` — event query across sessions
 
-"Show me every `tool_error` from the last week." "Find all runs that called the
-`gh` tool." Currently that requires manual `jq` over JSONL files.
-
-`shai-events --type tool_result --after 2026-08-20 --json` would be the
-structured query interface the observability suite is missing. The existing
-scripts query by run or session — this queries by event.
+**Implemented** — `shai-events` is now a top-level script (see #326), closing
+the event-level axis of the observability suite: "show me every `tool_result`
+from the last week" and "find every event that called the `gh` tool" no longer
+require manual `jq` over JSONL files. `shai-events --type tool_result --after
+2026-08-20 --json` returns the matches as a JSON array of the full, unmodified
+event objects; without `--json` each match is one human-readable row
+(`TIMESTAMP TYPE SOURCE SUMMARY`, summary truncated to 80 chars, tool calls
+rendered as `name(...)`). All flags — `--type`, `--source`, `--tool`,
+`--session`, `--run`, `--after`/`--before` (inclusive dates), `--recent N` —
+are optional and AND-combinable; malformed lines are skipped with a warning;
+empty results exit 0. The existing scripts query by session, run, span, or
+aggregate — this queries by event.
 
 ## Maintenance
 
