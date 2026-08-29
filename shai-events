@@ -261,7 +261,10 @@ if [ "$JSON" = true ]; then
 fi
 
 # Human output: one line per event. The summary column is truncated to 80 chars
-# and tool calls render as name(...) instead of raw JSON.
+# and tool calls render as name(...) instead of raw JSON. All rows render in a
+# single jq pass (one process for the whole table, not one per event): each
+# entry line is <ts> TAB <ordinal> TAB <compact-json>, jq re-parses the event
+# and emits the rows via @tsv.
 SUMMARY_PROG='
   def summary:
     if .type == "tool_result" then
@@ -280,15 +283,17 @@ SUMMARY_PROG='
       (.payload.text // "" | tostring)
     end
     | .[0:80];
-  [(.meta.timestamp // ""), (.type // ""), (.source // ""), summary] | @tsv
+  split("\t") as $parts
+  | ($parts[2:] | join("\t")) as $json
+  | (try ($json | fromjson) catch null) as $e
+  | select(($e | type) == "object")
+  | $e | [
+      (($parts[0] // "") | .[0:20] | if length > 0 then . else "--" end),
+      (.type // ""),
+      (.source // ""),
+      summary
+    ] | @tsv
 '
 
 printf '%-20s %-12s %-10s %s\n' "TIMESTAMP" "TYPE" "SOURCE" "SUMMARY"
-for entry in "${sorted[@]}"; do
-  json="${entry##*"$TAB"}"
-  row=$(printf '%s' "$json" | jq -r "$SUMMARY_PROG")
-  IFS=$'\t' read -r ts type source summary <<<"$row" || true
-  ts="${ts:0:20}"
-  [ -n "$ts" ] || ts="--"
-  printf '%-20s %-12s %-10s %s\n' "$ts" "$type" "$source" "$summary"
-done
+printf '%s\n' "${sorted[@]}" | jq -rR "$SUMMARY_PROG"
