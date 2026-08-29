@@ -219,9 +219,12 @@ The scripts:
   `${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai` (zsh) or
   `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai` (bash) — creating the
   target directory if needed and printing a one-line shell-config instruction only when that
-  directory is newly created. `install.sh` runs both installs best-effort after wrapper
-  generation (`|| true`, stderr suppressed), and `shai-doctor` reports whether the files are
-  present as warnings rather than errors. The generated files are checked in
+  directory is newly created; the instruction interpolates the resolved paths (so it stays
+  correct under a customized `XDG_DATA_HOME`) and the file is written via a temp file + mv so a
+  failed generation never destroys an existing one. `install.sh` runs both installs best-effort
+  after wrapper generation (`|| true`, stderr suppressed; the generated files resolve the install
+  dir at completion load time), and `shai-doctor` reports whether the files are present as
+  warnings rather than errors. The generated files are checked in
   (`completions/_shai`, `completions/shai.bash`) and `tests/test_completions.sh` keeps them
   byte-identical to `generate` output. Exit 0 on success; 1 on generation or write failure;
   2 on usage errors.
