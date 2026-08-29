@@ -1,16 +1,18 @@
 #!/bin/bash
-# shai-completions — generate self-contained zsh/bash tab completions from the completions manifest
-# Usage: shai-completions generate <zsh|bash>
+# shai-completions — generate and install self-contained zsh/bash tab completions from the manifest
+# Usage: shai-completions <generate|install> <zsh|bash>
 # Reads: $DIR/completions.json (completion manifest: scripts, flags, subcommands, types)
-# Writes: the requested completion script on stdout
-# Exit: 0 on success; 1 on generation failure (invalid manifest, jq error); 2 on usage error
+# Writes: generate — the requested completion script on stdout; install — the completion file at
+#         ${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai (zsh) or
+#         ${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai (bash)
+# Exit: 0 on success; 1 on generation or write failure (invalid manifest, jq error); 2 on usage error
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 MANIFEST="$DIR/completions.json"
 
 usage() {
-  printf 'Usage: shai-completions generate <zsh|bash>\n' >&2
+  printf 'Usage: shai-completions <generate|install> <zsh|bash>\n' >&2
 }
 
 # Each generator is a pure jq program: completions.json in, shell-specific
@@ -333,21 +335,59 @@ generate() {
   printf '%s\n' "$output"
 }
 
-main() {
-  if [ "${1:-}" != "generate" ]; then
-    usage
-    return 2
+# install_completions <shell>: generate the completion script and write it to the standard
+# user-local location for the shell. Creates the target directory when missing; prints the
+# one-line shell-config instruction only when that directory is newly created (a reasonable
+# proxy for "the shell is not configured for it yet" — a redundant instruction is harmless).
+install_completions() {
+  local shell="$1" target dir newly=0
+  case "$shell" in
+    zsh) target="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai" ;;
+    bash) target="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai" ;;
+  esac
+  dir="$(dirname "$target")"
+  if [ ! -d "$dir" ]; then
+    if ! mkdir -p "$dir"; then
+      printf 'error: could not create completion directory: %s\n' "$dir" >&2
+      return 1
+    fi
+    newly=1
   fi
+  if ! generate "$shell" >"$target"; then
+    printf 'error: could not write %s completions to %s\n' "$shell" "$target" >&2
+    return 1
+  fi
+  printf 'Installed %s completions to %s\n' "$shell" "$target"
+  if [ "$newly" -eq 1 ]; then
+    case "$shell" in
+      zsh) printf 'Add to .zshrc: fpath=(~/.local/share/zsh/site-functions $fpath); autoload -Uz compinit && compinit\n' ;;
+      bash) printf 'Add to .bashrc: [[ -r ~/.local/share/bash-completion/completions/shai ]] && source ~/.local/share/bash-completion/completions/shai\n' ;;
+    esac
+  fi
+}
+
+main() {
+  case "${1:-}" in
+    generate | install) ;;
+    *)
+      usage
+      return 2
+      ;;
+  esac
   if [ -z "${2:-}" ] || [ "$#" -gt 2 ]; then
     usage
     return 2
   fi
   case "$2" in
-    zsh | bash) generate "$2" ;;
+    zsh | bash) ;;
     *)
       usage
       return 2
       ;;
+  esac
+  case "$1" in
+    generate) generate "$2" ;;
+    install) install_completions "$2" ;;
   esac
 }
 

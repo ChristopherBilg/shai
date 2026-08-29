@@ -317,6 +317,7 @@ _shai-completions() {
   local -a cmds
   cmds=(
     'generate:Emit a self-contained completion script to stdout'
+    'install:Write the completion file to the standard user-local location'
   )
   if (( CURRENT == 2 )); then
     _describe -t subcommands 'subcommand' cmds
@@ -324,6 +325,11 @@ _shai-completions() {
   fi
   case "${words[2]:-}" in
     generate)
+      _arguments -S \
+        '1:subcommand' \
+        '2:shell:_shai_type_shell'
+      ;;
+    install)
       _arguments -S \
         '1:subcommand' \
         '2:shell:_shai_type_shell'
