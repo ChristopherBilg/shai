@@ -155,7 +155,16 @@ export DEEPSEEK_API_KEY="test-key"
 # shai inputs that can affect assertions centrally and give each suite a fresh
 # SHAI_HOME; the remaining inheritable shai inputs (e.g. SHAI_SESSION_ID,
 # SHAI_WORKFLOW) are pinned per call by the suites that use them.
+# XDG_DATA_HOME is not a shai input, but it belongs in the same class: it
+# redirects the completion install target (shai-completions resolves
+# ${XDG_DATA_HOME:-$HOME/.local/share}), so an inherited value overrides a
+# fixture HOME and makes a suite write to the caller's real data directory.
+# Unset it here (rather than pinning it) so suites that test the
+# $HOME/.local/share fallback keep that path under test, and suites that need a
+# fixture value (test_doctor.sh) or pass one per command (test_completions.sh)
+# set it themselves after sourcing this file.
 unset SHAI_POLICY_OVERLAY SHAI_RETRY_ACTIVE SHAI_TOOLS_DIR SHAI_SPAN_ID SHAI_RUN_ID SHAI_MAX_CONTEXT_BYTES
+unset XDG_DATA_HOME
 export SHAI_HOME
 SHAI_HOME=$(mktemp -d)
 _CLEANUP_DIRS+=("$SHAI_HOME")
