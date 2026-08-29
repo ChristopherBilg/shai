@@ -298,4 +298,10 @@ SUMMARY_PROG='
 '
 
 printf '%-20s %-12s %-10s %s\n' "TIMESTAMP" "TYPE" "SOURCE" "SUMMARY"
-printf '%s\n' "${sorted[@]}" | jq -rR "$SUMMARY_PROG"
+# One jq process renders every row to @tsv; the bash loop only reformats the
+# rendered rows into the printf column alignment (no per-event jq fork).
+mapfile -t rows < <(printf '%s\n' "${sorted[@]}" | jq -rR "$SUMMARY_PROG")
+for row in "${rows[@]}"; do
+  IFS=$'\t' read -r ts type source summary <<<"$row" || true
+  printf '%-20s %-12s %-10s %s\n' "$ts" "$type" "$source" "$summary"
+done
