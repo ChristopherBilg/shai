@@ -136,9 +136,12 @@ BEFORE_BOUND="${BEFORE:-9999-99-99}"
 
 # Collect the session files to scan. The date window short-circuits at the file
 # level: a session file whose *filename* timestamp (sess_YYYYMMDDTHHMMSS_*) falls
-# outside --after/--before is never opened, before any JSONL is parsed. Inside a
-# matched file the events are still filtered by their own meta.timestamp, so the
-# file-level skip is purely an optimization for out-of-window sessions.
+# outside --after/--before is never opened, before any JSONL is parsed. That is
+# a semantic filter, not merely an optimization (required by #326): a
+# long-running or shai-retry-resumed session whose filename date predates the
+# window is dropped wholesale even when it holds events with in-window
+# meta.timestamp. Inside a matched file the events are still filtered by their
+# own meta.timestamp.
 files=()
 if [ -n "$SESSION" ]; then
   f=$(resolve_prefix "$SESSION" "$SESSIONS_DIR" ".jsonl") || exit 1
