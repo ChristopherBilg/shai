@@ -521,13 +521,14 @@ base policy. Workflows set this automatically via a co-located `<name>/policy.js
 identical to before.
 
 **Policy validation** — `shai-doctor` validates `$SHAI_HOME/policy.json` and any
-`SHAI_POLICY_OVERLAY` file: JSON parse check, schema shape (`.rules` is an array; each rule has
-`.tool` string and `.action` in `allow`/`prompt`/`deny`; `.default` when present is one of the
-same three), and a rule summary on success (`N rules, default: X`). Warnings, not errors — the
-system degrades safely (writes prompt → denied headlessly), but a malformed policy silently
-discards every rule (`check_policy`'s jq calls suppress errors), so malformed JSON is
-indistinguishable from an empty policy without this check. Missing files are silent — policy is
-optional.
+`SHAI_POLICY_OVERLAY` file: JSON parse check, schema shape (top level must be a JSON object;
+`.rules` is an array; each rule has `.tool` string and `.action` in `allow`/`prompt`/`deny`;
+`.default` when present is one of the same three), and a rule summary on success (`N rules,
+default: X`). Warnings, not errors — the system degrades safely (writes prompt → denied
+headlessly), but a malformed policy silently discards every rule (`check_policy`'s jq calls
+suppress errors), so malformed JSON is indistinguishable from an empty policy without this
+check. Missing files are silent — policy is optional. When jq itself is not installed the whole
+section is skipped with a single warning (jq absence is already a core failure).
 
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
 (mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience

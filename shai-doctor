@@ -278,10 +278,10 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
   fi
 fi
 
-# check_policy_file <path> <label>: validate a policy.json file — JSON parse, schema shape,
-# and rule summary. Missing files are silent (policy.json is optional). WARN on any issue
-# because the system degrades safely (writes prompt → denied headlessly) but silently drops
-# every rule, which is the gap this check closes.
+# check_policy_file <path> <label>: validate a policy.json file — JSON parse, schema shape
+# (top level must be an object), and rule summary. Missing files are silent (policy.json is
+# optional). WARN on any issue because the system degrades safely (writes prompt → denied
+# headlessly) but silently drops every rule, which is the gap this check closes.
 check_policy_file() {
   local path="$1" label="$2"
   [ -f "$path" ] || return 0
@@ -296,28 +296,32 @@ check_policy_file() {
   local issues
   issues=$(jq -r '
     def valid_actions: ["allow", "prompt", "deny"];
-    [
-      (if (.rules | type) != "array" and has("rules") then
-        ".rules must be an array"
-      else empty end),
-
-      (if (.rules | type) == "array" then
-        .rules | to_entries[] |
-        (if (.value.tool | type) != "string" or (.value.tool | length) == 0 then
-          "rule[\(.key)]: missing or invalid .tool"
+    if type != "object" then
+      "policy must be a JSON object (got \(type))"
+    else
+      ([
+        (if (.rules | type) != "array" and has("rules") then
+          ".rules must be an array"
         else empty end),
-        (if (.value.action | type) != "string" or
-            ([.value.action] | inside(valid_actions) | not) then
-          "rule[\(.key)]: invalid .action \(.value.action // "null") (expected allow/prompt/deny)"
-        else empty end)
-      else empty end),
 
-      (if has("default") then
-        if ([.default] | inside(valid_actions) | not) then
-          "invalid .default \(.default) (expected allow/prompt/deny)"
-        else empty end
-      else empty end)
-    ] | .[]
+        (if (.rules | type) == "array" then
+          .rules | to_entries[] |
+          (if (.value.tool | type) != "string" or (.value.tool | length) == 0 then
+            "rule[\(.key)]: missing or invalid .tool"
+          else empty end),
+          (if (.value.action | type) != "string" or
+              ([.value.action] | inside(valid_actions) | not) then
+            "rule[\(.key)]: invalid .action \(.value.action // "null") (expected allow/prompt/deny)"
+          else empty end)
+        else empty end),
+
+        (if has("default") then
+          if ([.default] | inside(valid_actions) | not) then
+            "invalid .default \(.default) (expected allow/prompt/deny)"
+          else empty end
+        else empty end)
+      ] | .[])
+    end
   ' "$path" 2>/dev/null) || issues=""
 
   if [ -n "$issues" ]; then
@@ -344,11 +348,19 @@ check_policy_file() {
 }
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
-printf '\nPolicy files:\n' >&2
-check_policy_file "$STATE_DIR/policy.json" '$SHAI_HOME/policy.json'
-if [ -n "${SHAI_POLICY_OVERLAY:-}" ]; then
-  local_label=$(basename "$SHAI_POLICY_OVERLAY")
-  check_policy_file "$SHAI_POLICY_OVERLAY" "$local_label"
+if command -v jq >/dev/null 2>&1; then
+  printf '\nPolicy files:\n' >&2
+  check_policy_file "$STATE_DIR/policy.json" '$SHAI_HOME/policy.json'
+  if [ -n "${SHAI_POLICY_OVERLAY:-}" ]; then
+    local_label=$(basename "$SHAI_POLICY_OVERLAY")
+    check_policy_file "$SHAI_POLICY_OVERLAY" "$local_label"
+  fi
+else
+  # jq absence is already a core FAIL above; policy validation depends on jq, so skip the
+  # section with a single WARN instead of reporting every policy file as broken JSON.
+  printf '\nPolicy files:\n' >&2
+  printf '  [WARN] policy validation skipped — jq not installed\n' >&2
+  WARNINGS=$((WARNINGS + 1))
 fi
 
 printf '\n%d error%s, %d warning%s\n' \
