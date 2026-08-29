@@ -405,6 +405,30 @@ out="$(run_bash _shai_completions shai-completions install "")"
 assert_contains "$out" "zsh" "bash: shai-completions install <TAB> offers zsh"
 assert_contains "$out" "bash" "bash: shai-completions install <TAB> offers bash"
 
+# shai-events typed value completions: the static event_type/event_source lists
+# come from completions.json types with a static command (the same pattern as the
+# shell type) and complete both full and prefix forms (#327).
+out="$(run_bash _shai_events shai-events --type "")"
+assert_contains "$out" "message" "bash: shai-events --type <TAB> offers message"
+assert_contains "$out" "tool_result" "bash: shai-events --type <TAB> offers tool_result"
+assert_contains "$out" "error" "bash: shai-events --type <TAB> offers error"
+out="$(run_bash _shai_events shai-events --type me)"
+assert_contains "$out" "message" "bash: shai-events --type me<TAB> completes message"
+if [[ "$out" != *tool_result* ]]; then
+  echo -e "  ${GREEN}✓${NC} bash: --type completion is prefix-filtered (tool_result not offered for 'me')"
+else
+  echo -e "  ${RED}✗${NC} bash: --type completion is prefix-filtered (got $out)"
+  FAILED=1
+fi
+
+out="$(run_bash _shai_events shai-events --source "")"
+assert_contains "$out" "user" "bash: shai-events --source <TAB> offers user"
+assert_contains "$out" "assistant" "bash: shai-events --source <TAB> offers assistant"
+assert_contains "$out" "system" "bash: shai-events --source <TAB> offers system"
+assert_contains "$out" "tool" "bash: shai-events --source <TAB> offers tool"
+out="$(run_bash _shai_events shai-events --source sys)"
+assert_contains "$out" "system" "bash: shai-events --source sys<TAB> completes system"
+
 # Dynamic candidates: run IDs and session IDs from $SHAI_HOME.
 mkdir -p "$SHAI_HOME/runs/run_abc123" "$SHAI_HOME/runs/run_def456"
 mkdir -p "$SHAI_HOME/sessions"
@@ -472,6 +496,38 @@ assert_contains "$out" "jira_worker" "bash: shai-workflow run <TAB> completes ev
 
 out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_failures shai-failures list --workflow hea)"
 assert_contains "$out" "heartbeat" "bash: shai-failures list --workflow <TAB> completes workflow names"
+
+# shai-events --tool completes tool names from the install dir's tools/
+# (the tool_name type, #327): same _shai_dir resolution as workflow_name,
+# with the tool.json description attached for zsh's listing. The fixture
+# names share no prefix so a single TAB already lists candidates (a common
+# prefix would only be inserted, matching zsh's default completion flow).
+mkdir -p "$WF/tools/gh" "$WF/tools/delete_file"
+cat >"$WF/tools/gh/tool.json" <<'EOF'
+{
+  "name": "gh",
+  "description": "GitHub CLI helper",
+  "parameters": { "type": "object", "properties": {} }
+}
+EOF
+cat >"$WF/tools/delete_file/tool.json" <<'EOF'
+{
+  "name": "delete_file",
+  "description": "Delete a file",
+  "parameters": { "type": "object", "properties": {} }
+}
+EOF
+out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_events shai-events --tool "")"
+assert_contains "$out" "gh" "bash: shai-events --tool <TAB> completes tool names"
+assert_contains "$out" "delete_file" "bash: shai-events --tool <TAB> completes every tool name"
+out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_events shai-events --tool del)"
+assert_contains "$out" "delete_file" "bash: shai-events --tool del<TAB> completes delete_file"
+if [[ "$out" != *gh* ]]; then
+  echo -e "  ${GREEN}✓${NC} bash: --tool completion is prefix-filtered (gh not offered for 'del')"
+else
+  echo -e "  ${RED}✗${NC} bash: --tool completion is prefix-filtered (got $out)"
+  FAILED=1
+fi
 
 # A flag value between the subcommand and the cursor must not hide the
 # positional slot: track consumed positionals instead of the raw COMP_CWORD.
@@ -555,6 +611,10 @@ zpty -w shai_comp \$'shai-runs --\t'
 zpty -w shai_comp \$'\cc'
 zpty -w shai_comp \$'shai-repl -\t'
 zpty -w shai_comp \$'\cc'
+zpty -w shai_comp \$'shai-events --type \t'
+zpty -w shai_comp \$'\cc'
+zpty -w shai_comp \$'shai-events --tool \t'
+zpty -w shai_comp \$'\cc'
 zpty -w shai_comp \$'exit\n'
 local out="" line tries=0
 while [ "\$tries" -lt 10 ]; do
@@ -581,6 +641,10 @@ EOF
       "zsh: shai-workflow run <TAB> shows the workflow purpose as description"
     assert_contains "$ZOUT" "--session" "zsh: shai-runs --<TAB> offers --session"
     assert_contains "$ZOUT" "--quiet" "zsh: shai-repl -<TAB> offers the --quiet alias"
+    assert_contains "$ZOUT" "message" "zsh: shai-events --type <TAB> offers message"
+    assert_contains "$ZOUT" "tool_result" "zsh: shai-events --type <TAB> offers tool_result"
+    assert_contains "$ZOUT" "gh" "zsh: shai-events --tool <TAB> completes tool names"
+    assert_contains "$ZOUT" "GitHub CLI helper" "zsh: shai-events --tool <TAB> shows the tool description"
   fi
 else
   echo "  zsh not found — skipping zsh syntax and runtime checks"

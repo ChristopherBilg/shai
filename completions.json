@@ -50,14 +50,17 @@
       "flags": {
         "--type": {
           "arg": "VALUE",
+          "arg_type": "event_type",
           "description": "Only events of this type (message, tool_result, or error)"
         },
         "--source": {
           "arg": "VALUE",
+          "arg_type": "event_source",
           "description": "Only events from this source (user, assistant, system, or tool)"
         },
         "--tool": {
           "arg": "NAME",
+          "arg_type": "tool_name",
           "description": "Only assistant events calling this tool"
         },
         "--session": {
@@ -600,6 +603,18 @@
     "shell": {
       "description": "Completion target shell",
       "command": "printf '%s\\n' zsh bash"
+    },
+    "event_type": {
+      "description": "Event type",
+      "command": "printf '%s\\n' message tool_result error"
+    },
+    "event_source": {
+      "description": "Event source",
+      "command": "printf '%s\\n' user assistant system tool"
+    },
+    "tool_name": {
+      "description": "Tool name from install directory",
+      "command": "for d in \"${_shai_dir}/tools/\"*/; do [ -d \"$d\" ] || continue; d=\"${d%/}\"; n=\"${d##*/}\"; p=\"$(jq -r '.description // empty' \"$d/tool.json\" 2>/dev/null)\"; printf '%s\\t%s\\n' \"$n\" \"$p\"; done 2>/dev/null"
     }
   }
 }

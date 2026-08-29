@@ -72,6 +72,38 @@ _shai_type_shell() {
   done < <(printf '%s\n' zsh bash)
   _describe -t shell 'Completion target shell' items
 }
+(( $+functions[_shai_type_event_type] )) ||
+_shai_type_event_type() {
+  local -a items
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    items+=("${line/$'\t'/:}")
+  done < <(printf '%s\n' message tool_result error)
+  _describe -t event_type 'Event type' items
+}
+(( $+functions[_shai_type_event_source] )) ||
+_shai_type_event_source() {
+  local -a items
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    items+=("${line/$'\t'/:}")
+  done < <(printf '%s\n' user assistant system tool)
+  _describe -t event_source 'Event source' items
+}
+(( $+functions[_shai_type_tool_name] )) ||
+_shai_type_tool_name() {
+  local -a items
+  local line
+  if [ -n "${_shai_dir:-}" ] && [ -d "${_shai_dir:-}" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      items+=("${line/$'\t'/:}")
+    done < <(for d in "${_shai_dir}/tools/"*/; do [ -d "$d" ] || continue; d="${d%/}"; n="${d##*/}"; p="$(jq -r '.description // empty' "$d/tool.json" 2>/dev/null)"; printf '%s\t%s\n' "$n" "$p"; done 2>/dev/null)
+  fi
+  _describe -t tool_name 'Tool name from install directory' items
+}
 
 _shai-read() {
   _arguments -S \
@@ -92,9 +124,9 @@ _shai-eval() {
 }
 _shai-events() {
   _arguments -S \
-    '--type[Only events of this type (message, tool_result, or error)]:VALUE:' \
-    '--source[Only events from this source (user, assistant, system, or tool)]:VALUE:' \
-    '--tool[Only assistant events calling this tool]:NAME:' \
+    '--type[Only events of this type (message, tool_result, or error)]:VALUE:_shai_type_event_type' \
+    '--source[Only events from this source (user, assistant, system, or tool)]:VALUE:_shai_type_event_source' \
+    '--tool[Only assistant events calling this tool]:NAME:_shai_type_tool_name' \
     '--session[Only events from this session (id or prefix)]:ID:_shai_type_session_id' \
     '--run[Only events from this run (id or prefix)]:ID:_shai_type_run_id' \
     '--after[Only events at or after DATE]:DATE:_message -e date '"'"'YYYY-MM-DD'"'"'' \
