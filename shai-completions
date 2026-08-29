@@ -351,8 +351,9 @@ extracted_flags() {
 # flag_ignored <script> <flag>: a `# _completions_ignore:` comment naming the flag in
 # the script suppresses a best-effort extraction false positive — e.g. a forwarded
 # option collected in a PRINT_OPTS array that the script does not itself parse.
+# Leading whitespace is allowed, so an indented comment (inside an if block) works too.
 flag_ignored() {
-  grep -qE "^#[[:space:]]*_completions_ignore:[[:space:]]*.*[[:space:]]${2}([[:space:]]|$)" "$1"
+  grep -qE "^[[:space:]]*#[[:space:]]*_completions_ignore:[[:space:]]*.*[[:space:]]${2}([[:space:]]|$)" "$1"
 }
 
 # declared_flag <script> <flag>: the manifest declares the flag anywhere on the script —
@@ -371,7 +372,7 @@ declared_flag() {
 #   3. Freshness: generate zsh/bash reproduce the checked-in completions/* files.
 # Any failure prints an `error:` line (plus a diff for staleness) and exits 1.
 check() {
-  local script flag flags fail=0 out shell file scripts
+  local script flag flags fail=0 tmp shell file scripts
   if ! scripts="$(git -C "$DIR" ls-files 'shai-*' 2>&1)"; then
     printf 'error: cannot list shai-* scripts (check must run inside a git checkout): %s\n' "$scripts" >&2
     return 1
@@ -402,26 +403,37 @@ check() {
     done <<<"$flags"
   done <<<"$scripts"
   # 3. Freshness — a manifest change without regeneration fails, like tests/tools-sync.sh.
+  # generate runs in-process and writes to a temp file so the comparison sees true bytes:
+  # command substitution would strip trailing newlines and let a file with a missing
+  # final newline (or extra trailing blank lines) pass a byte-for-byte gate.
   for shell in zsh bash; do
     case "$shell" in
       zsh) file="_shai" ;;
       bash) file="shai.bash" ;;
     esac
-    if ! out="$("$0" generate "$shell")"; then
+    if ! tmp="$(mktemp)"; then
+      printf 'error: cannot create temp file for the freshness comparison\n' >&2
+      fail=1
+      continue
+    fi
+    if ! generate "$shell" >"$tmp"; then
       printf 'error: generate %s failed — fix completions.json before checking freshness\n' "$shell" >&2
+      rm -f "$tmp"
       fail=1
       continue
     fi
     if [ ! -f "$DIR/completions/$file" ]; then
       printf 'error: completions/%s is missing — run: shai-completions generate %s > completions/%s\n' "$file" "$shell" "$file" >&2
+      rm -f "$tmp"
       fail=1
       continue
     fi
-    if [ "$out" != "$(cat "$DIR/completions/$file")" ]; then
+    if ! cmp -s "$tmp" "$DIR/completions/$file"; then
       printf 'error: completions/%s is stale — completions.json changed but the file was not regenerated\n' "$file" >&2
-      diff -u "$DIR/completions/$file" <(printf '%s\n' "$out") >&2 || true
+      diff -u "$DIR/completions/$file" "$tmp" >&2 || true
       fail=1
     fi
+    rm -f "$tmp"
   done
   return "$fail"
 }

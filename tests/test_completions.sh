@@ -228,6 +228,24 @@ EOF
 out="$("$FX/shai-completions" check 2>&1)"
 assert_eq "$?" "0" "check: _completions_ignore suppresses the false positive"
 
+# ...and an indented one does too (mutation-checked: restoring the ^# anchor makes
+# this assertion go red, since the indented comment no longer suppresses).
+cat >"$FX/shai-alpha" <<'EOF'
+#!/bin/bash
+# shai-alpha — fixture script for shai-completions check
+set -euo pipefail
+case "$1" in
+  --alpha) ALPHA=true ;;
+  --beta) BETA=true ;;
+esac
+if [ -n "${GAMMA_OPTS:-}" ]; then
+  # _completions_ignore: --gamma (forwarded to a helper, not parsed here)
+  GAMMA_OPTS=(--gamma)
+fi
+EOF
+out="$("$FX/shai-completions" check 2>&1)"
+assert_eq "$?" "0" "check: an indented _completions_ignore comment also suppresses"
+
 # Freshness mutation: a manifest change without regeneration fails, shows the
 # stale-file diff (including the new manifest flag), and names the stale file.
 jq '.scripts["shai-alpha"].flags["--delta"] = {"description": "declared delta flag"}' \
@@ -244,6 +262,17 @@ assert_contains "$out" "--delta" "check: the freshness diff shows the new manife
 "$FX/shai-completions" generate bash >"$FX/completions/shai.bash"
 out="$("$FX/shai-completions" check 2>&1)"
 assert_eq "$?" "0" "check: up-to-date generated files pass"
+
+# Byte-identity: a checked-in file missing its final newline must fail the gate.
+# (Mutation-checked: comparing via command substitution instead of cmp strips
+# trailing newlines on both sides and lets this pass — restore it and this goes red.)
+"$FX/shai-completions" generate zsh >"$FX/completions/_shai.tmp"
+printf '%s' "$(cat "$FX/completions/_shai.tmp")" >"$FX/completions/_shai"
+rm -f "$FX/completions/_shai.tmp"
+out="$("$FX/shai-completions" check 2>&1)"
+assert_eq "$?" "1" "check: a checked-in file missing its final newline fails"
+assert_contains "$out" "error: completions/_shai is stale" \
+  "check: byte-compare names the newline-stripped file"
 
 # --- bash syntax + execution -----------------------------------------------
 if printf '%s\n' "$BASH_OUT" | bash -n; then

@@ -803,7 +803,7 @@ are automatically queued for resolution. Install via
   - **YAML / dotfiles / Markdown**: a leading `#` purpose comment / an H1 title.
   - **`tools/<name>/tool.json`**: the tool and every input property has a non-empty
     `description` (jq-checked).
-  - **`completions.json`** (`completions/*.json`): the completion manifest — valid JSON with
+  - **`completions.json`** (`completions.json` | `*/completions.json`): the completion manifest — valid JSON with
     non-empty `scripts`/`types`, the six required types, described scripts/subcommands/flags,
     and type references that resolve (jq-checked).
   - **`completions/*`**: generated completion scripts, exempt from doc-header requirements;
