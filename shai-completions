@@ -340,7 +340,7 @@ generate() {
 # one-line shell-config instruction only when that directory is newly created (a reasonable
 # proxy for "the shell is not configured for it yet" — a redundant instruction is harmless).
 install_completions() {
-  local shell="$1" target dir newly=0
+  local shell="$1" target dir newly=0 tmp
   case "$shell" in
     zsh) target="${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai" ;;
     bash) target="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai" ;;
@@ -353,15 +353,31 @@ install_completions() {
     fi
     newly=1
   fi
-  if ! generate "$shell" >"$target"; then
+  # Generate into a temp file in the target dir and move it into place only on
+  # success, so a failed generation (missing jq, corrupt manifest) leaves any
+  # existing completion file intact instead of truncating it.
+  if ! tmp="$(mktemp "$dir/.shai.XXXXXX")"; then
+    printf 'error: could not write %s completions to %s\n' "$shell" "$target" >&2
+    return 1
+  fi
+  if ! generate "$shell" >"$tmp"; then
+    rm -f "$tmp"
+    printf 'error: could not write %s completions to %s\n' "$shell" "$target" >&2
+    return 1
+  fi
+  if ! mv "$tmp" "$target"; then
+    rm -f "$tmp"
     printf 'error: could not write %s completions to %s\n' "$shell" "$target" >&2
     return 1
   fi
   printf 'Installed %s completions to %s\n' "$shell" "$target"
   if [ "$newly" -eq 1 ]; then
+    # Interpolate the resolved paths: under a customized XDG_DATA_HOME the file
+    # lives elsewhere than ~/.local/share, so the instruction must name where it
+    # was actually written or following it leaves completions inactive.
     case "$shell" in
-      zsh) printf 'Add to .zshrc: fpath=(~/.local/share/zsh/site-functions $fpath); autoload -Uz compinit && compinit\n' ;;
-      bash) printf 'Add to .bashrc: [[ -r ~/.local/share/bash-completion/completions/shai ]] && source ~/.local/share/bash-completion/completions/shai\n' ;;
+      zsh) printf 'Add to .zshrc: fpath=(%s $fpath); autoload -Uz compinit && compinit\n' "$dir" ;;
+      bash) printf 'Add to .bashrc: [[ -r %s ]] && source %s\n' "$target" "$target" ;;
     esac
   fi
 }

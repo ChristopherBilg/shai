@@ -114,8 +114,14 @@ assert_eq "$(cat "$INSTALL_XDG/zsh/site-functions/_shai")" "$ZSH_OUT" \
 assert_contains "$OUT" "Installed zsh completions to $INSTALL_XDG/zsh/site-functions/_shai" \
   "install zsh prints the success line with the path written"
 assert_contains "$OUT" \
-  'Add to .zshrc: fpath=(~/.local/share/zsh/site-functions $fpath); autoload -Uz compinit && compinit' \
-  "install zsh prints the setup instruction when the directory is newly created"
+  "Add to .zshrc: fpath=($INSTALL_XDG/zsh/site-functions \$fpath); autoload -Uz compinit && compinit" \
+  "install zsh prints the setup instruction with the resolved site-functions directory"
+if [[ "$OUT" == *"~/.local/share"* ]]; then
+  echo -e "  ${RED}✗${NC} install zsh instruction names the resolved dir, not a ~/.local/share literal"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} install zsh instruction names the resolved dir, not a ~/.local/share literal"
+fi
 
 OUT="$(XDG_DATA_HOME="$INSTALL_XDG" "$GEN" install bash)"
 RC=$?
@@ -127,8 +133,8 @@ assert_eq "$(cat "$INSTALL_XDG/bash-completion/completions/shai")" "$BASH_OUT" \
 assert_contains "$OUT" "Installed bash completions to $INSTALL_XDG/bash-completion/completions/shai" \
   "install bash prints the success line with the path written"
 assert_contains "$OUT" \
-  'Add to .bashrc: [[ -r ~/.local/share/bash-completion/completions/shai ]] && source ~/.local/share/bash-completion/completions/shai' \
-  "install bash prints the setup instruction when the directory is newly created"
+  "Add to .bashrc: [[ -r $INSTALL_XDG/bash-completion/completions/shai ]] && source $INSTALL_XDG/bash-completion/completions/shai" \
+  "install bash prints the setup instruction with the resolved completion path"
 
 # Reinstall into the existing directory: the file is overwritten, and no setup instruction
 # repeats. Positive control: the same install printed the instruction above when the
@@ -151,6 +157,23 @@ printf 'x\n' >"$BLOCKED/zsh"
 OUT="$(XDG_DATA_HOME="$BLOCKED" "$GEN" install zsh 2>&1)" && RC=0 || RC=$?
 assert_eq "$RC" "1" "install zsh exits 1 when the target directory cannot be created"
 assert_contains "$OUT" "error:" "install zsh names the write failure"
+
+# Atomic write: a generation failure must leave an existing completion file intact
+# (temp file + mv), and no temp file may linger next to it.
+ATOM="$(mktemp -d)"
+_CLEANUP_DIRS+=("$ATOM")
+mkdir -p "$ATOM/zsh/site-functions"
+printf 'pre-existing\n' >"$ATOM/zsh/site-functions/_shai"
+cp "$GEN" "$ATOM/shai-completions"
+chmod +x "$ATOM/shai-completions"
+printf 'not a manifest\n' >"$ATOM/completions.json"
+OUT="$(XDG_DATA_HOME="$ATOM" "$ATOM/shai-completions" install zsh 2>&1)" && RC=0 || RC=$?
+assert_eq "$RC" "1" "install zsh exits 1 when generation fails"
+assert_eq "$(cat "$ATOM/zsh/site-functions/_shai")" "pre-existing" \
+  "install zsh preserves an existing completion file when generation fails"
+assert_contains "$OUT" "error:" "install zsh names the generation failure"
+assert_eq "$(ls -A "$ATOM/zsh/site-functions")" "_shai" \
+  "install zsh leaves no temp file behind when generation fails"
 
 # --- bash syntax + execution -----------------------------------------------
 if printf '%s\n' "$BASH_OUT" | bash -n; then
