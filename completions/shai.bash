@@ -551,10 +551,13 @@ _shai_completions() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "generate install" -- "$cur") )
+    COMPREPLY=( $(compgen -W "check generate install" -- "$cur") )
     return
   fi
   case "${COMP_WORDS[1]}" in
+    check)
+      COMPREPLY=()
+      ;;
     generate)
       local _shai_pos=0 _shai_val=0 _shai_i
       for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do

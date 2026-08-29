@@ -40,6 +40,7 @@ advance_span() {
 }
 
 EVAL_OPTS=()
+# _completions_ignore: --dispatches (forwarded to shai-print, not parsed by shai-loop)
 PRINT_OPTS=(--dispatches)
 OWN_TOOLS_FILE=""
 while [ "$#" -gt 0 ]; do

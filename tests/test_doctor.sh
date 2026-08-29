@@ -99,6 +99,7 @@ RC=$?
 assert_eq "$RC" "1" "doctor: missing core tool → exit 1"
 assert_contains "$OUT" "[FAIL]" "doctor: missing jq shows FAIL"
 assert_contains "$OUT" "jq" "doctor: FAIL line names jq"
+assert_contains "$OUT" "policy validation skipped" "doctor: policy section skipped when jq is missing"
 
 # --- Test 3: conditional tool missing (gh) → exit 0 + WARN ---
 OUT=$(run_doctor gh)
@@ -321,5 +322,158 @@ SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 2 warnings" \
   "doctor: missing completions are exactly the two warnings"
 XDG_DATA_HOME="$FIX/xdg"
+
+# --- Test 19: valid policy.json → OK with rule count and default ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [
+    {"tool": "write_file", "action": "allow"},
+    {"tool": "delete_file", "action": "deny"}
+  ],
+  "default": "prompt"
+}
+JSON
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: valid policy.json → exit 0"
+assert_contains "$OUT" "Policy files:" "doctor: prints the Policy files section"
+assert_contains "$OUT" '[OK]   $SHAI_HOME/policy.json' "doctor: valid policy.json reported OK"
+assert_contains "$OUT" "2 rules, default: prompt" "doctor: shows rule count and default"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 20: valid policy.json with no default → shows "no default" ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [
+    {"tool": "gh", "action": "allow"}
+  ]
+}
+JSON
+OUT=$(run_doctor)
+assert_contains "$OUT" "1 rule, no default" "doctor: shows singular rule count and no default"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 21: malformed policy.json → WARN ---
+printf '{ "rules": [ this is not valid json\n' >"$SHAI_HOME/policy.json"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: malformed policy.json → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: malformed policy.json shows WARN"
+assert_contains "$OUT" "not valid JSON" "doctor: malformed policy.json names the parse failure"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 22: policy.json with bad schema — .rules not an array → WARN ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": "not-an-array"
+}
+JSON
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: bad schema → exit 0"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: .rules not array shows WARN"
+assert_contains "$OUT" "rules" "doctor: names the rules field in the warning"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 23: policy.json with bad schema — rule missing .tool → WARN ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [
+    {"action": "allow"}
+  ]
+}
+JSON
+OUT=$(run_doctor)
+assert_contains "$OUT" "[WARN]" "doctor: rule missing .tool shows WARN"
+assert_contains "$OUT" "missing or invalid .tool" "doctor: names the missing field"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 24: policy.json with bad schema — invalid .action value → WARN ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [
+    {"tool": "gh", "action": "block"}
+  ]
+}
+JSON
+OUT=$(run_doctor)
+assert_contains "$OUT" "[WARN]" "doctor: invalid action value shows WARN"
+assert_contains "$OUT" "block" "doctor: names the invalid action"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 25: policy.json with bad .default value → WARN ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [],
+  "default": "reject"
+}
+JSON
+OUT=$(run_doctor)
+assert_contains "$OUT" "[WARN]" "doctor: invalid default value shows WARN"
+assert_contains "$OUT" "reject" "doctor: names the invalid default"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 26: missing policy.json → no error, no warning ---
+# (policy.json is optional — a missing file is the expected state before a user creates one)
+rm -f "$SHAI_HOME/policy.json"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: missing policy.json → exit 0"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: missing policy.json adds no warnings"
+
+# --- Test 27: SHAI_POLICY_OVERLAY validation — valid overlay → OK ---
+OVERLAY="$FIX/overlay-policy.json"
+cat >"$OVERLAY" <<'JSON'
+{
+  "rules": [
+    {"tool": "gh", "action": "allow", "args": {"command": "pr *"}}
+  ]
+}
+JSON
+(
+  # shellcheck disable=SC2030  # export inside subshell is intentional — isolates the overlay var
+  export SHAI_POLICY_OVERLAY="$OVERLAY"
+  OUT=$(run_doctor)
+  assert_contains "$OUT" "[OK]" "doctor: valid overlay reported OK"
+  assert_contains "$OUT" "overlay-policy.json" "doctor: names the overlay file"
+  assert_contains "$OUT" "1 rule, no default" "doctor: overlay shows rule count"
+  exit "$FAILED"
+) || FAILED=1
+rm -f "$OVERLAY"
+
+# --- Test 28: SHAI_POLICY_OVERLAY set but file missing → no error (not required to exist) ---
+(
+  # shellcheck disable=SC2031  # SHAI_POLICY_OVERLAY subshell isolation is intentional (see Test 25)
+  export SHAI_POLICY_OVERLAY="$FIX/nonexistent-overlay.json"
+  OUT=$(run_doctor)
+  RC=$?
+  assert_eq "$RC" "0" "doctor: missing overlay → exit 0"
+  SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+  assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: missing overlay adds no warnings"
+  exit "$FAILED"
+) || FAILED=1
+
+# --- Test 29: policy.json valid JSON but top-level array → WARN, not silently empty ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+[
+  {"tool": "gh", "action": "allow"}
+]
+JSON
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: top-level array policy → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: top-level array policy shows WARN"
+assert_contains "$OUT" "must be a JSON object" "doctor: warning names the object requirement"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 30: policy.json valid JSON but top-level scalar → WARN, not silently empty ---
+printf '42\n' >"$SHAI_HOME/policy.json"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: top-level scalar policy → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: top-level scalar policy shows WARN"
+assert_contains "$OUT" "must be a JSON object" "doctor: scalar policy warning names the object requirement"
+rm -f "$SHAI_HOME/policy.json"
 
 finish

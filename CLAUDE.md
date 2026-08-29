@@ -31,6 +31,7 @@ gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 ./tests/run.sh                         # all suites, aggregated
 bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is standalone)
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
+./shai-completions check               # completions gate: coverage, flag sync, freshness (the completions CI job)
 
 # Retention:
 ./shai-prune [--sessions] [--runs] [--ledgers] [--failures] [--dry-run] [--before YYYY-MM-DD]  # manual retention
@@ -210,13 +211,16 @@ The scripts:
   resolved in order: the `VERSION` file next to the script (written by release tarballs), then
   `git describe --tags` in the install directory (dev clones), then the literal `dev`. Single
   purpose and pipeable: it has no REPL dependency and needs no `DEEPSEEK_API_KEY`. Exit 0 always.
-- **`shai-completions generate|install <zsh|bash>`** (`shai-completions:1`) — generates and
-  installs zsh/bash tab completions from the manifest (`completions.json`: scripts, flags,
-  subcommands, types). `generate` emits a self-contained completion script on stdout — dynamic
-  candidates resolve at completion time, and the install directory is discovered from the
-  `shai-repl` wrapper's exec line (dev clones fall back to the real script on `$PATH`).
-  `install` writes the generated file to the standard user-local location —
-  `${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai` (zsh) or
+- **`shai-completions generate|install <zsh|bash>` / `shai-completions check`**
+  (`shai-completions:1`) — generates, installs, and validates zsh/bash tab completions from
+  `completions.json` (the completion manifest: a `scripts` map with `flags`/`subcommands` per
+  script, and a `types` map describing dynamic candidates). `generate` emits a self-contained
+  completion script on stdout — byte-deterministic for a given manifest, with no runtime
+  dependency on it — that resolves dynamic candidates at completion time and discovers the
+  install directory from the `shai-repl` wrapper's exec line at load time (dev clones fall back
+  to the real script on `$PATH`); the checked-in copies live in `completions/_shai` (zsh) and
+  `completions/shai.bash` (bash). `install` writes the generated file to the standard user-local
+  location — `${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai` (zsh) or
   `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai` (bash) — creating the
   target directory if needed and printing a one-line shell-config instruction only when that
   directory is newly created; the instruction interpolates the resolved paths (so it stays
@@ -224,10 +228,18 @@ The scripts:
   failed generation never destroys an existing one. `install.sh` runs both installs best-effort
   after wrapper generation (`|| true`, stderr suppressed; the generated files resolve the install
   dir at completion load time), and `shai-doctor` reports whether the files are present as
-  warnings rather than errors. The generated files are checked in
-  (`completions/_shai`, `completions/shai.bash`) and `tests/test_completions.sh` keeps them
-  byte-identical to `generate` output. Exit 0 on success; 1 on generation or write failure;
-  2 on usage errors.
+  warnings rather than errors. `check` is the fail-closed gate, run by the `completions` CI job
+  via `tests/completions-sync.sh`: (1) **coverage** — every git-tracked `shai-*` script must have
+  a `completions.json` entry; (2) **flag sync** — every `--flag)` case arm in those scripts must
+  be declared in the manifest (long-form key or `short` alias, script-level or any subcommand's
+  flags); extraction is best-effort, and a `# _completions_ignore: --flag` comment in the script
+  suppresses a false positive such as a forwarded option (`PRINT_OPTS=(--dispatches)`);
+  (3) **freshness** — `generate zsh`/`generate bash` must reproduce the checked-in files byte for
+  byte, which `tests/test_completions.sh` asserts too. Any failure prints an `error:` line (plus a
+  diff for staleness). After changing `completions.json`, regenerate with
+  `./shai-completions generate zsh > completions/_shai` and
+  `./shai-completions generate bash > completions/shai.bash`, then run `./shai-completions check`.
+  Exit 0 on success; 1 on generation, write, or check failure; 2 on usage errors.
 - **`shai-tools [tools-dir]`** (`shai-tools:1`) — scans `tools/*/tool.json` (default:
   `$DIR/tools`) and validates each plugin: `tool.json` is valid JSON with `name`, `description`,
   and `parameters`; `name` matches its directory name; `run.sh` exists and is executable; and
@@ -540,6 +552,16 @@ base policy. Workflows set this automatically via a co-located `<name>/policy.js
 `workflows/pr_reviewer/policy.json`). When unset or pointing to a nonexistent file, behavior is
 identical to before.
 
+**Policy validation** — `shai-doctor` validates `$SHAI_HOME/policy.json` and any
+`SHAI_POLICY_OVERLAY` file: JSON parse check, schema shape (top level must be a JSON object;
+`.rules` is an array; each rule has `.tool` string and `.action` in `allow`/`prompt`/`deny`;
+`.default` when present is one of the same three), and a rule summary on success (`N rules,
+default: X`). Warnings, not errors — the system degrades safely (writes prompt → denied
+headlessly), but a malformed policy silently discards every rule (`check_policy`'s jq calls
+suppress errors), so malformed JSON is indistinguishable from an empty policy without this
+check. Missing files are silent — policy is optional. When jq itself is not installed the whole
+section is skipped with a single warning (jq absence is already a core failure).
+
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
 (mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
 wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
@@ -804,6 +826,12 @@ are automatically queued for resolution. Install via
   - **YAML / dotfiles / Markdown**: a leading `#` purpose comment / an H1 title.
   - **`tools/<name>/tool.json`**: the tool and every input property has a non-empty
     `description` (jq-checked).
+  - **`completions.json`** (`completions.json` | `*/completions.json`): the completion manifest — valid JSON with
+    non-empty `scripts`/`types`, the six required types, described scripts/subcommands/flags,
+    and type references that resolve (jq-checked).
+  - **`completions/*`**: generated completion scripts, exempt from doc-header requirements;
+    they must carry the `Generated by shai-completions generate` header, and
+    `shai-completions check` (the `completions` CI job) enforces they are up to date.
   - Only `tests/lint-tools.sha256` is exempt (generated, comment-hostile).
 
   To add a new file type: add a classification branch and its check to `tests/docs.sh` (with a
