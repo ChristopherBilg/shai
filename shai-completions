@@ -1,9 +1,11 @@
 #!/bin/bash
 # shai-completions — generate self-contained zsh/bash tab completions from the completions manifest
 # Usage: shai-completions generate <zsh|bash>
+#        shai-completions check
 # Reads: $DIR/completions.json (completion manifest: scripts, flags, subcommands, types)
-# Writes: the requested completion script on stdout
-# Exit: 0 on success; 1 on generation failure (invalid manifest, jq error); 2 on usage error
+# Writes: the requested completion script on stdout (generate); check writes nothing on success
+# Exit: 0 on success; 1 on generation failure (invalid manifest, jq error) or check failure;
+#       2 on usage error
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -11,6 +13,7 @@ MANIFEST="$DIR/completions.json"
 
 usage() {
   printf 'Usage: shai-completions generate <zsh|bash>\n' >&2
+  printf '       shai-completions check\n' >&2
 }
 
 # Each generator is a pure jq program: completions.json in, shell-specific
@@ -333,17 +336,118 @@ generate() {
   printf '%s\n' "$output"
 }
 
+# extracted_flags <script>: flags parsed in case statements. Best-effort,
+# not a formal parser: only case-arm-shaped flags count (a flag that is
+# parsed via a variable or an unusual pattern is invisible here — the coverage
+# check still catches the script itself). Emits one flag per line, sorted and deduped.
+extracted_flags() {
+  grep -oE -- '--[a-z][-a-z]*[[:space:]]*(\|[[:space:]]*--[a-z][-a-z]*)*\)' "$1" 2>/dev/null |
+    sed 's/)$//' |
+    tr '|' '\n' |
+    grep -oE -- '--[a-z][-a-z]*' |
+    sort -u || true
+}
+
+# flag_ignored <script> <flag>: a `# _completions_ignore:` comment naming the flag in
+# the script suppresses a best-effort extraction false positive — e.g. a forwarded
+# option collected in a PRINT_OPTS array that the script does not itself parse.
+flag_ignored() {
+  grep -qE "^#[[:space:]]*_completions_ignore:[[:space:]]*.*[[:space:]]${2}([[:space:]]|$)" "$1"
+}
+
+# declared_flag <script> <flag>: the manifest declares the flag anywhere on the script —
+# top-level flags or any subcommand's flags, as a long-form key or a short alias.
+declared_flag() {
+  jq -e --arg s "$1" --arg f "$2" '
+    .scripts[$s]
+    | ([.flags // {} | to_entries[]] + [.subcommands // {} | .[] | .flags // {} | to_entries[]])
+    | any(.[]; .key == $f or (.value.short // "") == $f)
+  ' "$MANIFEST" >/dev/null 2>&1
+}
+
+# check — the fail-closed validation engine, three checks in sequence:
+#   1. Coverage: every git-tracked shai-* script has a completions.json entry.
+#   2. Flag sync: every case-arm flag in those scripts is declared in the manifest.
+#   3. Freshness: generate zsh/bash reproduce the checked-in completions/* files.
+# Any failure prints an `error:` line (plus a diff for staleness) and exits 1.
+check() {
+  local script flag flags fail=0 out shell file scripts
+  if ! scripts="$(git -C "$DIR" ls-files 'shai-*' 2>&1)"; then
+    printf 'error: cannot list shai-* scripts (check must run inside a git checkout): %s\n' "$scripts" >&2
+    return 1
+  fi
+  # 1. Coverage — derived from git, not hardcoded (the same fail-closed pattern as
+  # tests/docs.sh): a new shai-* script with no manifest entry fails here.
+  while IFS= read -r script; do
+    [ -n "$script" ] || continue
+    if ! jq -e --arg s "$script" '.scripts | has($s)' "$MANIFEST" >/dev/null 2>&1; then
+      printf 'error: %s has no completions.json entry (add one and regenerate completions)\n' "$script" >&2
+      fail=1
+    fi
+  done <<<"$scripts"
+  # 2. Flag sync — script flags that the manifest does not declare. Manifest-only flags
+  # are fine (declared but unused is a completion quality matter, not an error), and a
+  # script with no manifest entry is skipped here because coverage already reported it.
+  while IFS= read -r script; do
+    [ -n "$script" ] || continue
+    jq -e --arg s "$script" '.scripts | has($s)' "$MANIFEST" >/dev/null 2>&1 || continue
+    flags="$(extracted_flags "$DIR/$script")"
+    while IFS= read -r flag; do
+      [ -n "$flag" ] || continue
+      flag_ignored "$DIR/$script" "$flag" && continue
+      if ! declared_flag "$script" "$flag"; then
+        printf 'error: %s parses %s but completions.json declares no such flag\n' "$script" "$flag" >&2
+        fail=1
+      fi
+    done <<<"$flags"
+  done <<<"$scripts"
+  # 3. Freshness — a manifest change without regeneration fails, like tests/tools-sync.sh.
+  for shell in zsh bash; do
+    case "$shell" in
+      zsh) file="_shai" ;;
+      bash) file="shai.bash" ;;
+    esac
+    if ! out="$("$0" generate "$shell")"; then
+      printf 'error: generate %s failed — fix completions.json before checking freshness\n' "$shell" >&2
+      fail=1
+      continue
+    fi
+    if [ ! -f "$DIR/completions/$file" ]; then
+      printf 'error: completions/%s is missing — run: shai-completions generate %s > completions/%s\n' "$file" "$shell" "$file" >&2
+      fail=1
+      continue
+    fi
+    if [ "$out" != "$(cat "$DIR/completions/$file")" ]; then
+      printf 'error: completions/%s is stale — completions.json changed but the file was not regenerated\n' "$file" >&2
+      diff -u "$DIR/completions/$file" <(printf '%s\n' "$out") >&2 || true
+      fail=1
+    fi
+  done
+  return "$fail"
+}
+
 main() {
-  if [ "${1:-}" != "generate" ]; then
-    usage
-    return 2
-  fi
-  if [ -z "${2:-}" ] || [ "$#" -gt 2 ]; then
-    usage
-    return 2
-  fi
-  case "$2" in
-    zsh | bash) generate "$2" ;;
+  case "${1:-}" in
+    generate)
+      if [ -z "${2:-}" ] || [ "$#" -gt 2 ]; then
+        usage
+        return 2
+      fi
+      case "$2" in
+        zsh | bash) generate "$2" ;;
+        *)
+          usage
+          return 2
+          ;;
+      esac
+      ;;
+    check)
+      if [ "$#" -gt 1 ]; then
+        usage
+        return 2
+      fi
+      check
+      ;;
     *)
       usage
       return 2

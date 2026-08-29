@@ -499,6 +499,10 @@
       "description": "Generate self-contained shell tab completions from the manifest",
       "flags": {},
       "subcommands": {
+        "check": {
+          "description": "Validate manifest coverage, flag declarations, and generated-file freshness",
+          "flags": {}
+        },
         "generate": {
           "description": "Emit a self-contained completion script to stdout",
           "positional": [
