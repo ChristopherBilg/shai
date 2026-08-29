@@ -283,4 +283,135 @@ fi
   exit "$FAILED"
 ) || FAILED=1
 
+# --- Test 17: valid policy.json → OK with rule count and default ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [
+    {"tool": "write_file", "action": "allow"},
+    {"tool": "delete_file", "action": "deny"}
+  ],
+  "default": "prompt"
+}
+JSON
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: valid policy.json → exit 0"
+assert_contains "$OUT" "Policy files:" "doctor: prints the Policy files section"
+assert_contains "$OUT" '[OK]   $SHAI_HOME/policy.json' "doctor: valid policy.json reported OK"
+assert_contains "$OUT" "2 rules, default: prompt" "doctor: shows rule count and default"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 18: valid policy.json with no default → shows "no default" ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [
+    {"tool": "gh", "action": "allow"}
+  ]
+}
+JSON
+OUT=$(run_doctor)
+assert_contains "$OUT" "1 rule, no default" "doctor: shows singular rule count and no default"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 19: malformed policy.json → WARN ---
+printf '{ "rules": [ this is not valid json\n' >"$SHAI_HOME/policy.json"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: malformed policy.json → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: malformed policy.json shows WARN"
+assert_contains "$OUT" "not valid JSON" "doctor: malformed policy.json names the parse failure"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 20: policy.json with bad schema — .rules not an array → WARN ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": "not-an-array"
+}
+JSON
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: bad schema → exit 0"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: .rules not array shows WARN"
+assert_contains "$OUT" "rules" "doctor: names the rules field in the warning"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 21: policy.json with bad schema — rule missing .tool → WARN ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [
+    {"action": "allow"}
+  ]
+}
+JSON
+OUT=$(run_doctor)
+assert_contains "$OUT" "[WARN]" "doctor: rule missing .tool shows WARN"
+assert_contains "$OUT" "tool" "doctor: names the missing field"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 22: policy.json with bad schema — invalid .action value → WARN ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [
+    {"tool": "gh", "action": "block"}
+  ]
+}
+JSON
+OUT=$(run_doctor)
+assert_contains "$OUT" "[WARN]" "doctor: invalid action value shows WARN"
+assert_contains "$OUT" "block" "doctor: names the invalid action"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 23: policy.json with bad .default value → WARN ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+{
+  "rules": [],
+  "default": "reject"
+}
+JSON
+OUT=$(run_doctor)
+assert_contains "$OUT" "[WARN]" "doctor: invalid default value shows WARN"
+assert_contains "$OUT" "reject" "doctor: names the invalid default"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 24: missing policy.json → no error, no warning ---
+# (policy.json is optional — a missing file is the expected state before a user creates one)
+rm -f "$SHAI_HOME/policy.json"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: missing policy.json → exit 0"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: missing policy.json adds no warnings"
+
+# --- Test 25: SHAI_POLICY_OVERLAY validation — valid overlay → OK ---
+OVERLAY="$FIX/overlay-policy.json"
+cat >"$OVERLAY" <<'JSON'
+{
+  "rules": [
+    {"tool": "gh", "action": "allow", "args": {"command": "pr *"}}
+  ]
+}
+JSON
+(
+  # shellcheck disable=SC2030  # export inside subshell is intentional — isolates the overlay var
+  export SHAI_POLICY_OVERLAY="$OVERLAY"
+  OUT=$(run_doctor)
+  assert_contains "$OUT" "[OK]" "doctor: valid overlay reported OK"
+  assert_contains "$OUT" "overlay-policy.json" "doctor: names the overlay file"
+  assert_contains "$OUT" "1 rule, no default" "doctor: overlay shows rule count"
+  exit "$FAILED"
+) || FAILED=1
+rm -f "$OVERLAY"
+
+# --- Test 26: SHAI_POLICY_OVERLAY set but file missing → no error (not required to exist) ---
+(
+  # shellcheck disable=SC2031  # SHAI_POLICY_OVERLAY subshell isolation is intentional (see Test 25)
+  export SHAI_POLICY_OVERLAY="$FIX/nonexistent-overlay.json"
+  OUT=$(run_doctor)
+  RC=$?
+  assert_eq "$RC" "0" "doctor: missing overlay → exit 0"
+  SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+  assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: missing overlay adds no warnings"
+  exit "$FAILED"
+) || FAILED=1
+
 finish

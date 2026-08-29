@@ -1,7 +1,8 @@
 #!/bin/bash
 # shai-doctor — validate environment prerequisites for shai
 # Usage: shai-doctor
-# Reads: $PATH (CLI tool availability), environment variables, tool-declared config files
+# Reads: $PATH (CLI tool availability), environment variables, tool-declared config files,
+#        $SHAI_HOME/policy.json and $SHAI_POLICY_OVERLAY (policy file validation)
 # Writes: diagnostic report to stderr
 # Exit: 0 if all core checks pass; 1 if any core check fails
 set -euo pipefail
@@ -275,6 +276,79 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
       fi
     fi
   fi
+fi
+
+# check_policy_file <path> <label>: validate a policy.json file — JSON parse, schema shape,
+# and rule summary. Missing files are silent (policy.json is optional). WARN on any issue
+# because the system degrades safely (writes prompt → denied headlessly) but silently drops
+# every rule, which is the gap this check closes.
+check_policy_file() {
+  local path="$1" label="$2"
+  [ -f "$path" ] || return 0
+
+  if ! jq empty "$path" >/dev/null 2>&1; then
+    printf '  [WARN] %s\n' "$label" >&2
+    printf '         not valid JSON: %s\n' "$path" >&2
+    WARNINGS=$((WARNINGS + 1))
+    return 0
+  fi
+
+  local issues
+  issues=$(jq -r '
+    def valid_actions: ["allow", "prompt", "deny"];
+    [
+      (if (.rules | type) != "array" and has("rules") then
+        ".rules must be an array"
+      else empty end),
+
+      (if (.rules | type) == "array" then
+        .rules | to_entries[] |
+        (if (.value.tool | type) != "string" or (.value.tool | length) == 0 then
+          "rule[\(.key)]: missing or invalid .tool"
+        else empty end),
+        (if (.value.action | type) != "string" or
+            ([.value.action] | inside(valid_actions) | not) then
+          "rule[\(.key)]: invalid .action \(.value.action // "null") (expected allow/prompt/deny)"
+        else empty end)
+      else empty end),
+
+      (if has("default") then
+        if ([.default] | inside(valid_actions) | not) then
+          "invalid .default \(.default) (expected allow/prompt/deny)"
+        else empty end
+      else empty end)
+    ] | .[]
+  ' "$path" 2>/dev/null) || issues=""
+
+  if [ -n "$issues" ]; then
+    printf '  [WARN] %s\n' "$label" >&2
+    while IFS= read -r line; do
+      printf '         %s\n' "$line" >&2
+    done <<<"$issues"
+    WARNINGS=$((WARNINGS + 1))
+    return 0
+  fi
+
+  local rule_count default_val summary
+  rule_count=$(jq -r '.rules | length' "$path" 2>/dev/null) || rule_count=0
+  default_val=$(jq -r '.default // empty' "$path" 2>/dev/null) || default_val=""
+  local rule_word="rules"
+  [ "$rule_count" -eq 1 ] && rule_word="rule"
+  if [ -n "$default_val" ]; then
+    summary="$rule_count $rule_word, default: $default_val"
+  else
+    summary="$rule_count $rule_word, no default"
+  fi
+  printf '  [OK]   %s\n' "$label" >&2
+  printf '         %s (%s)\n' "$path" "$summary" >&2
+}
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+printf '\nPolicy files:\n' >&2
+check_policy_file "$STATE_DIR/policy.json" '$SHAI_HOME/policy.json'
+if [ -n "${SHAI_POLICY_OVERLAY:-}" ]; then
+  local_label=$(basename "$SHAI_POLICY_OVERLAY")
+  check_policy_file "$SHAI_POLICY_OVERLAY" "$local_label"
 fi
 
 printf '\n%d error%s, %d warning%s\n' \
