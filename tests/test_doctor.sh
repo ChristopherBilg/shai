@@ -91,6 +91,7 @@ RC=$?
 assert_eq "$RC" "1" "doctor: missing core tool → exit 1"
 assert_contains "$OUT" "[FAIL]" "doctor: missing jq shows FAIL"
 assert_contains "$OUT" "jq" "doctor: FAIL line names jq"
+assert_contains "$OUT" "policy validation skipped" "doctor: policy section skipped when jq is missing"
 
 # --- Test 3: conditional tool missing (gh) → exit 0 + WARN ---
 OUT=$(run_doctor gh)
@@ -345,7 +346,7 @@ cat >"$SHAI_HOME/policy.json" <<'JSON'
 JSON
 OUT=$(run_doctor)
 assert_contains "$OUT" "[WARN]" "doctor: rule missing .tool shows WARN"
-assert_contains "$OUT" "tool" "doctor: names the missing field"
+assert_contains "$OUT" "missing or invalid .tool" "doctor: names the missing field"
 rm -f "$SHAI_HOME/policy.json"
 
 # --- Test 22: policy.json with bad schema — invalid .action value → WARN ---
@@ -413,5 +414,27 @@ rm -f "$OVERLAY"
   assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: missing overlay adds no warnings"
   exit "$FAILED"
 ) || FAILED=1
+
+# --- Test 27: policy.json valid JSON but top-level array → WARN, not silently empty ---
+cat >"$SHAI_HOME/policy.json" <<'JSON'
+[
+  {"tool": "gh", "action": "allow"}
+]
+JSON
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: top-level array policy → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: top-level array policy shows WARN"
+assert_contains "$OUT" "must be a JSON object" "doctor: warning names the object requirement"
+rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 28: policy.json valid JSON but top-level scalar → WARN, not silently empty ---
+printf '42\n' >"$SHAI_HOME/policy.json"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: top-level scalar policy → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: top-level scalar policy shows WARN"
+assert_contains "$OUT" "must be a JSON object" "doctor: scalar policy warning names the object requirement"
+rm -f "$SHAI_HOME/policy.json"
 
 finish
