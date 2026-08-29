@@ -3,7 +3,8 @@
 # Covers: event listing, --type/--source/--tool filters, AND composition, --session/--run
 #         prefix matching, --after/--before date windows (file-level short-circuit),
 #         --recent, --json, malformed-line tolerance, tool_call summary rendering,
-#         truncation, ordering, and argument validation
+#         error/array summaries, undated-event handling, truncation, ordering,
+#         and argument validation
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -194,6 +195,19 @@ ERR=$("$EVENTS" 2>&1 >/dev/null)
 assert_eq "$?" "0" "unfiltered scan still exits 0"
 assert_contains "$ERR" "$BAD" "unfiltered scan does open the file (warning present)"
 
+desc "--session + date window: out-of-window resolved file is skipped (AND composition)"
+setup_events
+S1="sess_20260809T090000_aabb"
+# The event's own timestamp is inside the window, but the session filename date
+# is not: --session + --after compose as AND, so the resolved file is dropped
+# wholesale before any JSONL is parsed (documented interpretation note).
+fixture_event "message" "user" '{"text":"late event in old file"}' "run_a" "$S1" "span_1" "null" "2026-08-11T12:00:00Z" \
+  >"$SHAI_HOME/sessions/$S1.jsonl"
+OUT=$("$EVENTS" --session "$S1" --after 2026-08-10 --json)
+assert_eq "$OUT" "[]" "out-of-window resolved session file is skipped"
+OUT=$("$EVENTS" --session "$S1" --after 2026-08-10)
+assert_eq "$OUT" "" "human mode also empty for skipped file"
+
 desc "malformed lines: warning on stderr, valid lines still returned"
 setup_events
 SID="sess_20260811T090000_aabb"
@@ -298,6 +312,33 @@ fi
 # JSON mode is the escape hatch: no truncation there.
 OUT=$("$EVENTS" --json)
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].payload.text | length')" "210" "json output not truncated"
+
+desc "human output: error event summary uses payload.text"
+setup_events
+SID="sess_20260811T090000_aabb"
+fixture_event "error" "system" '{"text":"boom"}' "run_a" "$SID" "span_1" >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$EVENTS")
+assert_contains "$OUT" "boom" "error summary shows payload.text"
+
+desc "human output: array tool_result content is joined"
+setup_events
+SID="sess_20260811T090000_aabb"
+fixture_event "tool_result" "tool" '{"tool_call_id":"tu_1","content":[{"text":"alpha"},{"text":"beta"}],"is_error":false}' \
+  "run_a" "$SID" "span_1" >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$EVENTS")
+assert_contains "$OUT" "alpha beta" "array content joined with spaces"
+
+desc "human output: missing meta.timestamp renders as --, excluded only when a date bound is active"
+setup_events
+SID="sess_20260811T090000_aabb"
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":"no ts"},"version":"1.0","meta":{"run_id":"run_a","session_id":"'"$SID"'","span_id":"span_1","parent_span_id":null}}' \
+  >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$EVENTS")
+assert_contains "$OUT" "no ts" "undated event listed without date flags"
+ts_col=$(printf '%s\n' "$OUT" | awk 'NR==2 {print $1}')
+assert_eq "$ts_col" "--" "missing timestamp renders as --"
+OUT=$("$EVENTS" --after 2026-08-01 --json)
+assert_eq "$OUT" "[]" "undated event excluded when a date bound is active"
 
 desc "human output: empty match prints nothing"
 setup_events
