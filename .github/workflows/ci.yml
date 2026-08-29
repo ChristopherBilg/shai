@@ -48,6 +48,13 @@ jobs:
       - name: Documentation checks (fail-closed)
         run: ./tests/docs.sh
 
+  completions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Completion manifest sync check
+        run: ./tests/completions-sync.sh
+
   tools-sync:
     runs-on: ubuntu-latest
     steps:

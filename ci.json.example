@@ -8,6 +8,7 @@
         "conventions": { "command": "./tests/conventions.sh", "timeout": 120 },
         "docs": { "command": "./tests/docs.sh", "timeout": 120 },
         "tools-sync": { "command": "./tests/tools-sync.sh", "timeout": 120 },
+        "completions": { "command": "./tests/completions-sync.sh", "timeout": 120 },
         "constants-sync": { "command": "./tests/constants-sync.sh", "timeout": 120 },
         "doctor-sync": { "command": "./tests/doctor-sync.sh", "timeout": 120 },
         "tool-schema": { "command": "./tests/validate-tool-schema.sh", "timeout": 120 },
@@ -16,7 +17,7 @@
           "timeout": 300
         },
         "all": {
-          "command": "./tests/install-lint-tools.sh >/dev/null && ./tests/conventions.sh && ./tests/docs.sh && ./tests/tools-sync.sh && ./tests/constants-sync.sh && ./tests/doctor-sync.sh && ./tests/validate-tool-schema.sh && ./tests/run.sh && ./tests/lint.sh",
+          "command": "./tests/install-lint-tools.sh >/dev/null && ./tests/conventions.sh && ./tests/docs.sh && ./tests/tools-sync.sh && ./tests/completions-sync.sh && ./tests/constants-sync.sh && ./tests/doctor-sync.sh && ./tests/validate-tool-schema.sh && ./tests/run.sh && ./tests/lint.sh",
           "timeout": 1800
         }
       }

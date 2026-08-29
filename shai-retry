@@ -30,6 +30,7 @@ advance_span() {
 
 export SHAI_SCHEMA_VERSION="${SHAI_SCHEMA_VERSION:-1.0}"
 
+# _completions_ignore: --dispatches (forwarded to shai-print, not parsed by shai-retry)
 PRINT_OPTS=(--dispatches)
 REPLAY_RUN=""
 while [ "$#" -gt 0 ]; do

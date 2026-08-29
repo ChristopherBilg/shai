@@ -316,6 +316,7 @@ _shai-prune() {
 _shai-completions() {
   local -a cmds
   cmds=(
+    'check:Validate manifest coverage, flag declarations, and generated-file freshness'
     'generate:Emit a self-contained completion script to stdout'
   )
   if (( CURRENT == 2 )); then
@@ -323,6 +324,10 @@ _shai-completions() {
     return
   fi
   case "${words[2]:-}" in
+    check)
+      _arguments -S \
+        '1:subcommand'
+      ;;
     generate)
       _arguments -S \
         '1:subcommand' \
