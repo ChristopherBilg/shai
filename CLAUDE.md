@@ -17,6 +17,8 @@ export DEEPSEEK_API_KEY=sk-...        # required at runtime
 ./shai-repl                            # interactive REPL
 ./shai-doctor                          # check environment prerequisites
 ./shai-version                         # print installed version
+./shai-completions generate zsh|bash   # print a completion script to stdout
+./shai-completions install zsh|bash    # write it to the standard user-local location
 
 # Install from a release (requires gh CLI, authenticated):
 gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
@@ -208,6 +210,21 @@ The scripts:
   resolved in order: the `VERSION` file next to the script (written by release tarballs), then
   `git describe --tags` in the install directory (dev clones), then the literal `dev`. Single
   purpose and pipeable: it has no REPL dependency and needs no `DEEPSEEK_API_KEY`. Exit 0 always.
+- **`shai-completions generate|install <zsh|bash>`** (`shai-completions:1`) — generates and
+  installs zsh/bash tab completions from the manifest (`completions.json`: scripts, flags,
+  subcommands, types). `generate` emits a self-contained completion script on stdout — dynamic
+  candidates resolve at completion time, and the install directory is discovered from the
+  `shai-repl` wrapper's exec line (dev clones fall back to the real script on `$PATH`).
+  `install` writes the generated file to the standard user-local location —
+  `${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai` (zsh) or
+  `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai` (bash) — creating the
+  target directory if needed and printing a one-line shell-config instruction only when that
+  directory is newly created. `install.sh` runs both installs best-effort after wrapper
+  generation (`|| true`, stderr suppressed), and `shai-doctor` reports whether the files are
+  present as warnings rather than errors. The generated files are checked in
+  (`completions/_shai`, `completions/shai.bash`) and `tests/test_completions.sh` keeps them
+  byte-identical to `generate` output. Exit 0 on success; 1 on generation or write failure;
+  2 on usage errors.
 - **`shai-tools [tools-dir]`** (`shai-tools:1`) — scans `tools/*/tool.json` (default:
   `$DIR/tools`) and validates each plugin: `tool.json` is valid JSON with `name`, `description`,
   and `parameters`; `name` matches its directory name; `run.sh` exists and is executable; and
