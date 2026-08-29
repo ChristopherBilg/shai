@@ -1,7 +1,7 @@
 #!/bin/bash
 # test_doctor.sh — unit tests for shai-doctor
 # Covers: shai-doctor — CLI tool detection, env var checks, tool-declared config files,
-#   output format, exit codes
+#   completion installation status, output format, exit codes
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -69,6 +69,14 @@ cat >"$SHAI_HOME/ci.json" <<'JSON'
   }
 }
 JSON
+
+# The Completions section checks ${XDG_DATA_HOME:-$HOME/.local/share}; pin it to a fixture
+# holding both completion files so the host's real shell state never leaks into the exact
+# warning-count assertions below (tests 6, 9, 12, 16) or the no-FAIL assertion (test 1).
+export XDG_DATA_HOME="$FIX/xdg"
+mkdir -p "$XDG_DATA_HOME/zsh/site-functions" "$XDG_DATA_HOME/bash-completion/completions"
+printf '# zsh completion fixture\n' >"$XDG_DATA_HOME/zsh/site-functions/_shai"
+printf '# bash completion fixture\n' >"$XDG_DATA_HOME/bash-completion/completions/shai"
 
 # --- Test 1: all checks pass ---
 export DEEPSEEK_API_KEY="test-key"
@@ -282,5 +290,36 @@ fi
   assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: config section adds no errors or warnings"
   exit "$FAILED"
 ) || FAILED=1
+
+# --- Test 17: Completions section reports installed files as OK ---
+OUT=$(run_doctor)
+assert_contains "$OUT" "Completions:" "doctor: prints the Completions section"
+assert_contains "$OUT" "[OK]   zsh completions" "doctor: installed zsh completions show OK"
+assert_contains "$OUT" "$XDG_DATA_HOME/zsh/site-functions/_shai" \
+  "doctor: names the zsh completion path"
+assert_contains "$OUT" "[OK]   bash completions" "doctor: installed bash completions show OK"
+assert_contains "$OUT" "$XDG_DATA_HOME/bash-completion/completions/shai" \
+  "doctor: names the bash completion path"
+
+# --- Test 18: missing completions → WARN with an install hint, exit still 0 ---
+# (the installed fixture above is the positive control: the same files that produce the
+# OK lines here are absent, so the WARNs cannot pass on a stale or unread fixture)
+XDG_DATA_HOME="$FIX/xdg-missing"
+mkdir -p "$XDG_DATA_HOME"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: missing completions → exit 0 (informational, not fatal)"
+assert_contains "$OUT" "[WARN] zsh completions not found" \
+  "doctor: missing zsh completions show WARN"
+assert_contains "$OUT" "run: shai-completions install zsh" \
+  "doctor: zsh WARN carries the install hint"
+assert_contains "$OUT" "[WARN] bash completions not found" \
+  "doctor: missing bash completions show WARN"
+assert_contains "$OUT" "run: shai-completions install bash" \
+  "doctor: bash WARN carries the install hint"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 2 warnings" \
+  "doctor: missing completions are exactly the two warnings"
+XDG_DATA_HOME="$FIX/xdg"
 
 finish

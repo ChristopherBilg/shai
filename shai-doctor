@@ -144,6 +144,28 @@ if [ -z "${SHAI_SUGGEST_REPO:-}" ]; then
 fi
 check_config SHAI_SUGGEST_REPO "" "$suggest_repo_label"
 
+# Completions are informational: a missing completion file degrades tab completion only,
+# so it is a warning, never an error. The paths match `shai-completions install`'s
+# targets, honoring XDG_DATA_HOME exactly as the installer does.
+printf '\nCompletions:\n' >&2
+COMPLETIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+ZSH_COMPLETIONS="$COMPLETIONS_DIR/zsh/site-functions/_shai"
+BASH_COMPLETIONS="$COMPLETIONS_DIR/bash-completion/completions/shai"
+if [ -f "$ZSH_COMPLETIONS" ]; then
+  printf '  [OK]   zsh completions (%s)\n' "$ZSH_COMPLETIONS" >&2
+else
+  printf '  [WARN] zsh completions not found: %s (run: shai-completions install zsh)\n' \
+    "$ZSH_COMPLETIONS" >&2
+  WARNINGS=$((WARNINGS + 1))
+fi
+if [ -f "$BASH_COMPLETIONS" ]; then
+  printf '  [OK]   bash completions (%s)\n' "$BASH_COMPLETIONS" >&2
+else
+  printf '  [WARN] bash completions not found: %s (run: shai-completions install bash)\n' \
+    "$BASH_COMPLETIONS" >&2
+  WARNINGS=$((WARNINGS + 1))
+fi
+
 # Derive additional deps from tool plugins
 if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
   SEEN_TOOLS=("${CORE_TOOLS[@]}" "${COND_TOOLS[@]}")
