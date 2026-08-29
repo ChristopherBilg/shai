@@ -33,6 +33,15 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
 ./shai-completions check               # completions gate: coverage, flag sync, freshness (the completions CI job)
 
+# Observability:
+./shai-sessions --recent 5 --json                  # last 5 sessions as JSON
+./shai-runs --failed                               # show only failed runs
+./shai-events --type tool_result --after 2026-08-01  # query individual events across sessions
+./shai-events --tool gh --json                     # events that called the gh tool, as JSON
+./shai-trace <run_id>                              # render a run's full span chain
+./shai-stats                                      # aggregate metrics across all sessions
+./shai-ledgers --workflow <name>                  # one workflow's ledger entries
+
 # Retention:
 ./shai-prune [--sessions] [--runs] [--ledgers] [--failures] [--dry-run] [--before YYYY-MM-DD]  # manual retention
 
@@ -135,7 +144,7 @@ script reads it; it is consumed only by the observability filters (`shai-session
 Every event additionally carries an **execution envelope**, added by `shai-stamp`:
 `version` (schema version, default `1.0`) and `meta` with `run_id`, `session_id`, `span_id`,
 `parent_span_id`, and `timestamp`. The envelope is **additive** — `type` and `source` stay
-top-level because four filters' `jq` selectors discriminate on them, and `payload` keeps its
+top-level because five filters' `jq` selectors discriminate on them, and `payload` keeps its
 existing per-event shape. The field *set* from the original design is adopted in full;
 the placement diverges (`source` stays top-level rather than moving into `meta`).
 Unstamped events from before the envelope still parse, so old session logs keep working.
