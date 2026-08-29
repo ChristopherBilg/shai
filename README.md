@@ -75,13 +75,15 @@ Then edit the `repos` map, keyed by normalized git remote URL (no scheme, no cre
 Every `ci` list/run output begins with a `ci-tool: <path>` line naming the `run.sh` that orchestrated it, so when the repo under test is shai itself you can see whether the installed tool or a checkout's tool ran. Pass `tool_dir` (e.g. `/tmp/clone/tools`) to explicitly have that directory's `ci/run.sh` drive the run — the override is only honored when given, never derived from repo content.
 
 ## Observability
-Inspect sessions, runs, and aggregate metrics from the terminal:
+Inspect sessions, runs, events, and aggregate metrics from the terminal:
 ```shell
 ./shai-sessions                          # list sessions with event/run/token counts
 ./shai-sessions --recent 5 --json        # last 5 sessions as JSON
 ./shai-runs --session <id>               # list runs within a session
 ./shai-runs --failed                     # show only failed runs
 ./shai-runs --failed --after 2026-08-01  # failed runs since a date
+./shai-events --type tool_result --after 2026-08-01  # query individual events across sessions
+./shai-events --tool gh --json                       # events that called the gh tool, as JSON
 ./shai-trace <run_id>                    # render a run's full span chain
 ./shai-trace <run_id> --request span_1   # dump the exact API request for a span
 ./shai-stats                             # aggregate metrics across all sessions
@@ -92,7 +94,7 @@ Inspect sessions, runs, and aggregate metrics from the terminal:
 ./shai-failures list --workflow issue_d  # list one workflow's failure records
 ```
 
-All six scripts accept `--json` for structured output and prefix matching on their ID/name argument (e.g. `shai-trace run_2026` resolves to the full run ID if unambiguous).
+All seven scripts accept `--json` for structured output and prefix matching on their ID/name argument (e.g. `shai-trace run_2026` resolves to the full run ID if unambiguous).
 
 `./shai-supervise status [script] [--json]` renders the same style of table for the installed
 `systemd --user` timers (UNIT, STATE, LAST, NEXT), and also accepts `--json`.
