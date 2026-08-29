@@ -68,6 +68,15 @@ for script in "$DEST"/shai-*; do
   fi
 done
 
+# Best-effort shell completions: write the generated zsh/bash files to the standard
+# user-local locations. Guarded with || true so a missing completions dir or write failure
+# never fails the install, and stderr is suppressed so the completion installer's
+# success/instruction lines on stdout keep the install output clean. The generated files
+# resolve the install dir at completion load time via `command -v shai-repl`, so running
+# after the wrapper loop is a convention, not a requirement.
+"$DEST/shai-completions" install zsh 2>/dev/null || true
+"$DEST/shai-completions" install bash 2>/dev/null || true
+
 printf '\nshai %s installed successfully\n' "$VERSION"
 printf '  Files:    %s/\n' "$DEST"
 printf '  Wrappers: %s/\n' "$BIN_DIR"

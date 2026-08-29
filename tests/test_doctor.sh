@@ -1,7 +1,7 @@
 #!/bin/bash
 # test_doctor.sh — unit tests for shai-doctor
 # Covers: shai-doctor — CLI tool detection, env var checks, tool-declared config files,
-#   output format, exit codes
+#   completion installation status, output format, exit codes
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -69,6 +69,14 @@ cat >"$SHAI_HOME/ci.json" <<'JSON'
   }
 }
 JSON
+
+# The Completions section checks ${XDG_DATA_HOME:-$HOME/.local/share}; pin it to a fixture
+# holding both completion files so the host's real shell state never leaks into the exact
+# warning-count assertions below (tests 6, 9, 12, 16) or the no-FAIL assertion (test 1).
+export XDG_DATA_HOME="$FIX/xdg"
+mkdir -p "$XDG_DATA_HOME/zsh/site-functions" "$XDG_DATA_HOME/bash-completion/completions"
+printf '# zsh completion fixture\n' >"$XDG_DATA_HOME/zsh/site-functions/_shai"
+printf '# bash completion fixture\n' >"$XDG_DATA_HOME/bash-completion/completions/shai"
 
 # --- Test 1: all checks pass ---
 export DEEPSEEK_API_KEY="test-key"
@@ -284,7 +292,38 @@ fi
   exit "$FAILED"
 ) || FAILED=1
 
-# --- Test 17: valid policy.json → OK with rule count and default ---
+# --- Test 17: Completions section reports installed files as OK ---
+OUT=$(run_doctor)
+assert_contains "$OUT" "Completions:" "doctor: prints the Completions section"
+assert_contains "$OUT" "[OK]   zsh completions" "doctor: installed zsh completions show OK"
+assert_contains "$OUT" "$XDG_DATA_HOME/zsh/site-functions/_shai" \
+  "doctor: names the zsh completion path"
+assert_contains "$OUT" "[OK]   bash completions" "doctor: installed bash completions show OK"
+assert_contains "$OUT" "$XDG_DATA_HOME/bash-completion/completions/shai" \
+  "doctor: names the bash completion path"
+
+# --- Test 18: missing completions → WARN with an install hint, exit still 0 ---
+# (the installed fixture above is the positive control: the same files that produce the
+# OK lines here are absent, so the WARNs cannot pass on a stale or unread fixture)
+XDG_DATA_HOME="$FIX/xdg-missing"
+mkdir -p "$XDG_DATA_HOME"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: missing completions → exit 0 (informational, not fatal)"
+assert_contains "$OUT" "[WARN] zsh completions not found" \
+  "doctor: missing zsh completions show WARN"
+assert_contains "$OUT" "run: shai-completions install zsh" \
+  "doctor: zsh WARN carries the install hint"
+assert_contains "$OUT" "[WARN] bash completions not found" \
+  "doctor: missing bash completions show WARN"
+assert_contains "$OUT" "run: shai-completions install bash" \
+  "doctor: bash WARN carries the install hint"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 2 warnings" \
+  "doctor: missing completions are exactly the two warnings"
+XDG_DATA_HOME="$FIX/xdg"
+
+# --- Test 19: valid policy.json → OK with rule count and default ---
 cat >"$SHAI_HOME/policy.json" <<'JSON'
 {
   "rules": [
@@ -302,7 +341,7 @@ assert_contains "$OUT" '[OK]   $SHAI_HOME/policy.json' "doctor: valid policy.jso
 assert_contains "$OUT" "2 rules, default: prompt" "doctor: shows rule count and default"
 rm -f "$SHAI_HOME/policy.json"
 
-# --- Test 18: valid policy.json with no default → shows "no default" ---
+# --- Test 20: valid policy.json with no default → shows "no default" ---
 cat >"$SHAI_HOME/policy.json" <<'JSON'
 {
   "rules": [
@@ -314,7 +353,7 @@ OUT=$(run_doctor)
 assert_contains "$OUT" "1 rule, no default" "doctor: shows singular rule count and no default"
 rm -f "$SHAI_HOME/policy.json"
 
-# --- Test 19: malformed policy.json → WARN ---
+# --- Test 21: malformed policy.json → WARN ---
 printf '{ "rules": [ this is not valid json\n' >"$SHAI_HOME/policy.json"
 OUT=$(run_doctor)
 RC=$?
@@ -323,7 +362,7 @@ assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: malformed policy
 assert_contains "$OUT" "not valid JSON" "doctor: malformed policy.json names the parse failure"
 rm -f "$SHAI_HOME/policy.json"
 
-# --- Test 20: policy.json with bad schema — .rules not an array → WARN ---
+# --- Test 22: policy.json with bad schema — .rules not an array → WARN ---
 cat >"$SHAI_HOME/policy.json" <<'JSON'
 {
   "rules": "not-an-array"
@@ -336,7 +375,7 @@ assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: .rules not array
 assert_contains "$OUT" "rules" "doctor: names the rules field in the warning"
 rm -f "$SHAI_HOME/policy.json"
 
-# --- Test 21: policy.json with bad schema — rule missing .tool → WARN ---
+# --- Test 23: policy.json with bad schema — rule missing .tool → WARN ---
 cat >"$SHAI_HOME/policy.json" <<'JSON'
 {
   "rules": [
@@ -349,7 +388,7 @@ assert_contains "$OUT" "[WARN]" "doctor: rule missing .tool shows WARN"
 assert_contains "$OUT" "missing or invalid .tool" "doctor: names the missing field"
 rm -f "$SHAI_HOME/policy.json"
 
-# --- Test 22: policy.json with bad schema — invalid .action value → WARN ---
+# --- Test 24: policy.json with bad schema — invalid .action value → WARN ---
 cat >"$SHAI_HOME/policy.json" <<'JSON'
 {
   "rules": [
@@ -362,7 +401,7 @@ assert_contains "$OUT" "[WARN]" "doctor: invalid action value shows WARN"
 assert_contains "$OUT" "block" "doctor: names the invalid action"
 rm -f "$SHAI_HOME/policy.json"
 
-# --- Test 23: policy.json with bad .default value → WARN ---
+# --- Test 25: policy.json with bad .default value → WARN ---
 cat >"$SHAI_HOME/policy.json" <<'JSON'
 {
   "rules": [],
@@ -374,7 +413,7 @@ assert_contains "$OUT" "[WARN]" "doctor: invalid default value shows WARN"
 assert_contains "$OUT" "reject" "doctor: names the invalid default"
 rm -f "$SHAI_HOME/policy.json"
 
-# --- Test 24: missing policy.json → no error, no warning ---
+# --- Test 26: missing policy.json → no error, no warning ---
 # (policy.json is optional — a missing file is the expected state before a user creates one)
 rm -f "$SHAI_HOME/policy.json"
 OUT=$(run_doctor)
@@ -383,7 +422,7 @@ assert_eq "$RC" "0" "doctor: missing policy.json → exit 0"
 SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: missing policy.json adds no warnings"
 
-# --- Test 25: SHAI_POLICY_OVERLAY validation — valid overlay → OK ---
+# --- Test 27: SHAI_POLICY_OVERLAY validation — valid overlay → OK ---
 OVERLAY="$FIX/overlay-policy.json"
 cat >"$OVERLAY" <<'JSON'
 {
@@ -403,7 +442,7 @@ JSON
 ) || FAILED=1
 rm -f "$OVERLAY"
 
-# --- Test 26: SHAI_POLICY_OVERLAY set but file missing → no error (not required to exist) ---
+# --- Test 28: SHAI_POLICY_OVERLAY set but file missing → no error (not required to exist) ---
 (
   # shellcheck disable=SC2031  # SHAI_POLICY_OVERLAY subshell isolation is intentional (see Test 25)
   export SHAI_POLICY_OVERLAY="$FIX/nonexistent-overlay.json"
@@ -415,7 +454,7 @@ rm -f "$OVERLAY"
   exit "$FAILED"
 ) || FAILED=1
 
-# --- Test 27: policy.json valid JSON but top-level array → WARN, not silently empty ---
+# --- Test 29: policy.json valid JSON but top-level array → WARN, not silently empty ---
 cat >"$SHAI_HOME/policy.json" <<'JSON'
 [
   {"tool": "gh", "action": "allow"}
@@ -428,7 +467,7 @@ assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: top-level array 
 assert_contains "$OUT" "must be a JSON object" "doctor: warning names the object requirement"
 rm -f "$SHAI_HOME/policy.json"
 
-# --- Test 28: policy.json valid JSON but top-level scalar → WARN, not silently empty ---
+# --- Test 30: policy.json valid JSON but top-level scalar → WARN, not silently empty ---
 printf '42\n' >"$SHAI_HOME/policy.json"
 OUT=$(run_doctor)
 RC=$?

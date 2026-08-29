@@ -496,7 +496,7 @@
       }
     },
     "shai-completions": {
-      "description": "Generate self-contained shell tab completions from the manifest",
+      "description": "Generate and install self-contained shell tab completions from the manifest",
       "flags": {},
       "subcommands": {
         "check": {
@@ -505,6 +505,17 @@
         },
         "generate": {
           "description": "Emit a self-contained completion script to stdout",
+          "positional": [
+            {
+              "name": "shell",
+              "type": "shell",
+              "description": "Target shell: zsh or bash"
+            }
+          ],
+          "flags": {}
+        },
+        "install": {
+          "description": "Write the completion file to the standard user-local location",
           "positional": [
             {
               "name": "shell",

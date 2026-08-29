@@ -33,13 +33,17 @@ tool dispatch loop entirely.
 
 ### `shai-completions` — shell tab completion (zsh/bash)
 
-23 scripts, 8 workflows, per-command flags, session/run IDs, workflow names —
-this is a lot of surface area to remember. Tab completion is standard practice
-for any CLI tool suite of this size.
-
-`shai-completions zsh` / `shai-completions bash` would emit the completion
-script (eval'd in `.zshrc` / `.bashrc`), with dynamic completion for session
-IDs, run IDs, workflow names, and tool names.
+**Implemented** — `shai-completions generate zsh|bash` emits a self-contained
+completion script from the manifest (`completions.json`), with dynamic
+completion for session IDs, run IDs, workflow names, and tool names (see #319),
+and `shai-completions install zsh|bash` writes it to the standard user-local
+location (`~/.local/share/zsh/site-functions/_shai` and
+`~/.local/share/bash-completion/completions/shai`), creating the target
+directory if needed (see #321). `install.sh` runs both installs on every
+release install, and `shai-doctor` reports whether the files are present — a
+warning, never an error. The generated files are checked in
+(`completions/_shai`, `completions/shai.bash`) and kept byte-identical to
+`generate` output by `tests/test_completions.sh`.
 
 ### `shai-config` — programmatic configuration management
 

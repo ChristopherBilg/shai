@@ -318,6 +318,7 @@ _shai-completions() {
   cmds=(
     'check:Validate manifest coverage, flag declarations, and generated-file freshness'
     'generate:Emit a self-contained completion script to stdout'
+    'install:Write the completion file to the standard user-local location'
   )
   if (( CURRENT == 2 )); then
     _describe -t subcommands 'subcommand' cmds
@@ -329,6 +330,11 @@ _shai-completions() {
         '1:subcommand'
       ;;
     generate)
+      _arguments -S \
+        '1:subcommand' \
+        '2:shell:_shai_type_shell'
+      ;;
+    install)
       _arguments -S \
         '1:subcommand' \
         '2:shell:_shai_type_shell'
