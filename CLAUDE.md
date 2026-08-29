@@ -144,7 +144,8 @@ script reads it; it is consumed only by the observability filters (`shai-session
 Every event additionally carries an **execution envelope**, added by `shai-stamp`:
 `version` (schema version, default `1.0`) and `meta` with `run_id`, `session_id`, `span_id`,
 `parent_span_id`, and `timestamp`. The envelope is **additive** — `type` and `source` stay
-top-level because five filters' `jq` selectors discriminate on them, and `payload` keeps its
+top-level because the `jq` selectors in `shai-runs`, `shai-trace`, `shai-stats`, and
+`shai-events` discriminate on them, and `payload` keeps its
 existing per-event shape. The field *set* from the original design is adopted in full;
 the placement diverges (`source` stays top-level rather than moving into `meta`).
 Unstamped events from before the envelope still parse, so old session logs keep working.
