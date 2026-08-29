@@ -361,6 +361,22 @@ The scripts:
   from the session log by `meta.run_id`. `--failed` filters to error runs. `--after`/`--before`
   filter by run date (inclusive, `YYYY-MM-DD`, from the first event's timestamp). Supports ID
   prefix matching for `--session`. Exit 0 on success; 1 on invalid arguments or no match.
+- **`shai-events [--type TYPE] [--source SOURCE] [--tool NAME] [--session ID] [--run ID] [--after DATE] [--before DATE] [--recent N] [--json]`**
+  (`shai-events:1`) — queries individual events across `$SHAI_HOME/sessions/*.jsonl` — the
+  event-level axis none of the other observability tools cover. All flags are optional and
+  AND-combinable: `--type` (`message`/`tool_result`/`error`), `--source`
+  (`user`/`assistant`/`system`/`tool`), `--tool` (assistant events whose
+  `payload.tool_calls[].function.name` matches; `tool_result` events never match), `--session`
+  (prefix-resolved session file), `--run` (prefix match on `meta.run_id`), `--after`/`--before`
+  (inclusive `YYYY-MM-DD`), `--recent N` (last N after sort and filters), `--json` (array of
+  the full, unmodified event objects). The date window short-circuits at the file level via the
+  session filename timestamp, so an out-of-window session file is never opened even when it
+  holds events with in-window `meta.timestamp`s — a semantic filter, not merely an
+  optimization. Human output is one row per event (`TIMESTAMP TYPE SOURCE SUMMARY`) with
+  summaries truncated to 80 chars and tool calls rendered as `name(...)`; events without a
+  usable `meta.timestamp` show `--` in the `TIMESTAMP` column. Malformed lines are skipped
+  with a warning. Exit 0 on success (including empty results); 1 on invalid arguments or no
+  prefix match.
 - **`shai-trace <run_id> [--request <span>] [--response <span>] [--verbose] [--json]`**
   (`shai-trace:1`) — renders a run's full span chain: inputs, outputs, tool calls, token usage,
   and latency per span. Reads from `$SHAI_HOME/runs/<run_id>/events.jsonl`; falls back to

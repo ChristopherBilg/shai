@@ -45,6 +45,50 @@
         }
       }
     },
+    "shai-events": {
+      "description": "Query individual events across session logs",
+      "flags": {
+        "--type": {
+          "arg": "VALUE",
+          "description": "Only events of this type (message, tool_result, or error)"
+        },
+        "--source": {
+          "arg": "VALUE",
+          "description": "Only events from this source (user, assistant, system, or tool)"
+        },
+        "--tool": {
+          "arg": "NAME",
+          "description": "Only assistant events calling this tool"
+        },
+        "--session": {
+          "arg": "ID",
+          "arg_type": "session_id",
+          "description": "Only events from this session (id or prefix)"
+        },
+        "--run": {
+          "arg": "ID",
+          "arg_type": "run_id",
+          "description": "Only events from this run (id or prefix)"
+        },
+        "--after": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only events at or after DATE"
+        },
+        "--before": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only events at or before DATE"
+        },
+        "--recent": {
+          "arg": "N",
+          "description": "Show only the last N events"
+        },
+        "--json": {
+          "description": "Emit JSON"
+        }
+      }
+    },
     "shai-dispatch": {
       "description": "Run tool_calls from the latest assistant event; emit tool_result events",
       "flags": {}
