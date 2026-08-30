@@ -644,7 +644,8 @@ if command -v zsh &>/dev/null; then
   # Drive an interactive zsh through a pseudo-terminal and complete for real:
   # zpty gives the spawned zsh a TTY, so TAB runs the compsys end to end. The
   # listing must contain the workflow name and its purpose line (the zsh
-  # description), plus the flag set for shai-runs.
+  # description), the flag set for shai-runs, and the dynamic session_id
+  # candidates driven through _shai_type_session_id (#336).
   ZTMP="$(mktemp -d)"
   _CLEANUP_DIRS+=("$ZTMP")
   cat >"$ZTMP/harness.zsh" <<EOF
@@ -654,6 +655,8 @@ zpty -w shai_comp \$'autoload -Uz compinit && compinit -u && source "$DIR/comple
 zpty -w shai_comp \$'shai-workflow run \t'
 zpty -w shai_comp \$'\cc'
 zpty -w shai_comp \$'shai-runs --\t'
+zpty -w shai_comp \$'\cc'
+zpty -w shai_comp \$'shai-runs --session \t\t'
 zpty -w shai_comp \$'\cc'
 zpty -w shai_comp \$'shai-repl -\t'
 zpty -w shai_comp \$'\cc'
@@ -686,6 +689,27 @@ EOF
     assert_contains "$ZOUT" "pipeline liveness probe" \
       "zsh: shai-workflow run <TAB> shows the workflow purpose as description"
     assert_contains "$ZOUT" "--session" "zsh: shai-runs --<TAB> offers --session"
+    # Dynamic candidates on the zsh side (#336): the zpty listing must offer the
+    # fixture session id and never the .latest.json sibling. The positive
+    # control requires sess_x as a whole space-delimited candidate — CR/LF line
+    # endings are normalized to spaces first because the pty reads are
+    # line-oriented and sess_x ends its listing line (a plain substring check
+    # would also match the bogus sibling); the absence assertion is
+    # mutation-checked — reverting the sed `-n`/`p` change in completions/_shai
+    # makes it go red (sess_x.latest.json reappears in the listing) while the
+    # positive control stays green.
+    if [[ " ${ZOUT//[$'\r\n']/ } " == *" sess_x "* ]]; then
+      echo -e "  ${GREEN}✓${NC} zsh: shai-runs --session <TAB> offers the real session id (sess_x as a whole candidate)"
+    else
+      echo -e "  ${RED}✗${NC} zsh: shai-runs --session <TAB> does not offer sess_x as a whole candidate"
+      FAILED=1
+    fi
+    if [[ "$ZOUT" == *sess_x.latest.json* ]]; then
+      echo -e "  ${RED}✗${NC} zsh: --session <TAB> offered the .latest.json sibling (sess_x.latest.json in output)"
+      FAILED=1
+    else
+      echo -e "  ${GREEN}✓${NC} zsh: --session <TAB> filters .latest.json siblings (sess_x.latest.json not offered)"
+    fi
     assert_contains "$ZOUT" "--quiet" "zsh: shai-repl -<TAB> offers the --quiet alias"
     assert_contains "$ZOUT" "message" "zsh: shai-events --type <TAB> offers message"
     assert_contains "$ZOUT" "tool_result" "zsh: shai-events --type <TAB> offers tool_result"
