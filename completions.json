@@ -578,7 +578,7 @@
   "types": {
     "session_id": {
       "description": "Session ID from SHAI_HOME/sessions/",
-      "command": "ls \"${SHAI_HOME:-$HOME/.shai}/sessions/\" 2>/dev/null | sed 's/\\.jsonl$//'"
+      "command": "ls \"${SHAI_HOME:-$HOME/.shai}/sessions/\" 2>/dev/null | sed -n 's/\\.jsonl$//p'"
     },
     "run_id": {
       "description": "Run ID from SHAI_HOME/runs/",
