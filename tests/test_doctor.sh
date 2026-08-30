@@ -295,7 +295,8 @@ fi
 # --- Test 17: Completions section reports installed files as OK ---
 OUT=$(run_doctor)
 assert_contains "$OUT" "Completions:" "doctor: prints the Completions section"
-assert_contains "$OUT" "[OK]   zsh completions" "doctor: installed zsh completions show OK"
+assert_contains "$OUT" "[OK]   zsh completion file present" \
+  "doctor: an installed zsh completion file shows OK without overstating loadability"
 assert_contains "$OUT" "$XDG_DATA_HOME/zsh/site-functions/_shai" \
   "doctor: names the zsh completion path"
 assert_contains "$OUT" "[OK]   bash completions" "doctor: installed bash completions show OK"

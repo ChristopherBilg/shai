@@ -115,8 +115,18 @@ assert_eq "$(cat "$INSTALL_XDG/zsh/site-functions/_shai")" "$ZSH_OUT" \
 assert_contains "$OUT" "Installed zsh completions to $INSTALL_XDG/zsh/site-functions/_shai" \
   "install zsh prints the success line with the path written"
 assert_contains "$OUT" \
-  "Add to .zshrc: fpath=($INSTALL_XDG/zsh/site-functions \$fpath); autoload -Uz compinit && compinit" \
-  "install zsh prints the setup instruction with the resolved site-functions directory"
+  "Add to .zshrc, BEFORE any framework init (e.g. source \$ZSH/oh-my-zsh.sh):" \
+  "install zsh names the ordering constraint (fpath= before any framework compinit)"
+assert_contains "$OUT" \
+  "fpath=($INSTALL_XDG/zsh/site-functions \$fpath)" \
+  "install zsh prints the fpath line with the resolved site-functions directory"
+assert_contains "$OUT" "rm -f ~/.zcompdump*; exec zsh" \
+  "install zsh tells the user to delete a stale compdump so compinit rescans"
+assert_contains "$OUT" \
+  "If you already call compinit yourself, make sure it comes after the fpath line." \
+  "install zsh tells self-compinit users to put their call after the fpath line"
+assert_contains "$OUT" "If nothing calls compinit yet, add:  autoload -Uz compinit && compinit" \
+  "install zsh prints the standalone compinit line for setups with no compinit at all"
 if [[ "$OUT" == *"~/.local/share"* ]]; then
   echo -e "  ${RED}✗${NC} install zsh instruction names the resolved dir, not a ~/.local/share literal"
   FAILED=1
@@ -137,18 +147,18 @@ assert_contains "$OUT" \
   "Add to .bashrc: [[ -r $INSTALL_XDG/bash-completion/completions/shai ]] && source $INSTALL_XDG/bash-completion/completions/shai" \
   "install bash prints the setup instruction with the resolved completion path"
 
-# Reinstall into the existing directory: the file is overwritten, and no setup instruction
-# repeats. Positive control: the same install printed the instruction above when the
-# directory was newly created, so this absence assertion cannot pass vacuously.
+# Reinstall into the existing directory: the file is overwritten and the setup
+# instruction still prints. A pre-existing site-functions dir (possibly created earlier
+# by an unrelated tool) is no evidence the shell is configured to load the file, so the
+# instruction must not be gated on the dir being newly created. (Mutation-checked:
+# restoring a `newly` gate around the instruction makes this assertion go red.)
 OUT="$(XDG_DATA_HOME="$INSTALL_XDG" "$GEN" install zsh)"
 assert_contains "$OUT" "Installed zsh completions to" \
   "reinstall still prints the success line"
-if [[ "$OUT" == *"Add to .zshrc"* ]]; then
-  echo -e "  ${RED}✗${NC} reinstall prints no setup instruction (directory already exists)"
-  FAILED=1
-else
-  echo -e "  ${GREEN}✓${NC} reinstall prints no setup instruction (directory already exists)"
-fi
+assert_contains "$OUT" "fpath=($INSTALL_XDG/zsh/site-functions \$fpath)" \
+  "reinstall prints the setup instruction even when the directory already exists"
+assert_contains "$OUT" "rm -f ~/.zcompdump*; exec zsh" \
+  "reinstall still names the stale-dump removal"
 
 # Write failure: a regular file where the target directory should live blocks mkdir -p,
 # so install exits 1 with an error line instead of clobbering anything.
