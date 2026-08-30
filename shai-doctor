@@ -147,13 +147,16 @@ check_config SHAI_SUGGEST_REPO "" "$suggest_repo_label"
 
 # Completions are informational: a missing completion file degrades tab completion only,
 # so it is a warning, never an error. The paths match `shai-completions install`'s
-# targets, honoring XDG_DATA_HOME exactly as the installer does.
+# targets, honoring XDG_DATA_HOME exactly as the installer does. The zsh OK label says
+# only what the test established: presence is necessary but not sufficient — zsh loads
+# the file only when its directory is in $fpath at compinit time, which a bare
+# [ -f ] cannot check.
 printf '\nCompletions:\n' >&2
 COMPLETIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
 ZSH_COMPLETIONS="$COMPLETIONS_DIR/zsh/site-functions/_shai"
 BASH_COMPLETIONS="$COMPLETIONS_DIR/bash-completion/completions/shai"
 if [ -f "$ZSH_COMPLETIONS" ]; then
-  printf '  [OK]   zsh completions (%s)\n' "$ZSH_COMPLETIONS" >&2
+  printf '  [OK]   zsh completion file present (%s)\n' "$ZSH_COMPLETIONS" >&2
 else
   printf '  [WARN] zsh completions not found: %s (run: shai-completions install zsh)\n' \
     "$ZSH_COMPLETIONS" >&2

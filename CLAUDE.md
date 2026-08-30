@@ -232,10 +232,13 @@ The scripts:
   `completions/shai.bash` (bash). `install` writes the generated file to the standard user-local
   location — `${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai` (zsh) or
   `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai` (bash) — creating the
-  target directory if needed and printing a one-line shell-config instruction only when that
-  directory is newly created; the instruction interpolates the resolved paths (so it stays
-  correct under a customized `XDG_DATA_HOME`) and the file is written via a temp file + mv so a
-  failed generation never destroys an existing one. `install.sh` runs both installs best-effort
+  target directory if needed and always printing the shell-config instruction, since a
+  pre-existing directory is no evidence the shell is configured to load the file; the zsh
+  instruction names the ordering constraint (the `fpath=` line must precede any framework's
+  `compinit`, e.g. `source $ZSH/oh-my-zsh.sh`) and the stale-`~/.zcompdump*` removal, the
+  instruction interpolates the resolved paths (so it stays correct under a customized
+  `XDG_DATA_HOME`), and the file is written via a temp file + mv so a failed generation never
+  destroys an existing one. `install.sh` runs both installs best-effort
   after wrapper generation (`|| true`, stderr suppressed; the generated files resolve the install
   dir at completion load time), and `shai-doctor` reports whether the files are present as
   warnings rather than errors. `check` is the fail-closed gate, run by the `completions` CI job

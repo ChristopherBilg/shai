@@ -226,12 +226,12 @@ assert_contains "$(head -n2 "$FAKE_HOME8/.local/share/zsh/site-functions/_shai")
   "install: the zsh completion file is generated output"
 assert_contains "$OUT" "Installed zsh completions to $FAKE_HOME8/.local/share/zsh/site-functions/_shai" \
   "install: the zsh completion install prints its success line with the resolved path"
-assert_contains "$OUT" "Add to .zshrc: fpath=($FAKE_HOME8/.local/share/zsh/site-functions \$fpath)" \
-  "install: a newly created zsh completion dir prints the setup instruction with the resolved path"
+assert_contains "$OUT" "fpath=($FAKE_HOME8/.local/share/zsh/site-functions \$fpath)" \
+  "install: the zsh completion install prints the fpath setup instruction with the resolved path"
 assert_contains "$OUT" "Installed bash completions to $FAKE_HOME8/.local/share/bash-completion/completions/shai" \
   "install: the bash completion install prints its success line with the resolved path"
 assert_contains "$OUT" "Add to .bashrc: [[ -r $FAKE_HOME8/.local/share/bash-completion/completions/shai ]]" \
-  "install: a newly created bash completion dir prints the setup instruction with the resolved path"
+  "install: the bash completion install prints the setup instruction with the resolved path"
 
 # --- Test: a missing completion installer never fails the install ---
 FAKE_HOME9="$WORK/home9"
