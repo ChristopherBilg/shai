@@ -20,7 +20,7 @@ unset _shai_bin
 _shai_bash_session_id() {
   local cur
   cur="${COMP_WORDS[COMP_CWORD]}"
-  COMPREPLY=( $(compgen -W "$(ls "${SHAI_HOME:-$HOME/.shai}/sessions/" 2>/dev/null | sed 's/\.jsonl$//' | cut -f1)" -- "$cur") )
+  COMPREPLY=( $(compgen -W "$(ls "${SHAI_HOME:-$HOME/.shai}/sessions/" 2>/dev/null | sed -n 's/\.jsonl$//p' | cut -f1)" -- "$cur") )
 }
 _shai_bash_run_id() {
   local cur

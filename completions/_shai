@@ -25,7 +25,7 @@ _shai_type_session_id() {
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     items+=("${line/$'\t'/:}")
-  done < <(ls "${SHAI_HOME:-$HOME/.shai}/sessions/" 2>/dev/null | sed 's/\.jsonl$//')
+  done < <(ls "${SHAI_HOME:-$HOME/.shai}/sessions/" 2>/dev/null | sed -n 's/\.jsonl$//p')
   _describe -t session_id 'Session ID from SHAI_HOME/sessions/' items
 }
 (( $+functions[_shai_type_run_id] )) ||

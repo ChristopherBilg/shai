@@ -453,6 +453,30 @@ else
   FAILED=1
 fi
 
+# .latest.json siblings must never be offered as session ids (#336): sessions/
+# holds both <id>.jsonl (the append-only log) and <id>.latest.json (the most
+# recent event), and the session_id command must filter non-.jsonl lines
+# instead of passing them through. The positive control requires sess_x as a
+# whole space-delimited candidate (a plain substring check would also match the
+# bogus sess_x.latest.json, so a fixture producing only the sibling could not
+# masquerade as a fix); the absence assertion is mutation-checked — reverting
+# the sed `-n`/`p` change makes it go red (sess_x.latest.json reappears).
+printf '' >"$SHAI_HOME/sessions/sess_x.jsonl"
+printf '' >"$SHAI_HOME/sessions/sess_x.latest.json"
+out="$(run_bash _shai_runs shai-runs --session sess_x)"
+if [[ " $out " == *" sess_x "* ]]; then
+  echo -e "  ${GREEN}✓${NC} bash: --session <TAB> offers the real session id (sess_x as a whole candidate)"
+else
+  echo -e "  ${RED}✗${NC} bash: --session <TAB> does not offer sess_x as a whole candidate (got $out)"
+  FAILED=1
+fi
+if [[ "$out" == *sess_x.latest.json* ]]; then
+  echo -e "  ${RED}✗${NC} bash: --session <TAB> offered the .latest.json sibling (got $out)"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} bash: --session <TAB> filters .latest.json siblings (sess_x.latest.json not offered)"
+fi
+
 # Install-directory resolution: install.sh writes a wrapper script
 # `exec '<install-dir>/shai-repl' "$@"`, and the generated files extract the
 # directory at load time. A fake install dir exercises that path end to end.
