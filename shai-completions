@@ -344,8 +344,8 @@ generate() {
 # prints the shell-config instruction: a pre-existing directory (possibly created earlier by
 # an unrelated tool) is no evidence the shell is configured to load the file, and a redundant
 # instruction is harmless. For zsh the instruction names the ordering constraint (the fpath=
-# line must precede any framework's compinit) and the stale-dump removal, both of which a
-# bare "file exists" check cannot catch.
+# line must precede any compinit, a framework's or the user's own) and the stale-dump
+# removal, both of which a bare "file exists" check cannot catch.
 install_completions() {
   local shell="$1" target dir tmp
   case "$shell" in
@@ -387,7 +387,8 @@ install_completions() {
       printf '  fpath=(%s $fpath)\n' "$dir"
       printf 'If your framework already calls compinit that is all you need, but delete a stale dump so it\n'
       printf 'rescans:  rm -f ~/.zcompdump*; exec zsh\n'
-      printf 'Otherwise also add:  autoload -Uz compinit && compinit\n'
+      printf 'If you already call compinit yourself, make sure it comes after the fpath line.\n'
+      printf 'If nothing calls compinit yet, add:  autoload -Uz compinit && compinit\n'
       ;;
     bash) printf 'Add to .bashrc: [[ -r %s ]] && source %s\n' "$target" "$target" ;;
   esac

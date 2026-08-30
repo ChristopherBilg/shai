@@ -122,8 +122,11 @@ assert_contains "$OUT" \
   "install zsh prints the fpath line with the resolved site-functions directory"
 assert_contains "$OUT" "rm -f ~/.zcompdump*; exec zsh" \
   "install zsh tells the user to delete a stale compdump so compinit rescans"
-assert_contains "$OUT" "Otherwise also add:  autoload -Uz compinit && compinit" \
-  "install zsh prints the standalone compinit line for non-framework setups"
+assert_contains "$OUT" \
+  "If you already call compinit yourself, make sure it comes after the fpath line." \
+  "install zsh tells self-compinit users to put their call after the fpath line"
+assert_contains "$OUT" "If nothing calls compinit yet, add:  autoload -Uz compinit && compinit" \
+  "install zsh prints the standalone compinit line for setups with no compinit at all"
 if [[ "$OUT" == *"~/.local/share"* ]]; then
   echo -e "  ${RED}✗${NC} install zsh instruction names the resolved dir, not a ~/.local/share literal"
   FAILED=1

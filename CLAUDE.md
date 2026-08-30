@@ -234,8 +234,9 @@ The scripts:
   `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai` (bash) — creating the
   target directory if needed and always printing the shell-config instruction, since a
   pre-existing directory is no evidence the shell is configured to load the file; the zsh
-  instruction names the ordering constraint (the `fpath=` line must precede any framework's
-  `compinit`, e.g. `source $ZSH/oh-my-zsh.sh`) and the stale-`~/.zcompdump*` removal, the
+  instruction names the ordering constraint (the `fpath=` line must precede any `compinit` —
+  a framework's, e.g. `source $ZSH/oh-my-zsh.sh`, or the user's own) and the
+  stale-`~/.zcompdump*` removal, the
   instruction interpolates the resolved paths (so it stays correct under a customized
   `XDG_DATA_HOME`), and the file is written via a temp file + mv so a failed generation never
   destroys an existing one. `install.sh` runs both installs best-effort
