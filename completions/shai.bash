@@ -78,6 +78,16 @@ _shai_bash_install_version() {
   fi
   COMPREPLY=( $(compgen -W "$(if [ -L "${_shai_dir%/*}/current" ]; then for d in "${_shai_dir%/*}/"*/; do d="${d%/}"; n="${d##*/}"; [ "$n" = current ] || printf '%s\n' "$n"; done 2>/dev/null; fi | cut -f1)" -- "$cur") )
 }
+_shai_bash_policy_verb() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=( $(compgen -W "$(printf '%s\n' list add remove test | cut -f1)" -- "$cur") )
+}
+_shai_bash_policy_action() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=( $(compgen -W "$(printf '%s\n' allow prompt deny | cut -f1)" -- "$cur") )
+}
 
 _shai_read() {
   local cur prev
@@ -693,3 +703,94 @@ _shai_completions() {
   esac
 }
 complete -F _shai_completions shai-completions
+_shai_config() {
+  local cur prev
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [ "$COMP_CWORD" -eq 1 ]; then
+    COMPREPLY=( $(compgen -W "policy" -- "$cur") )
+    return
+  fi
+  case "${COMP_WORDS[1]}" in
+    policy)
+      if [[ "$prev" == "--tool" ]]; then
+        _shai_bash_tool_name
+        return
+      fi
+      if [[ "$prev" == "--action" ]]; then
+        _shai_bash_policy_action
+        return
+      fi
+      if [[ "$prev" == "--overlay" ]]; then
+        local IFS=$'\n'
+        COMPREPLY=( $(compgen -f -- "$cur") )
+        compopt -o filenames 2>/dev/null
+        return
+      fi
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--tool --action --args --before --force --input --overlay --json" -- "$cur") )
+        return
+      fi
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          --tool)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --tool=*) : ;;
+          --action)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --action=*) : ;;
+          --args)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --args=*) : ;;
+          --before)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --before=*) : ;;
+          --input)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --input=*) : ;;
+          --overlay)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --overlay=*) : ;;
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
+        _shai_bash_policy_verb
+        return
+      fi
+      COMPREPLY=()
+      ;;
+    *)
+      COMPREPLY=()
+      ;;
+  esac
+}
+complete -F _shai_config shai-config
