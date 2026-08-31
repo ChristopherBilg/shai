@@ -11,10 +11,11 @@
 #         temp-file writes preserving the existing mode; ci list (human + --json, resolved
 #         key naming), ci add (origin-derived and --repo keys normalized through
 #         lib/git-remote.sh, file creation with version 1.0 and no _comment, --timeout/
-#         --env storage and validation, existing-check refusal), ci remove (single-check
-#         removal leaving the repo entry and checks: {}, unknown check listing available
-#         names), corrupt-ci.json parse-before-write, no-git-remote exit 1, and the
-#         round-trip against tools/ci/run.sh
+#         --env storage and validation including env-var-name keys and the dash-leading
+#         --name refusal, existing-check refusal), ci remove (single-check removal
+#         leaving the repo entry and checks: {}, unknown check listing available
+#         names), corrupt-ci.json parse-before-write including a missing/null .repos
+#         shape, no-git-remote exit 1, and the round-trip against tools/ci/run.sh
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -509,6 +510,18 @@ assert_contains "$OUT" "error: --env expects K=V" "add: bad --env → own error:
 OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --env K=A --env K=B 2>&1) && rc=0 || rc=$?
 assert_eq "$rc" "1" "add: duplicate --env key → exit 1"
 assert_contains "$OUT" 'error: duplicate --env key "K"' "add: duplicate --env → own error: prefix"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --env 'BAD KEY=1' 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: --env key with a space → exit 1"
+assert_contains "$OUT" 'error: --env key "BAD KEY" is not an environment variable name' \
+  "add: non env-var-name key → own error: prefix"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --env '9BAD=1' 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: digit-leading --env key → exit 1"
+assert_contains "$OUT" 'error: --env key "9BAD" is not an environment variable name' \
+  "add: digit-leading env key → own error: prefix"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name -foo --command c 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: dash-leading --name → exit 1"
+assert_contains "$OUT" 'error: --name must not start with "-" (got "-foo")' \
+  "add: dash-leading --name → own error: prefix"
 assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "add: every rejected value left the file byte-identical"
 
 # --- ci add/remove: corrupt ci.json aborts with exit 1, byte-identical ---
@@ -532,6 +545,33 @@ assert_contains "$OUT" "error:" "remove: corrupt ci.json → own error: prefix"
 assert_contains "$OUT" "shai-doctor" "remove: corrupt ci.json → shai-doctor pointer"
 assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "remove: corrupt ci.json left byte-identical (mutation-checked)"
 assert_eq "$(ls -A "$CIHOME")" "ci.json" "remove: corrupt abort leaves no temp file behind"
+
+# --- ci list/remove/add: a missing or null .repos is a corrupt shape, not an empty one ---
+# load_ci must reject these up front: a // {} fallback in the shape check once let
+# {"version":"1.0"} pass validation, and the command paths then died on .repos[$key]
+# with a raw jq "Cannot index null" error instead of this tool's clean shai-doctor
+# abort. Mutation-checked: restoring the fallback turns these red while the corrupt-byte
+# tests above stay green.
+CIHOME=$(ci_home '{"version":"1.0"}')
+SNAPSHOT=$(cat "$CIHOME/ci.json")
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci list 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "list: .repos missing → exit 1"
+assert_contains "$OUT" "not a valid ci config" "list: .repos missing → own error: prefix"
+assert_contains "$OUT" "shai-doctor" "list: .repos missing → shai-doctor pointer"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "list: .repos missing left the file byte-identical"
+
+CIHOME=$(ci_home '{"version":"1.0","repos":null}')
+SNAPSHOT=$(cat "$CIHOME/ci.json")
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove tests 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "remove: null .repos → exit 1"
+assert_contains "$OUT" "not a valid ci config" "remove: null .repos → own error: prefix"
+assert_contains "$OUT" "shai-doctor" "remove: null .repos → shai-doctor pointer"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "remove: null .repos left the file byte-identical"
+
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --name t --command c 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: null .repos → exit 1"
+assert_contains "$OUT" "not a valid ci config" "add: null .repos → own error: prefix"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "add: null .repos left the file byte-identical"
 
 # --- ci add/remove: an existing file's mode survives the atomic rewrite ---
 CIHOME=$(ci_home '{"version":"1.0","repos":{}}')

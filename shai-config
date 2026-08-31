@@ -564,9 +564,12 @@ cmd_test() {
 
 # load_ci <path>: the ci config's JSON (compact, one line) on stdout. Exit 1 with a
 # shai-doctor pointer on stderr when the file is not a JSON object whose .repos map holds
-# {checks: object} entries — the corrupt-ci.json abort (issue #346): parse before writing,
-# and never replace a corrupt file with a fresh {"version":"1.0","repos":{}}, because that
-# destroys the user's checks in response to the very failure this tool exists to prevent.
+# {checks: object} entries. .repos must exist and be an object: a missing or null .repos
+# is that corrupt shape too (a // {} fallback would bless it here and the command paths
+# would then die later on .repos[$key] with a raw jq "Cannot index null" error). This is
+# the corrupt-ci.json abort (issue #346): parse before writing, and never replace a
+# corrupt file with a fresh {"version":"1.0","repos":{}}, because that destroys the user's
+# checks in response to the very failure this tool exists to prevent.
 load_ci() {
   local path="$1" parsed
   if [ ! -f "$path" ]; then
@@ -574,8 +577,8 @@ load_ci() {
     return 1
   fi
   if ! parsed=$(jq -c '
-      if type == "object" and ((.repos // {}) | type) == "object"
-         and all((.repos // {}) | .[]; type == "object" and (.checks | type) == "object")
+      if type == "object" and ((.repos) | type) == "object"
+         and all(.repos | .[]; type == "object" and (.checks | type) == "object")
       then .
       else error("ci config must be a JSON object with a .repos map of {checks: object} entries")
       end' "$path" 2>/dev/null); then
@@ -755,6 +758,15 @@ cmd_ci_add() {
     printf 'error: --name is required\n' >&2
     usage_error
   fi
+  # cmd_ci_remove treats a dash-leading positional as an unknown option, so a
+  # dash-leading name accepted here could never be removed — refuse it in add so every
+  # name add accepts is removable (and names can never collide with future flags).
+  case "$NAME" in
+    -*)
+      printf 'error: --name must not start with "-" (got "%s")\n' "$NAME" >&2
+      exit 1
+      ;;
+  esac
   if [ -z "$COMMAND" ]; then
     printf 'error: --command is required\n' >&2
     usage_error
@@ -763,7 +775,11 @@ cmd_ci_add() {
     printf 'error: --timeout must be a positive integer in seconds (got "%s")\n' "$TIMEOUT" >&2
     exit 1
   fi
-  local pair
+  # Keys are held to the same rule the reader enforces at run time: tools/ci/run.sh
+  # rejects any env key that is not an env-var name, so accepting one here would write
+  # a check that can never run — refuse it now (mirroring how --timeout validates
+  # against the reader's rule).
+  local pair env_key
   for pair in "${ENV_PAIRS[@]}"; do
     case "$pair" in
       ?*=*) ;;
@@ -772,6 +788,11 @@ cmd_ci_add() {
         exit 1
         ;;
     esac
+    env_key="${pair%%=*}"
+    if ! [[ "$env_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      printf 'error: --env key "%s" is not an environment variable name — must match [A-Za-z_][A-Za-z0-9_]*\n' "$env_key" >&2
+      exit 1
+    fi
   done
   # from_entries silently keeps the last of duplicate keys, so `--env k=A --env k=B`
   # would discard A and write only B — refuse the pair instead of letting a value vanish.
