@@ -17,51 +17,8 @@ assert_eq "${XDG_DATA_HOME+x}" "" "install: lib.sh neutralizes an inherited XDG_
 WORK="$(mktemp -d)"
 _CLEANUP_DIRS+=("$WORK")
 
-# Helper: build a fake release tarball at $WORK/shai-<version>.tar.gz
-build_fake_tarball() {
-  local version="${1:-v2026.01.01}"
-  local staging="$WORK/shai-${version}"
-  rm -rf "$staging"
-  mkdir -p "$staging"
-  printf '#!/bin/bash\necho hello\n' >"$staging/shai-repl"
-  chmod +x "$staging/shai-repl"
-  printf '#!/bin/bash\necho doctor\n' >"$staging/shai-doctor"
-  chmod +x "$staging/shai-doctor"
-  echo "$version" >"$staging/VERSION"
-  echo "not executable" >"$staging/README.md"
-  printf '{"_comment":"example ci config","version":"1.0","repos":{}}\n' >"$staging/ci.json.example"
-  # The real completion installer + manifest: install.sh runs both installs best-effort, and
-  # the assertions below check the generated files land at the standard XDG locations.
-  cp "$DIR/shai-completions" "$staging/shai-completions"
-  cp "$DIR/completions.json" "$staging/completions.json"
-  (cd "$WORK" && tar czf "shai-${version}.tar.gz" "shai-${version}")
-}
-
-# Helper: gh stub that handles auth + release download for a given version
-make_install_gh_stub() {
-  local version="${1:-v2026.01.01}"
-  mkdir -p "$WORK/bin"
-  cat >"$WORK/bin/gh" <<STUB
-#!/bin/bash
-if [ "\$1" = "auth" ]; then exit 0; fi
-if [ "\$1" = "release" ] && [ "\$2" = "download" ]; then
-  dir=""
-  prev=""
-  for i in "\$@"; do
-    if [ "\$prev" = "--dir" ]; then dir="\$i"; break; fi
-    prev="\$i"
-  done
-  cp "$WORK/shai-${version}.tar.gz" "\$dir/"
-  exit 0
-fi
-if [ "\$1" = "release" ] && [ "\$2" = "view" ]; then
-  printf '%s\n' "${version}"
-  exit 0
-fi
-exit 1
-STUB
-  chmod +x "$WORK/bin/gh"
-}
+# build_fake_tarball and make_install_gh_stub live in tests/lib.sh (shared with
+# tests/test_update.sh); make_failing_gh_stub / make_unauthed_gh_stub stay local.
 
 # Helper: gh stub that fails downloads (auth passes)
 make_failing_gh_stub() {
@@ -87,8 +44,8 @@ STUB
 # --- Test: successful install ---
 FAKE_HOME="$WORK/home1"
 mkdir -p "$FAKE_HOME"
-build_fake_tarball "v2026.01.01"
-make_install_gh_stub "v2026.01.01"
+build_fake_tarball "$WORK" "v2026.01.01"
+make_install_gh_stub "$WORK" "v2026.01.01"
 
 HOME="$FAKE_HOME" SHAI_VERSION="v2026.01.01" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
@@ -125,8 +82,8 @@ assert_eq "$([ -e "$FAKE_HOME/.local/bin/README.md" ] && echo y || echo n)" "n" 
 # `mv -T` exists because a plain `mv tmp current` where current is an existing
 # symlink-to-directory moves tmp *inside* the pointed-to directory. Two consecutive
 # installs must leave current a symlink (asserted as such, not merely re-pointed).
-build_fake_tarball "v2026.02.01"
-make_install_gh_stub "v2026.02.01"
+build_fake_tarball "$WORK" "v2026.02.01"
+make_install_gh_stub "$WORK" "v2026.02.01"
 OUT=$(HOME="$FAKE_HOME" SHAI_VERSION="v2026.02.01" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1)
 assert_eq "$([ -L "$FAKE_HOME/.local/share/shai/current" ] && echo y || echo n)" "y" \
@@ -157,8 +114,8 @@ assert_eq "$([ -d "$FAKE_HOME2/.local/share/shai/v2026.01.01" ] && echo y || ech
 # --- Test: SHAI_VERSION is respected ---
 FAKE_HOME3="$WORK/home3"
 mkdir -p "$FAKE_HOME3"
-build_fake_tarball "v2026.02.15"
-make_install_gh_stub "v2026.02.15"
+build_fake_tarball "$WORK" "v2026.02.15"
+make_install_gh_stub "$WORK" "v2026.02.15"
 
 HOME="$FAKE_HOME3" SHAI_VERSION="v2026.02.15" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
@@ -171,7 +128,7 @@ assert_eq "$(cat "$FAKE_HOME3/.local/share/shai/v2026.02.15/VERSION")" "v2026.02
 # --- Test: path traversal in SHAI_VERSION is rejected ---
 FAKE_HOME4="$WORK/home4"
 mkdir -p "$FAKE_HOME4"
-make_install_gh_stub
+make_install_gh_stub "$WORK"
 err=$(HOME="$FAKE_HOME4" SHAI_VERSION="../../../etc" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1 || true)
 assert_contains "$err" "must not contain" \
@@ -196,8 +153,8 @@ assert_contains "$err3" "EXIT:2" \
 # --- Test: latest version resolution via gh release view ---
 FAKE_HOME6="$WORK/home6"
 mkdir -p "$FAKE_HOME6"
-build_fake_tarball "v2026.03.20"
-make_install_gh_stub "v2026.03.20"
+build_fake_tarball "$WORK" "v2026.03.20"
+make_install_gh_stub "$WORK" "v2026.03.20"
 
 HOME="$FAKE_HOME6" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
@@ -210,8 +167,8 @@ assert_eq "$(cat "$FAKE_HOME6/.local/share/shai/v2026.03.20/VERSION")" "v2026.03
 # --- Test: post-install message points at ci.json.example when no config exists ---
 FAKE_HOME7="$WORK/home7"
 mkdir -p "$FAKE_HOME7"
-build_fake_tarball "v2026.04.10"
-make_install_gh_stub "v2026.04.10"
+build_fake_tarball "$WORK" "v2026.04.10"
+make_install_gh_stub "$WORK" "v2026.04.10"
 
 OUT=$(HOME="$FAKE_HOME7" SHAI_HOME="$FAKE_HOME7/.shai" SHAI_VERSION="v2026.04.10" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1)
@@ -238,8 +195,8 @@ fi
 # --- Test: completion files are installed alongside the wrappers ---
 FAKE_HOME8="$WORK/home8"
 mkdir -p "$FAKE_HOME8"
-build_fake_tarball "v2026.05.01"
-make_install_gh_stub "v2026.05.01"
+build_fake_tarball "$WORK" "v2026.05.01"
+make_install_gh_stub "$WORK" "v2026.05.01"
 
 OUT=$(HOME="$FAKE_HOME8" SHAI_VERSION="v2026.05.01" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1)
@@ -268,7 +225,7 @@ mkdir -p "$WORK/shai-v2026.06.01"
 printf '#!/bin/bash\necho hello\n' >"$WORK/shai-v2026.06.01/shai-repl"
 chmod +x "$WORK/shai-v2026.06.01/shai-repl"
 (cd "$WORK" && tar czf "shai-v2026.06.01.tar.gz" "shai-v2026.06.01")
-make_install_gh_stub "v2026.06.01"
+make_install_gh_stub "$WORK" "v2026.06.01"
 
 OUT=$(HOME="$FAKE_HOME9" SHAI_VERSION="v2026.06.01" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1) && RC=0 || RC=$?
@@ -289,8 +246,8 @@ printf "#!/bin/bash\nexec '%s' \"\$@\"\n" \
   "$FAKE_HOME10/.local/share/shai/v2026.01.01/shai-repl" >"$FAKE_HOME10/.local/bin/shai-repl"
 chmod +x "$FAKE_HOME10/.local/bin/shai-repl"
 
-build_fake_tarball "v2026.01.01"
-make_install_gh_stub "v2026.01.01"
+build_fake_tarball "$WORK" "v2026.01.01"
+make_install_gh_stub "$WORK" "v2026.01.01"
 HOME="$FAKE_HOME10" SHAI_VERSION="v2026.01.01" \
   PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
 

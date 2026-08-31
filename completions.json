@@ -378,6 +378,40 @@
       "description": "Validate environment prerequisites for shai",
       "flags": {}
     },
+    "shai-update": {
+      "description": "Check for, install, roll back, and prune shai releases in place",
+      "flags": {
+        "--check": {
+          "description": "Report whether an update exists without changing anything"
+        },
+        "--list": {
+          "description": "List versions on disk, marking the current one"
+        },
+        "--rollback": {
+          "arg": "VERSION",
+          "arg_type": "install_version",
+          "description": "Re-point current to the previous or a named installed version"
+        },
+        "--version": {
+          "arg": "VERSION",
+          "description": "Install a specific release version"
+        },
+        "--prune": {
+          "description": "Remove old version directories"
+        },
+        "--keep": {
+          "arg": "N",
+          "description": "Keep the newest N versions (with --prune)"
+        },
+        "--dry-run": {
+          "description": "Print what --prune would remove without removing it"
+        },
+        "--yes": {
+          "short": "-y",
+          "description": "Skip the confirmation prompt"
+        }
+      }
+    },
     "shai-version": {
       "description": "Print the installed shai version",
       "flags": {}
@@ -634,6 +668,10 @@
     "tool_name": {
       "description": "Tool name from install directory",
       "command": "for d in \"${_shai_dir}/tools/\"*/run.sh; do [ -x \"$d\" ] || continue; d=\"${d%/run.sh}\"; n=\"${d##*/}\"; p=\"$(jq -r '.description // empty' \"$d/tool.json\" 2>/dev/null)\"; printf '%s\\t%s\\n' \"$n\" \"$p\"; done 2>/dev/null"
+    },
+    "install_version": {
+      "description": "Installed shai version from the install directory",
+      "command": "if [ -L \"${_shai_dir%/*}/current\" ]; then for d in \"${_shai_dir%/*}/\"*/; do d=\"${d%/}\"; n=\"${d##*/}\"; [ \"$n\" = current ] || printf '%s\\n' \"$n\"; done 2>/dev/null; fi"
     }
   }
 }
