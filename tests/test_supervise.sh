@@ -1,7 +1,8 @@
 #!/bin/bash
 # test_supervise.sh — unit tests for shai-supervise
 # Covers: shai-supervise — unit file generation, naming, validation, subcommand dispatch,
-#   status INSTALL column (stale/ok detection), JSON install key
+#   status INSTALL column (stale/ok detection), JSON install key, repoint (ExecStart
+#   rewrite through current, skip/warn cases, dry-run, usage errors)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -405,5 +406,198 @@ assert_contains "$ERR" "shai-missing.timer not found" "status <unknown unit>: re
 assert_exit 1 "status: systemctl failure exits 1" -- "$DIR/shai-supervise" status nobus
 ERR=$("$DIR/shai-supervise" status nobus 2>&1 >/dev/null)
 assert_contains "$ERR" "warning: systemctl show failed" "status: systemctl failure warns on stderr"
+
+# --- repoint: fixture install tree with a current symlink ---
+# Invoking shai-supervise through <root>/current/shai-supervise makes it compute
+# $DIR=<root>/current (the logical path), so a repointed ExecStart resolves through
+# current instead of a version directory. The old version tree is a real directory —
+# a distinct physical location, so unit_install_state reports it stale rather than ok.
+REPOINT_ROOT="$(mktemp -d)"
+_CLEANUP_DIRS+=("$REPOINT_ROOT")
+mkdir -p "$REPOINT_ROOT/v2026.07.01/workflows/heartbeat"
+printf '#!/bin/bash\nprintf "old heartbeat\\n"\n' >"$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh"
+chmod +x "$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh"
+printf '#!/bin/bash\nprintf "old print\\n"\n' >"$REPOINT_ROOT/v2026.07.01/shai-print"
+chmod +x "$REPOINT_ROOT/v2026.07.01/shai-print"
+ln -s "$DIR" "$REPOINT_ROOT/v2026.08.10"
+ln -s "v2026.08.10" "$REPOINT_ROOT/current"
+SUPERVISE="$REPOINT_ROOT/current/shai-supervise"
+
+# --- repoint <script>: rewrites only the ExecStart= line ---
+cat >"$TMP/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+chmod 600 "$TMP/shai-heartbeat.service"
+cat >"$TMP/shai-heartbeat.timer" <<EOF
+[Unit]
+Description=shai shai-heartbeat timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=45min
+
+[Install]
+WantedBy=timers.target
+EOF
+BEFORE=$(grep -v '^ExecStart=' "$TMP/shai-heartbeat.service")
+
+: >"$SYSTEMCTL_LOG"
+OUT=$("$SUPERVISE" repoint heartbeat 2>&1)
+RC=$?
+assert_eq "$RC" "0" "repoint: exits 0"
+assert_contains "$(cat "$TMP/shai-heartbeat.service")" \
+  "ExecStart=$REPOINT_ROOT/current/workflows/heartbeat/run.sh" \
+  "repoint: ExecStart rewritten to resolve through /current/"
+assert_eq "$(grep -v '^ExecStart=' "$TMP/shai-heartbeat.service")" "$BEFORE" \
+  "repoint: every line except ExecStart is byte-preserved"
+assert_contains "$(cat "$TMP/shai-heartbeat.service")" "Environment=DEEPSEEK_API_KEY=test-key" \
+  "repoint: the API key line is preserved"
+assert_eq "$(stat -c '%a' "$TMP/shai-heartbeat.service")" "600" \
+  "repoint: the .service file is still mode 600"
+assert_contains "$(cat "$TMP/shai-heartbeat.timer")" "OnUnitActiveSec=45min" \
+  "repoint: the customized timer interval is untouched"
+assert_contains "$OUT" "v2026.07.01 -> current" "repoint: reports old version -> current"
+assert_contains "$OUT" "daemon-reloaded; 1 unit repointed" "repoint: summary names the reload and count"
+assert_contains "$(cat "$SYSTEMCTL_LOG")" "daemon-reload" "repoint: daemon-reload called after a rewrite"
+
+# --- repoint --all: stale unit rewritten, already-current unit skipped ---
+# The stale fixture doubles as the mutation control for the skip assertion: a build
+# that classified everything as current would print the skip line but fail the
+# rewrite assertions, and vice versa.
+cat >"$TMP/shai-issue-dispatcher.service" <<EOF
+[Unit]
+Description=shai shai-issue-dispatcher workflow
+
+[Service]
+Type=oneshot
+ExecStart=$REPOINT_ROOT/v2026.07.01/shai-print
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+chmod 600 "$TMP/shai-issue-dispatcher.service"
+# heartbeat was repointed by the test above: it is the already-current control here.
+: >"$SYSTEMCTL_LOG"
+OUT=$("$SUPERVISE" repoint --all 2>&1)
+RC=$?
+assert_eq "$RC" "0" "repoint --all: exits 0"
+assert_contains "$(cat "$TMP/shai-issue-dispatcher.service")" \
+  "ExecStart=$REPOINT_ROOT/current/shai-print" \
+  "repoint --all: direct-script ExecStart rewritten through /current/"
+assert_contains "$OUT" "already current (skipped)" \
+  "repoint --all: the already-current unit is skipped"
+assert_contains "$OUT" "v2026.07.01 -> current" \
+  "repoint --all: the stale unit in the same run is repointed (mutation control)"
+assert_eq "$(grep -c 'daemon-reload' "$SYSTEMCTL_LOG")" "1" \
+  "repoint --all: exactly one daemon-reload for the whole run"
+
+# --- repoint --all again: nothing to do, no daemon-reload ---
+: >"$SYSTEMCTL_LOG"
+OUT=$("$SUPERVISE" repoint --all 2>&1)
+RC=$?
+assert_eq "$RC" "0" "repoint: exits 0 when nothing to do"
+assert_contains "$OUT" "already current (skipped)" "repoint: nothing-to-do run still reports the skip"
+if grep -q 'daemon-reload' "$SYSTEMCTL_LOG"; then RELOADED="yes"; else RELOADED="no"; fi
+assert_eq "$RELOADED" "no" \
+  "repoint: no daemon-reload when nothing changed (the test above is the reloading case)"
+
+# --- repoint --dry-run: prints the diff, writes nothing ---
+cat >"$TMP/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+chmod 600 "$TMP/shai-heartbeat.service"
+cp "$TMP/shai-heartbeat.service" "$TMP/heartbeat.before"
+
+: >"$SYSTEMCTL_LOG"
+OUT=$("$SUPERVISE" repoint --all --dry-run 2>&1)
+RC=$?
+assert_eq "$RC" "0" "repoint --dry-run: exits 0"
+if cmp -s "$TMP/heartbeat.before" "$TMP/shai-heartbeat.service"; then
+  echo -e "  ${GREEN}✓${NC} repoint --dry-run: the unit file is byte-identical afterwards (writes nothing)"
+else
+  echo -e "  ${RED}✗${NC} repoint --dry-run: the unit file was modified"
+  FAILED=1
+fi
+assert_contains "$OUT" "-ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh" \
+  "repoint --dry-run: the diff shows the old ExecStart"
+assert_contains "$OUT" "+ExecStart=$REPOINT_ROOT/current/workflows/heartbeat/run.sh" \
+  "repoint --dry-run: the diff shows the new ExecStart"
+assert_contains "$OUT" "1 unit(s) would be repointed (dry run)" \
+  "repoint --dry-run: summary line"
+if grep -q 'daemon-reload' "$SYSTEMCTL_LOG"; then RELOADED="yes"; else RELOADED="no"; fi
+assert_eq "$RELOADED" "no" "repoint --dry-run: no daemon-reload"
+"$SUPERVISE" repoint heartbeat >/dev/null 2>&1
+assert_contains "$(cat "$TMP/shai-heartbeat.service")" \
+  "ExecStart=$REPOINT_ROOT/current/workflows/heartbeat/run.sh" \
+  "repoint: a real run after --dry-run rewrites the unit (positive control)"
+
+# --- repoint: unrecognized ExecStart shape is warned about and skipped ---
+cat >"$TMP/shai-review-dispatcher.service" <<EOF
+[Unit]
+Description=shai shai-review-dispatcher workflow
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/something-else
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+chmod 600 "$TMP/shai-review-dispatcher.service"
+# Make heartbeat stale again so the same run has a recognized-shape positive control.
+cat >"$TMP/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+chmod 600 "$TMP/shai-heartbeat.service"
+OUT=$("$SUPERVISE" repoint --all 2>&1)
+assert_contains "$OUT" "unrecognized ExecStart shape (skipped)" \
+  "repoint: unrecognized shape warned and skipped"
+assert_contains "$(cat "$TMP/shai-review-dispatcher.service")" "ExecStart=/usr/bin/something-else" \
+  "repoint: unrecognized shape is not rewritten"
+assert_contains "$(cat "$TMP/shai-heartbeat.service")" \
+  "ExecStart=$REPOINT_ROOT/current/workflows/heartbeat/run.sh" \
+  "repoint: the recognized-shape unit in the same run is rewritten (positive control)"
+
+# --- repoint: usage errors ---
+assert_exit 2 "repoint: neither script nor --all is a usage error" -- "$SUPERVISE" repoint
+ERR=$("$SUPERVISE" repoint 2>&1)
+assert_contains "$ERR" "specify a script or --all" "repoint: usage error message for neither"
+assert_exit 2 "repoint: script and --all together is a usage error" -- "$SUPERVISE" repoint heartbeat --all
+ERR=$("$SUPERVISE" repoint heartbeat --all 2>&1)
+assert_contains "$ERR" "not both" "repoint: usage error message for both"
+assert_exit 2 "repoint: unknown option is a usage error" -- "$SUPERVISE" repoint --jsn
+
+# --- repoint: no API key required ---
+(
+  unset DEEPSEEK_API_KEY
+  "$SUPERVISE" repoint shai-issue-dispatcher >/dev/null 2>&1
+  exit $?
+) && RC=0 || RC=$?
+assert_eq "$RC" "0" "repoint: runs without DEEPSEEK_API_KEY"
+
+# --- repoint: a named unit with no unit file warns and exits 0 ---
+OUT=$("$SUPERVISE" repoint shai-nosuch 2>&1)
+RC=$?
+assert_eq "$RC" "0" "repoint: missing unit file exits 0 (nothing to do)"
+assert_contains "$OUT" "no unit file or ExecStart line (skipped)" "repoint: missing unit file warns"
 
 finish

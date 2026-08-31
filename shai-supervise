@@ -2,10 +2,12 @@
 # shai-supervise — manage shai workflows under systemd --user
 # Usage: shai-supervise install|uninstall|start|stop|logs <script> [--interval <timespan>]
 #        shai-supervise status [script] [--json]
+#        shai-supervise repoint [<script> | --all] [--dry-run]
 # Reads: DEEPSEEK_API_KEY, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows;
-#        installed unit files from $SHAI_UNIT_DIR (status)
-# Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall)
-# Exit: 0 on success; 1 on validation error or systemctl failure; 2 on usage error
+#        installed unit files from $SHAI_UNIT_DIR (status, repoint)
+# Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall);
+#        rewrites only the ExecStart= line of installed .service files (repoint)
+# Exit: 0 on success; 1 on validation error, systemctl failure, or rewrite failure; 2 on usage error
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -92,6 +94,196 @@ cmd_uninstall() {
   printf 'uninstalled %s\n' "$name"
 }
 
+# repoint_old_base <exec>: the install directory embedded in an ExecStart path, for the
+# two shapes cmd_install writes — <base>/shai-* (a direct script) or
+# <base>/workflows/<name>/run.sh (a workflow). Exits 1 for any other shape: repoint must
+# only rewrite units this script wrote, never guess at a foreign ExecStart.
+repoint_old_base() {
+  local exec="$1" base
+  case "$exec" in
+    */workflows/*/run.sh)
+      base="${exec%/workflows/*/run.sh}"
+      [ -n "$base" ] || return 1
+      printf '%s' "$base"
+      ;;
+    */shai-*)
+      printf '%s' "$(dirname "$exec")"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# repoint_suffix <exec>: the remainder of an ExecStart path after its embedded install
+# directory — the part that stays constant across versions and gets joined onto $DIR.
+# Exits 1 for an unrecognized shape or a workflow segment that is not a plain name
+# (cmd_install's unit_name rejects / and .., so such a unit was not written by it).
+repoint_suffix() {
+  local exec="$1" base suffix name
+  base="$(repoint_old_base "$exec")" || return 1
+  suffix="${exec#"$base"/}"
+  case "$suffix" in
+    workflows/*/run.sh)
+      name="${suffix#workflows/}"
+      name="${name%/run.sh}"
+      if [ -z "$name" ] || [[ "$name" == *..* ]]; then
+        return 1
+      fi
+      ;;
+    shai-*) ;;
+    *) return 1 ;;
+  esac
+  printf '%s' "$suffix"
+}
+
+# repoint_rewritten <exec> <new>: copy stdin to stdout with only the
+# `ExecStart=<exec>` line replaced by `ExecStart=<new>`. `IFS= read -r` keeps every
+# other line byte-for-byte, so OnUnitActiveSec, Environment=, and Description survive.
+repoint_rewritten() {
+  local exec="$1" new="$2" line
+  while IFS= read -r line; do
+    if [ "$line" = "ExecStart=$exec" ]; then
+      printf 'ExecStart=%s\n' "$new"
+    else
+      printf '%s\n' "$line"
+    fi
+  done
+}
+
+# repoint_write <exec> <new> <service>: rewrite only the ExecStart= line via a temp file
+# in the unit directory (atomic rename) and re-chmod 600 — the .service file holds the
+# plaintext API key, so a failed rewrite must leave the original untouched.
+repoint_write() {
+  local exec="$1" new="$2" service="$3" tmp
+  if ! tmp="$(mktemp "$UNIT_DIR/.shai-repoint.XXXXXX")"; then
+    printf 'error: %s: could not create a temp file for the rewrite\n' "$service" >&2
+    return 1
+  fi
+  if ! repoint_rewritten "$exec" "$new" <"$service" >"$tmp"; then
+    rm -f "$tmp"
+    printf 'error: %s: rewrite failed, original left untouched\n' "$service" >&2
+    return 1
+  fi
+  if ! mv -f "$tmp" "$service"; then
+    rm -f "$tmp"
+    printf 'error: %s: could not move the rewritten unit into place, original left untouched\n' "$service" >&2
+    return 1
+  fi
+  # mktemp's default mode is 600 already, but re-apply it after the rename explicitly:
+  # 600 is the contract for a file holding the plaintext API key.
+  if ! chmod 600 "$service"; then
+    printf 'error: %s: could not restore mode 600 after the rewrite\n' "$service" >&2
+    return 1
+  fi
+}
+
+# repoint_unit <unit> <dry_run>: one unit's rewrite decision. Dispatch order is the
+# unit_install_state classification: ok → skip; -- (no unit file or no ExecStart) →
+# warn and skip; an unrecognized ExecStart shape → warn and skip, never guess.
+# Anything else (stale, broken) with a recognized shape gets the ExecStart rewrite.
+repoint_unit() {
+  local unit="$1" dry_run="$2"
+  local service="$UNIT_DIR/$unit.service" state exec base suffix new
+  state="$(unit_install_state "$UNIT_DIR" "$DIR" "$unit")"
+  case "$state" in
+    ok)
+      printf '%-24s  already current (skipped)\n' "$unit"
+      return 0
+      ;;
+    --)
+      printf 'warning: %s: no unit file or ExecStart line (skipped)\n' "$unit" >&2
+      return 0
+      ;;
+  esac
+  exec="$(unit_exec_start "$UNIT_DIR" "$unit")"
+  if ! base="$(repoint_old_base "$exec")" || ! suffix="$(repoint_suffix "$exec")"; then
+    printf 'warning: %s: unrecognized ExecStart shape (skipped)\n' "$unit" >&2
+    return 0
+  fi
+  new="$DIR/$suffix"
+  if [ "$dry_run" = true ]; then
+    diff -u --label "$service" --label "$service (repointed)" "$service" \
+      <(repoint_rewritten "$exec" "$new" <"$service") || true
+    REPOINT_CHANGED=$((REPOINT_CHANGED + 1))
+    return 0
+  fi
+  if ! repoint_write "$exec" "$new" "$service"; then
+    REPOINT_FAILED=1
+    return 0
+  fi
+  printf '%-24s  %s -> current\n' "$unit" "$(basename "$base")"
+  REPOINT_CHANGED=$((REPOINT_CHANGED + 1))
+}
+
+# cmd_repoint: migrate units whose ExecStart bakes in a versioned path to $DIR (which,
+# when invoked through an install's `current` symlink, is itself version-independent).
+# Unlike re-running `install`, this preserves a customized OnUnitActiveSec and the
+# Environment=DEEPSEEK_API_KEY= line, and needs no exported API key.
+cmd_repoint() {
+  local script="" all=false dry_run=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all) all=true ;;
+      --dry-run) dry_run=true ;;
+      --*)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        exit 2
+        ;;
+      *)
+        if [ -n "$script" ]; then
+          printf 'error: unexpected argument: %s\n' "$1" >&2
+          exit 2
+        fi
+        script="$1"
+        ;;
+    esac
+    shift
+  done
+  if [ -n "$script" ] && [ "$all" = true ]; then
+    printf 'error: specify either a script or --all, not both\n' >&2
+    exit 2
+  fi
+  if [ -z "$script" ] && [ "$all" = false ]; then
+    printf 'error: specify a script or --all\n' >&2
+    exit 2
+  fi
+
+  local units=() f
+  if [ -n "$script" ]; then
+    units+=("$(unit_name "$script")")
+  else
+    for f in "$UNIT_DIR"/shai-*.service; do
+      [ -e "$f" ] || continue
+      units+=("$(basename "$f" .service)")
+    done
+    if [ "${#units[@]}" -gt 0 ]; then
+      mapfile -t units < <(printf '%s\n' "${units[@]}" | sort)
+    fi
+  fi
+
+  REPOINT_CHANGED=0
+  REPOINT_FAILED=0
+  local unit
+  for unit in "${units[@]}"; do
+    repoint_unit "$unit" "$dry_run"
+  done
+
+  if [ "$REPOINT_CHANGED" -gt 0 ] && [ "$dry_run" = false ]; then
+    # One reload at the end, and only when a unit actually changed.
+    systemctl --user daemon-reload
+    if [ "$REPOINT_CHANGED" -eq 1 ]; then
+      printf 'daemon-reloaded; 1 unit repointed\n'
+    else
+      printf 'daemon-reloaded; %d units repointed\n' "$REPOINT_CHANGED"
+    fi
+  elif [ "$REPOINT_CHANGED" -gt 0 ]; then
+    printf '%d unit(s) would be repointed (dry run)\n' "$REPOINT_CHANGED"
+  fi
+
+  exit "$REPOINT_FAILED"
+}
+
 cmd_start() {
   local name
   name="$(unit_name "$1")"
@@ -113,6 +305,12 @@ TAB=$'\t'
 # flips STATUS_FAILED so cmd_status can exit non-zero after rendering.
 STATUS_FAILED=0
 STATUS_LOAD="" STATUS_STATE="" STATUS_LAST="" STATUS_NEXT="" STATUS_INSTALL=""
+
+# Set by cmd_repoint for the unit being rewritten: REPOINT_CHANGED counts rewritten
+# units (a non-zero count is what triggers the single trailing daemon-reload), and
+# REPOINT_FAILED flips on a write failure so cmd_repoint can exit 1 after finishing.
+REPOINT_CHANGED=0
+REPOINT_FAILED=0
 
 # status_prop <props> <key>: the value of `key=` in `systemctl show` output ("" if absent)
 status_prop() {
@@ -321,6 +519,10 @@ case "${1:-}" in
     shift
     cmd_status "$@"
     ;;
+  repoint)
+    shift
+    cmd_repoint "$@"
+    ;;
   logs)
     [ -z "${2:-}" ] && {
       printf 'error: logs requires a script name\n' >&2
@@ -329,7 +531,7 @@ case "${1:-}" in
     cmd_logs "$2"
     ;;
   *)
-    printf 'Usage: shai-supervise install|uninstall|start|stop|status|logs [script] [options]\n' >&2
+    printf 'Usage: shai-supervise install|uninstall|start|stop|repoint|status|logs [script] [options]\n' >&2
     exit 2
     ;;
 esac
