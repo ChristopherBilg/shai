@@ -515,7 +515,8 @@
           ],
           "flags": {
             "--all": {
-              "description": "Repoint every installed shai-*.service unit"
+              "description": "Repoint every installed shai-*.service unit",
+              "excludes_positional": true
             },
             "--dry-run": {
               "description": "Print the diff without writing"

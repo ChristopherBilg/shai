@@ -568,16 +568,19 @@ _shai_supervise() {
         COMPREPLY=( $(compgen -W "--all --dry-run" -- "$cur") )
         return
       fi
-      local _shai_pos=0 _shai_val=0 _shai_i
+      local _shai_nopos=0 _shai_pos=0 _shai_val=0 _shai_i
       for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
         case "${COMP_WORDS[_shai_i]}" in
+          --all)
+            _shai_nopos=1
+            ;;
           -*) : ;;
           *)
             _shai_pos=$((_shai_pos + 1))
             ;;
         esac
       done
-      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_nopos" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi
