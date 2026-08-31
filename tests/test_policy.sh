@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_policy.sh — unit tests for the permission gate policy matcher
-# Covers: check_policy in shai-dispatch — policy file parsing, rule matching, fallbacks, overlay
+# Covers: check_policy (lib/policy.sh, sourced by shai-dispatch) — policy file parsing, rule
+#         matching, fallbacks, overlay
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -39,12 +40,14 @@ mapfile -t READ_ONLY_TOOLS < <(
 # Every test below passes an explicit temp-dir SHAI_HOME, so no test ever touches a real
 # ~/.shai or hits the network.
 extract_functions() {
-  # shai-dispatch sources lib/read-only.sh and lib/failure.sh via its own $DIR, which under
-  # eval resolves to this test's directory (tests/) — rewrite both source paths to the real
-  # repo lib so the eval'd check_policy can use the shared exclusion list (see #118) and the
-  # failure-store instrumentation (lib/failure.sh) without resolving tests/lib/.
+  # shai-dispatch sources lib/read-only.sh, lib/policy.sh and lib/failure.sh via its own $DIR,
+  # which under eval resolves to this test's directory (tests/) — rewrite the source paths to
+  # the real repo lib so the eval'd check_policy (now defined in lib/policy.sh, see #343) can
+  # use the shared exclusion list (see #118) and the failure-store instrumentation
+  # (lib/failure.sh) without resolving tests/lib/.
   sed -n '1,/^tool_calls=/p' "$DIR/shai-dispatch" | head -n -1 |
     sed -e "s|\$DIR/lib/read-only.sh|$DIR/lib/read-only.sh|g" \
+      -e "s|\$DIR/lib/policy.sh|$DIR/lib/policy.sh|g" \
       -e "s|\$DIR/lib/failure.sh|$DIR/lib/failure.sh|g"
 }
 

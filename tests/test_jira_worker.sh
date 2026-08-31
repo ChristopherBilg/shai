@@ -299,6 +299,7 @@ run_jira_worker_check_policy() {
   # scope, so eval just the function definitions (up to the loop's tool_calls counter).
   eval "$(sed -n '1,/^tool_calls=/p' "$DIR/shai-dispatch" | head -n -1 |
     sed -e "s|\$DIR/lib/read-only.sh|$DIR/lib/read-only.sh|g" \
+      -e "s|\$DIR/lib/policy.sh|$DIR/lib/policy.sh|g" \
       -e "s|\$DIR/lib/failure.sh|$DIR/lib/failure.sh|g")"
   check_policy "$tool_name" "$tool_input"
 }

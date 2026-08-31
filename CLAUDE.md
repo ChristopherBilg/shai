@@ -303,8 +303,9 @@ The scripts:
   no `$SHAI_HOME/policy.json` rule matches the tool, and it's what the retry guard checks — when
   `SHAI_RETRY_ACTIVE` is set, non-read-only tools are skipped with an error instead of re-running
   a write. **Exit 1 if any tool ran** (signals `shai-repl`/`shai-loop` to re-evaluate), exit 0
-  otherwise, and **exit 3 on dispatch failure** — any other failure (a missing `lib/read-only.sh`,
-  a `set -e` abort) is normalized to 3 via a pre-flight check and an `ERR` trap, so the re-eval
+  otherwise, and **exit 3 on dispatch failure** — any other failure (a missing `lib/read-only.sh`
+  or `lib/policy.sh`, a `set -e` abort) is normalized to 3 via pre-flight checks and an `ERR`
+  trap, so the re-eval
   loop can tell "a tool ran" (1) from "dispatch died" (3) instead of re-evaluating forever (see
   #257). Tool
   output is capped at `MAX_BYTES=32000` bytes: under the cap it passes through byte-identical,
@@ -808,8 +809,8 @@ are automatically queued for resolution. Install via
   non-rightmost exit status out of a pipeline — without it the loop silently ends after one pass.
   Do not remove `pipefail` and do not reorder those pipelines. The one-bit signal must stay
   one-bit: exit 1 is reserved for "a tool ran", and every other non-zero exit means "dispatch
-  failed". `shai-dispatch` guarantees this with a pre-flight check on `lib/read-only.sh` and an
-  `ERR` trap that normalizes any `set -e` abort to exit 3; `shai-loop` treats any exit other than
+  failed". `shai-dispatch` guarantees this with pre-flight checks on `lib/read-only.sh` and
+  `lib/policy.sh`, and an `ERR` trap that normalizes any `set -e` abort to exit 3; `shai-loop` treats any exit other than
   0/1 as terminal (stops with an error event) and additionally bounds the loop with
   `MAX_DISPATCH_ROUNDS`. Do not add a new non-zero exit path to `shai-dispatch` that is not 3 —
   an exit 1 that is not "a tool ran" makes the loop re-evaluate up to the `MAX_DISPATCH_ROUNDS`
