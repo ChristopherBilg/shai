@@ -1,38 +1,48 @@
 #!/bin/bash
-# shai-config — edit and test shai configuration: policy rules (the policy half, see #345)
-# Usage: shai-config policy list [--json]
+# shai-config — edit and test shai configuration: policy rules and CI checks
+# Usage: shai-config policy list|add|remove|test / ci list|add|remove [options]
 #        shai-config policy add --tool NAME --action ACTION [--args K=V ...] [--before N] [--force]
-#        shai-config policy remove <index>
-#        shai-config policy test --tool NAME --input JSON [--overlay PATH] [--json]
-# Reads: $SHAI_HOME/policy.json (list/add/remove/test); $SHAI_POLICY_OVERLAY (list/test, the
-#        same environment shai-dispatch consults); lib/policy.sh (check_policy, the single
-#        source of verdicts)
-# Writes: $SHAI_HOME/policy.json (add/remove only, via a temp file + mv — never a partial
-#         write, never a replacement of a corrupt file)
-# Exit: 0 on success; 1 on validation failure (shadow refusal, corrupt policy, unknown index,
-#        invalid values); 2 on usage error (unknown noun/verb/flag)
+#        shai-config ci add --name NAME --command CMD [--timeout SECONDS] [--env K=V ...] [--repo KEY]
+# Reads: $SHAI_HOME/policy.json; $SHAI_POLICY_OVERLAY; lib/policy.sh (check_policy, the single
+#        source of verdicts); $SHAI_HOME/ci.json; lib/git-remote.sh (normalize_url, the repo-key
+#        normalizer tools/ci/run.sh reads ci.json by — shared, never reimplemented); the cwd's
+#        origin remote (ci list/add/remove, unless --repo overrides)
+# Writes: $SHAI_HOME/policy.json (policy add/remove); $SHAI_HOME/ci.json (ci add/remove); each
+#         via a temp file + mv — never a partial write, never a replacement of a corrupt file
+# Exit: 0 on success; 1 on validation failure (shadow refusal, corrupt policy or ci config,
+#        unknown index or check, invalid values, no git remote); 2 on usage error (unknown
+#        noun/verb/flag)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 POLICY_FILE="$STATE_DIR/policy.json"
+CONFIG_FILE="$STATE_DIR/ci.json"
 
 # `policy test` verdicts must come from the same function shai-dispatch calls
-# (lib/policy.sh), never a reimplementation — one function, two callers. lib/policy.sh runs
-# `set -uo pipefail` when sourced so it never tightens a caller's options; this script's
-# contract is plain `set -euo pipefail`, so re-apply it right after the source.
+# (lib/policy.sh), never a reimplementation — one function, two callers. The ci half
+# sources lib/git-remote.sh for the same reason: the repo key is computed by the same
+# normalize_url tools/ci/run.sh looks ci.json entries up with, so a key written here is
+# provably the key read there. Both libs run `set -uo pipefail` when sourced so they never
+# tighten a caller's options; this script's contract is plain `set -euo pipefail`, so
+# re-apply it right after the sources.
 # shellcheck source=lib/policy.sh
 source "$DIR/lib/policy.sh"
+# shellcheck source=lib/git-remote.sh
+source "$DIR/lib/git-remote.sh"
 set -euo pipefail
 
 # usage_error: print the usage block to stderr and exit 2 (usage error — unknown
 # noun/verb/flag, or a missing required option; invalid values exit 1 instead).
 usage_error() {
-  printf 'usage: shai-config <policy> <list|add|remove|test> [options]\n' >&2
+  printf 'usage: shai-config <policy|ci> <command> [options]\n' >&2
   printf '       shai-config policy list [--json]\n' >&2
   printf '       shai-config policy add --tool NAME --action ACTION [--args K=V ...] [--before N] [--force]\n' >&2
   printf '       shai-config policy remove <index>\n' >&2
   printf '       shai-config policy test --tool NAME --input JSON [--overlay PATH] [--json]\n' >&2
+  printf '       shai-config ci list [--repo KEY] [--json]\n' >&2
+  printf '       shai-config ci add --name NAME --command CMD [--timeout SECONDS] [--env K=V ...] [--repo KEY]\n' >&2
+  printf '       shai-config ci remove <name> [--repo KEY]\n' >&2
   exit 2
 }
 
@@ -544,6 +554,350 @@ cmd_test() {
   fi
 }
 
+# --- ci half (issue #346) ---
+# The ci commands edit $SHAI_HOME/ci.json — the config the ci tool (tools/ci/run.sh)
+# refuses to run anything without, and which nothing else creates. The repo key under
+# .repos is always computed by normalize_url from lib/git-remote.sh, the same function the
+# ci tool reads entries by, so a hand-typed --repo cannot create a mis-keyed dead entry.
+# _completions_ignore: --repo --name --command --timeout --env (the ci subcommand's
+# completions.json entry lands in a separate issue; declared there, not silently ignored)
+
+# load_ci <path>: the ci config's JSON (compact, one line) on stdout. Exit 1 with a
+# shai-doctor pointer on stderr when the file is not a JSON object whose .repos map holds
+# {checks: object} entries — the corrupt-ci.json abort (issue #346): parse before writing,
+# and never replace a corrupt file with a fresh {"version":"1.0","repos":{}}, because that
+# destroys the user's checks in response to the very failure this tool exists to prevent.
+load_ci() {
+  local path="$1" parsed
+  if [ ! -f "$path" ]; then
+    printf 'error: no CI config found at %s\n' "$path" >&2
+    return 1
+  fi
+  if ! parsed=$(jq -c '
+      if type == "object" and ((.repos // {}) | type) == "object"
+         and all((.repos // {}) | .[]; type == "object" and (.checks | type) == "object")
+      then .
+      else error("ci config must be a JSON object with a .repos map of {checks: object} entries")
+      end' "$path" 2>/dev/null); then
+    printf 'error: %s is not a valid ci config (must be a JSON object with a .repos map of {checks: object} entries)\n' "$path" >&2
+    printf 'error: run shai-doctor to diagnose the ci config — nothing was changed\n' >&2
+    return 1
+  fi
+  printf '%s' "$parsed"
+}
+
+# write_ci <json>: atomically replace $STATE_DIR/ci.json — temp file + mv, the same
+# pattern as write_policy (see its comment): a failed write never leaves a truncated config
+# behind and never destroys the existing one, and an existing file's permission bits are
+# preserved across the replacement. A brand-new file keeps the temp file's 0600 (the
+# conservative default for a file the user never created).
+write_ci() {
+  local tmp mode=""
+  if [ -f "$CONFIG_FILE" ]; then
+    mode=$(file_mode "$CONFIG_FILE")
+  fi
+  if ! mkdir -p "$STATE_DIR"; then
+    printf 'error: cannot create state directory %s\n' "$STATE_DIR" >&2
+    return 1
+  fi
+  if ! tmp=$(mktemp "$STATE_DIR/.ci.json.XXXXXX"); then
+    printf 'error: cannot write %s\n' "$CONFIG_FILE" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$1" >"$tmp"; then
+    rm -f "$tmp"
+    printf 'error: cannot write %s\n' "$CONFIG_FILE" >&2
+    return 1
+  fi
+  if [ -n "$mode" ] && ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp"
+    printf 'error: cannot write %s\n' "$CONFIG_FILE" >&2
+    return 1
+  fi
+  if ! mv "$tmp" "$CONFIG_FILE"; then
+    rm -f "$tmp"
+    printf 'error: cannot write %s\n' "$CONFIG_FILE" >&2
+    return 1
+  fi
+}
+
+# resolve_repo_key [override]: echo the normalized repo key, then its provenance label
+# ("from origin" / "normalized from --repo"), one per line. With no override the key comes
+# from the cwd's origin remote — both paths through normalize_url, so every key printed or
+# written here is the shape the ci tool looks up. Exit 1 when there is no override and no
+# origin remote, naming both ways to fix that (the same wording tools/ci/run.sh uses).
+resolve_repo_key() {
+  local override="${1:-}" key remote
+  if [ -n "$override" ]; then
+    key=$(normalize_url "$override")
+    printf '%s\n' "$key"
+    printf 'normalized from --repo\n'
+    return 0
+  fi
+  if ! remote=$(git remote get-url origin 2>/dev/null); then
+    printf 'error: not in a git repository or no '\''origin'\'' remote\n' >&2
+    printf 'error: pass --repo KEY to target another repository, or add an '\''origin'\'' remote\n' >&2
+    return 1
+  fi
+  key=$(normalize_url "$remote")
+  printf '%s\n' "$key"
+  printf 'from origin\n'
+}
+
+# cmd_ci_list: read-only view of one repo's checks. The key line names the resolved key —
+# the line that makes a mis-keyed existing entry diagnosable instead of "not found".
+cmd_ci_list() {
+  local JSON=false REPO=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) JSON=true ;;
+      --repo)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --repo requires a key\n' >&2
+          exit 2
+        fi
+        REPO="$1"
+        ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        usage_error
+        ;;
+    esac
+    shift
+  done
+
+  local out key provenance ci repo_cfg
+  out=$(resolve_repo_key "$REPO") || exit 1
+  key="${out%%$'\n'*}"
+  provenance="${out#*$'\n'}"
+  ci=$(load_ci "$CONFIG_FILE") || exit 1
+  repo_cfg=$(printf '%s' "$ci" | jq -c --arg key "$key" '.repos[$key] // empty')
+  if [ -z "$repo_cfg" ]; then
+    printf 'error: repository "%s" not found in %s\n' "$key" "$CONFIG_FILE" >&2
+    exit 1
+  fi
+
+  if [ "$JSON" = true ]; then
+    printf '%s' "$repo_cfg" | jq -c --arg key "$key" --arg file "$CONFIG_FILE" \
+      '{repo: $key, file: $file, checks: .checks}'
+    return 0
+  fi
+
+  printf 'repo: %s  (%s)\n' "$key" "$provenance"
+  printf '%s' "$repo_cfg" | jq -r '
+    .checks
+    | to_entries
+    | if length == 0 then "  (none configured)"
+      else (.[] | "  \(.key): \(.value.command? // "<no command configured>")")
+      end'
+}
+
+# cmd_ci_add: write one check under the resolved repo key, creating ci.json (with
+# "version": "1.0", no _comment) when absent. Refuses — writing nothing — when the check
+# name already exists: remove + add covers edits, and a silent overwrite would clobber a
+# hand-tuned entry. --env pairs build the per-check env object the ci tool re-injects
+# literally into the check's scrubbed environment.
+cmd_ci_add() {
+  local NAME="" COMMAND="" TIMEOUT="" REPO=""
+  local -a ENV_PAIRS=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --name)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --name requires a name\n' >&2
+          exit 2
+        fi
+        NAME="$1"
+        ;;
+      --command)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --command requires a command\n' >&2
+          exit 2
+        fi
+        COMMAND="$1"
+        ;;
+      --timeout)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --timeout requires seconds\n' >&2
+          exit 2
+        fi
+        TIMEOUT="$1"
+        ;;
+      --env)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --env requires K=V\n' >&2
+          exit 2
+        fi
+        ENV_PAIRS+=("$1")
+        ;;
+      --repo)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --repo requires a key\n' >&2
+          exit 2
+        fi
+        REPO="$1"
+        ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        usage_error
+        ;;
+    esac
+    shift
+  done
+
+  if [ -z "$NAME" ]; then
+    printf 'error: --name is required\n' >&2
+    usage_error
+  fi
+  if [ -z "$COMMAND" ]; then
+    printf 'error: --command is required\n' >&2
+    usage_error
+  fi
+  if [ -n "$TIMEOUT" ] && ! [[ "$TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'error: --timeout must be a positive integer in seconds (got "%s")\n' "$TIMEOUT" >&2
+    exit 1
+  fi
+  local pair
+  for pair in "${ENV_PAIRS[@]}"; do
+    case "$pair" in
+      ?*=*) ;;
+      *)
+        printf 'error: --env expects K=V with a non-empty key (got "%s")\n' "$pair" >&2
+        exit 1
+        ;;
+    esac
+  done
+  # from_entries silently keeps the last of duplicate keys, so `--env k=A --env k=B`
+  # would discard A and write only B — refuse the pair instead of letting a value vanish.
+  local i j
+  for ((i = 0; i < ${#ENV_PAIRS[@]}; i++)); do
+    for ((j = i + 1; j < ${#ENV_PAIRS[@]}; j++)); do
+      if [ "${ENV_PAIRS[i]%%=*}" = "${ENV_PAIRS[j]%%=*}" ]; then
+        printf 'error: duplicate --env key "%s" (each key may appear once)\n' "${ENV_PAIRS[i]%%=*}" >&2
+        exit 1
+      fi
+    done
+  done
+
+  local out key provenance
+  out=$(resolve_repo_key "$REPO") || exit 1
+  key="${out%%$'\n'*}"
+  provenance="${out#*$'\n'}"
+
+  # Parse before writing: a corrupt existing file aborts here, byte-identical. An absent
+  # file starts fresh with "version": "1.0" — the _comment from ci.json.example documents
+  # the example, it does not belong in a written config.
+  local ci
+  if [ -f "$CONFIG_FILE" ]; then
+    ci=$(load_ci "$CONFIG_FILE") || exit 1
+  else
+    ci='{"version":"1.0","repos":{}}'
+  fi
+
+  if printf '%s' "$ci" | jq -e --arg key "$key" --arg name "$NAME" \
+    '.repos[$key].checks | has($name)' >/dev/null 2>&1; then
+    printf 'error: check "%s" already exists for %s\n' "$NAME" "$key" >&2
+    printf 'error: remove it first: shai-config ci remove %s --repo %s\n' "$NAME" "$key" >&2
+    exit 1
+  fi
+
+  # The check object: command first (matching ci.json.example), timeout only when given
+  # (the ci tool defaults it to 120), env from the --env pairs with verbatim values.
+  local check
+  check=$(jq -nc --arg command "$COMMAND" --argjson timeout "${TIMEOUT:-null}" \
+    '{command: $command}
+     + (if $timeout != null then {timeout: $timeout} else {} end)
+     + (if ($ARGS.positional | length) > 0
+        then {env: ($ARGS.positional
+                    | map({key: (split("=")[0]), value: (split("=")[1:] | join("="))})
+                    | from_entries)}
+        else {} end)' \
+    --args "${ENV_PAIRS[@]}")
+
+  local new_ci
+  new_ci=$(printf '%s' "$ci" | jq -c --arg key "$key" --arg name "$NAME" --argjson check "$check" \
+    '.repos[$key] = ((.repos[$key] // {checks: {}}) | .checks[$name] = $check)')
+  write_ci "$new_ci" || exit 1
+  # The resolved key line is deliberate — it is the one line that makes a mis-keyed entry
+  # impossible to create unnoticed.
+  printf 'repo: %s  (%s)\n' "$key" "$provenance"
+  printf 'added check "%s"\n' "$NAME"
+}
+
+# cmd_ci_remove: delete one check from the repo's checks map. Never removes the repo entry
+# itself — an empty "checks": {} is a valid state the ci tool reports as "(none
+# configured)". An unknown check name lists the available names instead of a bare refusal.
+cmd_ci_remove() {
+  if [ $# -lt 1 ]; then
+    printf 'usage: shai-config ci remove <name> [--repo KEY]\n' >&2
+    exit 2
+  fi
+  local name="$1"
+  shift
+  case "$name" in
+    -*)
+      printf 'error: unknown option: %s\n' "$name" >&2
+      exit 2
+      ;;
+  esac
+  local REPO=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --repo requires a key\n' >&2
+          exit 2
+        fi
+        REPO="$1"
+        ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        usage_error
+        ;;
+    esac
+    shift
+  done
+
+  local out key provenance ci repo_cfg
+  out=$(resolve_repo_key "$REPO") || exit 1
+  key="${out%%$'\n'*}"
+  provenance="${out#*$'\n'}"
+  ci=$(load_ci "$CONFIG_FILE") || exit 1
+  repo_cfg=$(printf '%s' "$ci" | jq -c --arg key "$key" '.repos[$key] // empty')
+  if [ -z "$repo_cfg" ]; then
+    printf 'error: repository "%s" not found in %s\n' "$key" "$CONFIG_FILE" >&2
+    exit 1
+  fi
+
+  if ! printf '%s' "$ci" | jq -e --arg key "$key" --arg name "$name" \
+    '.repos[$key].checks | has($name)' >/dev/null 2>&1; then
+    printf 'error: no check "%s" for %s\n' "$name" "$key" >&2
+    printf 'available checks:\n' >&2
+    local names
+    names=$(printf '%s' "$ci" | jq -r --arg key "$key" '.repos[$key].checks | keys[]')
+    if [ -n "$names" ]; then
+      printf '%s\n' "$names" | sed 's/^/  /' >&2
+    else
+      printf '  (none configured)\n' >&2
+    fi
+    exit 1
+  fi
+
+  local new_ci
+  new_ci=$(printf '%s' "$ci" | jq -c --arg key "$key" --arg name "$name" \
+    'del(.repos[$key].checks[$name])')
+  write_ci "$new_ci" || exit 1
+  printf 'repo: %s  (%s)\n' "$key" "$provenance"
+  printf 'removed check "%s"\n' "$name"
+}
+
 NOUN="${1:-}"
 VERB="${2:-}"
 if [ $# -ge 2 ]; then
@@ -569,11 +923,26 @@ case "$NOUN" in
         ;;
     esac
     ;;
+  ci)
+    case "$VERB" in
+      list) cmd_ci_list "$@" ;;
+      add) cmd_ci_add "$@" ;;
+      remove) cmd_ci_remove "$@" ;;
+      "")
+        printf 'usage: shai-config ci <list|add|remove> [options]\n' >&2
+        exit 2
+        ;;
+      *)
+        printf 'error: unknown ci command: %s\n' "$VERB" >&2
+        usage_error
+        ;;
+    esac
+    ;;
   "")
     usage_error
     ;;
   *)
-    printf 'error: unknown noun: %s (expected "policy")\n' "$NOUN" >&2
+    printf 'error: unknown noun: %s (expected "policy" or "ci")\n' "$NOUN" >&2
     usage_error
     ;;
 esac
