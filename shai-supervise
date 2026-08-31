@@ -127,7 +127,7 @@ repoint_suffix() {
     workflows/*/run.sh)
       name="${suffix#workflows/}"
       name="${name%/run.sh}"
-      if [ -z "$name" ] || [[ "$name" == *..* ]]; then
+      if [ -z "$name" ] || [[ "$name" == *..* ]] || [[ "$name" == */* ]]; then
         return 1
       fi
       ;;
@@ -218,9 +218,17 @@ repoint_unit() {
 
 # cmd_repoint: migrate units whose ExecStart bakes in a versioned path to $DIR (which,
 # when invoked through an install's `current` symlink, is itself version-independent).
+# Invocation from a versioned install directory is refused outright: it would rewrite
+# ExecStart to another versioned path and re-bake the bug class repoint removes.
 # Unlike re-running `install`, this preserves a customized OnUnitActiveSec and the
 # Environment=DEEPSEEK_API_KEY= line, and needs no exported API key.
 cmd_repoint() {
+  case "$DIR" in
+    */shai/v[0-9]*)
+      printf 'error: repoint must run through the current symlink (e.g. the shai-supervise wrapper), not from a versioned install directory: %s\n' "$DIR" >&2
+      exit 1
+      ;;
+  esac
   local script="" all=false dry_run=false
   while [ $# -gt 0 ]; do
     case "$1" in

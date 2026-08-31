@@ -2,7 +2,7 @@
 # test_supervise.sh — unit tests for shai-supervise
 # Covers: shai-supervise — unit file generation, naming, validation, subcommand dispatch,
 #   status INSTALL column (stale/ok detection), JSON install key, repoint (ExecStart
-#   rewrite through current, skip/warn cases, dry-run, usage errors)
+#   rewrite through current, skip/warn cases, dry-run, usage errors, versioned-dir refusal)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -568,11 +568,34 @@ Environment=DEEPSEEK_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 chmod 600 "$TMP/shai-heartbeat.service"
+# A workflow segment containing a slash (workflows/a/b/run.sh) is a hand-edit
+# cmd_install's unit_name could never have written (it rejects /), so it must be
+# warned about and skipped too — rewriting it would produce a nonexistent
+# $DIR/workflows/a/b/run.sh. Mutation-checked: without the slash check the old
+# ..-only guard accepts the shape and rewrites the line to .../current/..., which
+# fails the byte-exact ExecStart assertion below.
+mkdir -p "$REPOINT_ROOT/v2026.07.01/workflows/a/b"
+printf '#!/bin/bash\necho nested\n' >"$REPOINT_ROOT/v2026.07.01/workflows/a/b/run.sh"
+chmod +x "$REPOINT_ROOT/v2026.07.01/workflows/a/b/run.sh"
+cat >"$TMP/shai-nested-path.service" <<EOF
+[Unit]
+Description=shai shai-nested-path workflow
+
+[Service]
+Type=oneshot
+ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/a/b/run.sh
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+chmod 600 "$TMP/shai-nested-path.service"
 OUT=$("$SUPERVISE" repoint --all 2>&1)
 assert_contains "$OUT" "unrecognized ExecStart shape (skipped)" \
   "repoint: unrecognized shape warned and skipped"
 assert_contains "$(cat "$TMP/shai-review-dispatcher.service")" "ExecStart=/usr/bin/something-else" \
   "repoint: unrecognized shape is not rewritten"
+assert_contains "$(cat "$TMP/shai-nested-path.service")" \
+  "ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/a/b/run.sh" \
+  "repoint: a workflow segment with a slash is not rewritten"
 assert_contains "$(cat "$TMP/shai-heartbeat.service")" \
   "ExecStart=$REPOINT_ROOT/current/workflows/heartbeat/run.sh" \
   "repoint: the recognized-shape unit in the same run is rewritten (positive control)"
@@ -593,6 +616,36 @@ assert_exit 2 "repoint: unknown option is a usage error" -- "$SUPERVISE" repoint
   exit $?
 ) && RC=0 || RC=$?
 assert_eq "$RC" "0" "repoint: runs without DEEPSEEK_API_KEY"
+
+# --- repoint: refused from a versioned install directory ---
+# The rewrite is version-independent only when $DIR is the install's `current`
+# symlink; a versioned binary invoked directly (e.g. .../shai/v2026.09.01/
+# shai-supervise) would rewrite ExecStart to another versioned path and re-bake
+# the bug class repoint removes, so it must refuse instead. Mutation-checked:
+# without the guard this command would rewrite shai-versioned-guard to
+# $REPOINT_ROOT/shai/v2026.09.01/shai-print, and the ExecStart assertion below
+# would go red.
+mkdir -p "$REPOINT_ROOT/shai"
+ln -s "$DIR" "$REPOINT_ROOT/shai/v2026.09.01"
+cat >"$TMP/shai-versioned-guard.service" <<EOF
+[Unit]
+Description=shai shai-versioned-guard workflow
+
+[Service]
+Type=oneshot
+ExecStart=$REPOINT_ROOT/v2026.07.01/shai-print
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+chmod 600 "$TMP/shai-versioned-guard.service"
+OUT=$("$REPOINT_ROOT/shai/v2026.09.01/shai-supervise" repoint shai-versioned-guard 2>&1)
+RC=$?
+assert_eq "$RC" "1" "repoint: invoked from a versioned install dir exits 1"
+assert_contains "$OUT" "must run through the current symlink" \
+  "repoint: the refusal names the current symlink"
+assert_contains "$(cat "$TMP/shai-versioned-guard.service")" \
+  "ExecStart=$REPOINT_ROOT/v2026.07.01/shai-print" \
+  "repoint: the refused run rewrites nothing (mutation control)"
 
 # --- repoint: a named unit with no unit file warns and exits 0 ---
 OUT=$("$SUPERVISE" repoint shai-nosuch 2>&1)
