@@ -20,6 +20,10 @@ export DEEPSEEK_API_KEY=sk-...        # required at runtime
 ./shai-completions generate zsh|bash   # print a completion script to stdout
 ./shai-completions install zsh|bash    # write it to the standard user-local location
 
+# Manage policy and CI configuration (validated writes, see the script list below):
+./shai-config policy list|add|remove|test  # permission rules in $SHAI_HOME/policy.json
+./shai-config ci list|add|remove           # CI check definitions in $SHAI_HOME/ci.json
+
 # Install from a release (requires gh CLI, authenticated):
 gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
 export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base64 -d | bash
@@ -284,6 +288,31 @@ The scripts:
   `./shai-completions generate zsh > completions/_shai` and
   `./shai-completions generate bash > completions/shai.bash`, then run `./shai-completions check`.
   Exit 0 on success; 1 on generation, write, or check failure; 2 on usage errors.
+- **`shai-config policy list|add|remove|test` / `shai-config ci list|add|remove`**
+  (`shai-config:1`) — validated writes to the two config files nothing else edits:
+  `$SHAI_HOME/policy.json` (permission rules) and `$SHAI_HOME/ci.json` (CI check definitions).
+  `policy list [--json]` renders the effective stack — overlay rules first, then base, in
+  consultation order — each row with its per-file 1-based index (`remove` consumes that index;
+  a FILE column appears only when an overlay is active); `policy add --tool NAME --action
+  allow|prompt|deny [--args K=V ...] [--before N] [--force]` appends (or inserts at 0-based
+  position N) and refuses — writing nothing — when an earlier rule for the same tool has no
+  `args` (or an empty args object) and therefore decides every call to it first-match-wins,
+  so the new rule could never fire; `--before N` and `--force` are the escapes.
+  `policy remove <index>` deletes one rule; `policy test --tool NAME --input JSON
+  [--overlay PATH] [--json]` dry-runs the gate hypothetically by calling the same
+  `check_policy` in `lib/policy.sh` that `shai-dispatch` uses, reading the full overlay+base
+  stack, and prints the `verdict`/`reason` pair (plus the matched rule object). The `ci`
+  half: `ci list [--repo KEY] [--json]`, `ci add --name NAME --command CMD [--timeout
+  SECONDS] [--env K=V ...] [--repo KEY]`, and `ci remove <name> [--repo KEY]`; the repo key
+  is always computed by `normalize_url` from `lib/git-remote.sh` — the same function
+  `tools/ci/run.sh` looks `ci.json` entries up by — so a hand-typed `--repo` cannot create a
+  mis-keyed dead entry. Writes target the base files only: overlays are never written, so
+  this CLI structurally cannot author a rule that overrides an overlay `deny`. Every write
+  parses the existing file first and aborts byte-identical on a corrupt config (with a
+  `shai-doctor` pointer) rather than replacing it, and lands via temp file + mv preserving
+  the file's permission bits. Exit 0 on success; 1 on validation failure (shadow refusal,
+  corrupt policy or ci config, unknown index or check, invalid values, no origin remote);
+  2 on usage error (unknown noun/verb/flag).
 - **`shai-tools [tools-dir]`** (`shai-tools:1`) — scans `tools/*/tool.json` (default:
   `$DIR/tools`) and validates each plugin: `tool.json` is valid JSON with `name`, `description`,
   and `parameters`; `name` matches its directory name; `run.sh` exists and is executable; and
@@ -553,8 +582,11 @@ execution from repo content.
 
 **The `ci` tool** — the workflow's local verification loop (see `issue_worker`, `pr_reviewer`,
 `review_resolver`). `action: list` prints the configured checks, `action: run` executes one via
-`timeout … bash -c` in the repo (or in the `cwd` the tool was given). **Environment isolation is
-part of the contract**: a check runs project code, so it must not observe the agent's own state.
+`timeout … bash -c` in the repo (or in the `cwd` the tool was given). The repo key under
+`.repos` is always computed by `normalize_url` from `lib/git-remote.sh` — the same function
+`shai-config ci` writes entries with — so a written key and the lookup key agree by
+construction, and a hand-typed `--repo` cannot create a mis-keyed dead entry. **Environment
+isolation is part of the contract**: a check runs project code, so it must not observe the agent's own state.
 Every exported `SHAI_*` variable (`SHAI_HOME`, `SHAI_RUN_ID`, `SHAI_SPAN_ID`,
 `SHAI_PARENT_SPAN_ID`, `SHAI_POLICY_OVERLAY`, `SHAI_TOOLS_DIR`, `SHAI_RETRY_ACTIVE`,
 `SHAI_SESSION_ID`, …) and the API keys (`DEEPSEEK_API_KEY`, `ANTHROPIC_API_KEY`) are scrubbed
@@ -588,7 +620,10 @@ Every decision is logged to stderr as `policy: <action> <tool> (<reason>)` — t
 the matched rule (`rule:<file>:<idx>`), the deciding `default`, the read-only fallback, or
 "no rule matched" — so a grant outside every rule is never silent, and identical calls always
 produce the identical verdict (the rule lookup selects its first match inside jq, so a
-multi-rule policy can never lose a match to a broken pipe, see #294).
+multi-rule policy can never lose a match to a broken pipe, see #294). The matcher itself is
+`check_policy` in `lib/policy.sh`, shared by `shai-dispatch` (every real call) and
+`shai-config policy test` (the hypothetical dry-run) — one function, two callers, so a tested
+verdict is by construction the verdict a real call would get.
 
 **Default exclusions for auto-allowed read-only tools** (decision from #118) — the read-only
 tools stay filesystem-wide (no root confinement: that boundary belongs to `policy.json` arg
