@@ -2,13 +2,16 @@
 # shai-supervise — manage shai workflows under systemd --user
 # Usage: shai-supervise install|uninstall|start|stop|logs <script> [--interval <timespan>]
 #        shai-supervise status [script] [--json]
-# Reads: DEEPSEEK_API_KEY, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows
+# Reads: DEEPSEEK_API_KEY, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows;
+#        installed unit files from $SHAI_UNIT_DIR (status)
 # Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall)
 # Exit: 0 on success; 1 on validation error or systemctl failure; 2 on usage error
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 UNIT_DIR="${SHAI_UNIT_DIR:-$HOME/.config/systemd/user}"
+# shellcheck source=lib/units.sh
+source "$DIR/lib/units.sh"
 
 # unit_name <script>: strip workflows/ prefix, /run.sh suffix, and .sh suffix,
 # validate, strip leading shai- if present, prepend shai-
@@ -109,7 +112,7 @@ TAB=$'\t'
 # Set by status_query for the unit it was called with; a failing `systemctl show`
 # flips STATUS_FAILED so cmd_status can exit non-zero after rendering.
 STATUS_FAILED=0
-STATUS_LOAD="" STATUS_STATE="" STATUS_LAST="" STATUS_NEXT=""
+STATUS_LOAD="" STATUS_STATE="" STATUS_LAST="" STATUS_NEXT="" STATUS_INSTALL=""
 
 # status_prop <props> <key>: the value of `key=` in `systemctl show` output ("" if absent)
 status_prop() {
@@ -159,9 +162,9 @@ status_next() {
   fi
 }
 
-# status_query <unit>: fill STATUS_LOAD/STATUS_STATE/STATUS_LAST/STATUS_NEXT from a
-# single `systemctl show` call. Both renderers go through this so the table and the
-# JSON output cannot drift apart.
+# status_query <unit>: fill STATUS_LOAD/STATUS_STATE/STATUS_LAST/STATUS_NEXT/STATUS_INSTALL
+# from a single `systemctl show` call plus a read of the installed .service file. Both
+# renderers go through this so the table and the JSON output cannot drift apart.
 status_query() {
   local unit="$1" props
   if ! props=$(systemctl --user show -p LoadState,ActiveState,LastTriggerUSec,NextElapseUSecRealtime,NextElapseUSecMonotonic "$unit.timer" 2>/dev/null); then
@@ -173,6 +176,9 @@ status_query() {
   STATUS_STATE=$(status_prop "$props" "ActiveState")
   STATUS_LAST=$(status_timestamp "$(status_prop "$props" "LastTriggerUSec")")
   STATUS_NEXT=$(status_next "$(status_prop "$props" "NextElapseUSecRealtime")" "$(status_prop "$props" "NextElapseUSecMonotonic")")
+  # INSTALL is a file read (lib/units.sh), not a systemctl call: a stale unit is not a
+  # query failure, so it must not flip STATUS_FAILED.
+  STATUS_INSTALL=$(unit_install_state "$UNIT_DIR" "$DIR" "$unit")
   if [ "$STATUS_LOAD" = "not-found" ]; then STATUS_STATE="not-found"; fi
 }
 
@@ -224,26 +230,28 @@ cmd_status() {
       printf 'error: %s.timer not found (not installed?)\n' "$unit" >&2
       exit 1
     fi
-    rows+=("$unit$TAB${STATUS_STATE:---}$TAB${STATUS_LAST:---}$TAB${STATUS_NEXT:---}")
+    rows+=("$unit$TAB${STATUS_STATE:---}$TAB${STATUS_LAST:---}$TAB${STATUS_NEXT:---}$TAB${STATUS_INSTALL:---}")
   done
 
-  local row u s l n
+  # The TAB-separated fields are IFS-split on read, which is only safe while every field is
+  # non-empty — hence the :--- defaults on all five.
+  local row u s l n i
   if [ "$json" = true ]; then
     printf '['
     local first=true
     for row in "${rows[@]}"; do
-      IFS="$TAB" read -r u s l n <<<"$row"
+      IFS="$TAB" read -r u s l n i <<<"$row"
       "$first" || printf ','
       first=false
-      jq -nc --arg u "$u" --arg s "$s" --arg l "$l" --arg n "$n" \
-        '{unit:$u, state:$s, last:$l, next:$n}'
+      jq -nc --arg u "$u" --arg s "$s" --arg l "$l" --arg n "$n" --arg i "$i" \
+        '{unit:$u, state:$s, last:$l, next:$n, install:$i}'
     done
     printf ']\n'
   else
-    printf '%-30s %-10s  %-22s  %s\n' "UNIT" "STATE" "LAST" "NEXT"
+    printf '%-30s %-10s  %-22s  %-17s  %s\n' "UNIT" "STATE" "LAST" "NEXT" "INSTALL"
     for row in "${rows[@]}"; do
-      IFS="$TAB" read -r u s l n <<<"$row"
-      printf '%-30s %-10s  %-22s  %s\n' "$u" "$s" "$l" "$n"
+      IFS="$TAB" read -r u s l n i <<<"$row"
+      printf '%-30s %-10s  %-22s  %-17s  %s\n' "$u" "$s" "$l" "$n" "$i"
     done
   fi
 

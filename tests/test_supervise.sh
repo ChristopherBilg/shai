@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_supervise.sh — unit tests for shai-supervise
-# Covers: shai-supervise — unit file generation, naming, validation, subcommand dispatch
+# Covers: shai-supervise — unit file generation, naming, validation, subcommand dispatch,
+#   status INSTALL column (stale/ok detection), JSON install key
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -305,6 +306,56 @@ COUNT=$(echo "$OUT" | jq 'length' 2>/dev/null)
 assert_eq "$COUNT" "1" "status <script> --json: one element"
 UNIT_NAME=$(echo "$OUT" | jq -r '.[0].unit' 2>/dev/null)
 assert_eq "$UNIT_NAME" "shai-heartbeat" "status <script> --json: correct unit"
+
+# --- status: INSTALL column reports a stale install, and status still exits 0 ---
+# Fixture: a .service whose ExecStart points at an old install directory that still exists
+# and is executable — the post-upgrade state this feature exists to surface. The stale row
+# must be asserted present before the exit-0 assertion below (mutation-checked: a build
+# that never detects staleness would still exit 0 and the test would pass trivially).
+mkdir -p "$TMP/oldinstall/workflows/heartbeat"
+printf '#!/bin/bash\nprintf "old heartbeat\\n"\n' >"$TMP/oldinstall/workflows/heartbeat/run.sh"
+chmod +x "$TMP/oldinstall/workflows/heartbeat/run.sh"
+cat >"$TMP/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$TMP/oldinstall/workflows/heartbeat/run.sh
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+# healthy control: the direct-script ExecStart shape under the real checkout → ok
+cat >"$TMP/shai-review-dispatcher.service" <<EOF
+[Unit]
+Description=shai shai-review-dispatcher workflow
+
+[Service]
+Type=oneshot
+ExecStart=$DIR/shai-print
+Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status heartbeat 2>&1)
+RC=$?
+assert_contains "$OUT" "INSTALL" "status table: header has INSTALL"
+assert_contains "$OUT" "2026-08-18 14:45   stale" \
+  "status table: NEXT keeps its full value next to the new INSTALL column"
+assert_eq "$RC" "0" "status: stale unit still exits 0 (a query, not a check)"
+
+OUT=$("$DIR/shai-supervise" status 2>&1)
+assert_contains "$OUT" "ok" "status table: healthy unit renders ok in the INSTALL column"
+
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status --json 2>&1)
+FIRST_KEYS=$(echo "$OUT" | jq -r '.[0] | keys[]' 2>/dev/null | sort | tr '\n' ',')
+assert_contains "$FIRST_KEYS" "install," "status --json: has install field"
+INSTALL=$(echo "$OUT" | jq -r '.[] | select(.unit == "shai-heartbeat") | .install' 2>/dev/null)
+assert_eq "$INSTALL" "stale" "status --json: install key is stale for the stale unit"
+INSTALL=$(echo "$OUT" | jq -r '.[] | select(.unit == "shai-review-dispatcher") | .install' 2>/dev/null)
+assert_eq "$INSTALL" "ok" "status --json: install key is ok for the healthy unit"
 
 # --- status: empty UNIT_DIR ---
 rm -f "$TMP"/shai-*.timer "$TMP"/shai-*.service
