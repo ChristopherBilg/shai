@@ -1,0 +1,529 @@
+#!/bin/bash
+# shai-config — edit and test shai configuration: policy rules (the policy half, see #345)
+# Usage: shai-config policy list [--json]
+#        shai-config policy add --tool NAME --action ACTION [--args K=V ...] [--before N] [--force]
+#        shai-config policy remove <index>
+#        shai-config policy test --tool NAME --input JSON [--overlay PATH] [--json]
+# Reads: $SHAI_HOME/policy.json (list/add/remove/test); $SHAI_POLICY_OVERLAY (list/test, the
+#        same environment shai-dispatch consults); lib/policy.sh (check_policy, the single
+#        source of verdicts)
+# Writes: $SHAI_HOME/policy.json (add/remove only, via a temp file + mv — never a partial
+#         write, never a replacement of a corrupt file)
+# Exit: 0 on success; 1 on validation failure (shadow refusal, corrupt policy, unknown index,
+#        invalid values); 2 on usage error (unknown noun/verb/flag)
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+POLICY_FILE="$STATE_DIR/policy.json"
+
+# `policy test` verdicts must come from the same function shai-dispatch calls
+# (lib/policy.sh), never a reimplementation — one function, two callers. lib/policy.sh runs
+# `set -uo pipefail` when sourced so it never tightens a caller's options; this script's
+# contract is plain `set -euo pipefail`, so re-apply it right after the source.
+# shellcheck source=lib/policy.sh
+source "$DIR/lib/policy.sh"
+set -euo pipefail
+
+# usage_error: print the usage block to stderr and exit 2 (usage error — unknown
+# noun/verb/flag, or a missing required option; invalid values exit 1 instead).
+usage_error() {
+  printf 'usage: shai-config <policy> <list|add|remove|test> [options]\n' >&2
+  printf '       shai-config policy list [--json]\n' >&2
+  printf '       shai-config policy add --tool NAME --action ACTION [--args K=V ...] [--before N] [--force]\n' >&2
+  printf '       shai-config policy remove <index>\n' >&2
+  printf '       shai-config policy test --tool NAME --input JSON [--overlay PATH] [--json]\n' >&2
+  exit 2
+}
+
+# load_policy <path>: the policy file's JSON (compact, one line) on stdout. Exit 1 with a
+# shai-doctor pointer on stderr when the file is not a JSON object with a .rules array —
+# the corrupt-policy abort (issue #345): parse before writing, and never replace a corrupt
+# file with a fresh {"rules":[]}, because that destroys the user's rules in response to the
+# very failure this tool exists to prevent.
+load_policy() {
+  local path="$1" parsed
+  if [ ! -f "$path" ]; then
+    printf 'error: no policy file at %s\n' "$path" >&2
+    return 1
+  fi
+  if ! parsed=$(jq -c '
+      if type == "object" and ((.rules // []) | type) == "array" then .
+      else error("policy must be a JSON object with a .rules array")
+      end' "$path" 2>/dev/null); then
+    printf 'error: %s is not a valid policy (must be a JSON object with a .rules array)\n' "$path" >&2
+    printf 'error: run shai-doctor to diagnose the policy file — nothing was changed\n' >&2
+    return 1
+  fi
+  printf '%s' "$parsed"
+}
+
+# write_policy <json>: atomically replace $STATE_DIR/policy.json — temp file + mv, the
+# shai-completions install pattern. A failed write never leaves a truncated policy behind
+# and never destroys the existing one.
+write_policy() {
+  local tmp
+  if ! mkdir -p "$STATE_DIR"; then
+    printf 'error: cannot create state directory %s\n' "$STATE_DIR" >&2
+    return 1
+  fi
+  if ! tmp=$(mktemp "$STATE_DIR/.policy.json.XXXXXX"); then
+    printf 'error: cannot write %s\n' "$POLICY_FILE" >&2
+    return 1
+  fi
+  if ! printf '%s\n' "$1" >"$tmp"; then
+    rm -f "$tmp"
+    printf 'error: cannot write %s\n' "$POLICY_FILE" >&2
+    return 1
+  fi
+  if ! mv "$tmp" "$POLICY_FILE"; then
+    rm -f "$tmp"
+    printf 'error: cannot write %s\n' "$POLICY_FILE" >&2
+    return 1
+  fi
+}
+
+# cmd_list: read-only view of the effective stack — overlay rules first (check_policy
+# consults them first at dispatch time), then base rules, each with its per-file 1-based
+# index (the index `remove` consumes, and the index `rule:<file>:<idx>` reasons report).
+# A FILE column is appended only when an overlay is active; the `default:` line shows the
+# effective default (overlay default first, matching check_policy).
+cmd_list() {
+  local JSON=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json) JSON=true ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        usage_error
+        ;;
+    esac
+    shift
+  done
+
+  local overlay="${SHAI_POLICY_OVERLAY:-}"
+  local has_base=false has_overlay=false
+  if [ -f "$POLICY_FILE" ]; then has_base=true; fi
+  if [ -n "$overlay" ] && [ -f "$overlay" ]; then has_overlay=true; fi
+
+  if [ "$has_base" = false ] && [ "$has_overlay" = false ]; then
+    if [ "$JSON" = true ]; then
+      printf '{"rules":[],"default":null,"default_file":null}\n'
+    else
+      printf '(no policy files)\n'
+    fi
+    return 0
+  fi
+
+  local base_json="" overlay_json=""
+  if "$has_base"; then
+    base_json=$(load_policy "$POLICY_FILE") || exit 1
+  fi
+  if "$has_overlay"; then
+    overlay_json=$(load_policy "$overlay") || exit 1
+  fi
+
+  # Effective default: overlay first, exactly like check_policy's fallback consultation.
+  local have_default=false default="" default_file=""
+  if "$has_overlay"; then
+    if printf '%s' "$overlay_json" | jq -e 'has("default")' >/dev/null 2>&1; then
+      default=$(printf '%s' "$overlay_json" | jq -r '.default')
+      default_file="$overlay"
+      have_default=true
+    fi
+  fi
+  if [ "$have_default" = false ] && "$has_base"; then
+    if printf '%s' "$base_json" | jq -e 'has("default")' >/dev/null 2>&1; then
+      default=$(printf '%s' "$base_json" | jq -r '.default')
+      default_file="$POLICY_FILE"
+      have_default=true
+    fi
+  fi
+
+  # rows(): emit one compact row object per rule, overlay first then base, in consultation
+  # order. Indexes are per-file (the .key+1 the matcher itself reports), so a base rule and
+  # an overlay rule can both show index 1 — the FILE column tells them apart.
+  rows() {
+    if "$has_overlay"; then
+      printf '%s' "$overlay_json" | jq -c --arg file "$overlay" '
+        (.rules // []) | to_entries[]
+        | {index: (.key + 1), tool: .value.tool, action: .value.action,
+           args: (.value.args // null), file: $file}'
+    fi
+    if "$has_base"; then
+      printf '%s' "$base_json" | jq -c --arg file "$POLICY_FILE" '
+        (.rules // []) | to_entries[]
+        | {index: (.key + 1), tool: .value.tool, action: .value.action,
+           args: (.value.args // null), file: $file}'
+    fi
+  }
+
+  if [ "$JSON" = true ]; then
+    local oj="null" bj="null" rules_json
+    if "$has_overlay"; then oj="$overlay_json"; fi
+    if "$has_base"; then bj="$base_json"; fi
+    rules_json=$(jq -cn \
+      --argjson o "$oj" --argjson b "$bj" \
+      --arg of "$overlay" --arg bf "$POLICY_FILE" '
+        def rs($p; $f):
+          if $p == null then []
+          else ($p.rules // []) | to_entries
+            | map({index: (.key + 1), tool: .value.tool, action: .value.action,
+                   args: (.value.args // null), file: $f})
+          end;
+        {rules: (rs($o; $of) + rs($b; $bf)), default: null, default_file: null}')
+    if "$have_default"; then
+      rules_json=$(printf '%s' "$rules_json" | jq -c --arg d "$default" --arg f "$default_file" \
+        '.default = $d | .default_file = $f')
+    fi
+    printf '%s\n' "$rules_json"
+    return 0
+  fi
+
+  local row idx tool action args file rule_count=0
+  if "$has_overlay"; then
+    printf ' IDX  ACTION  TOOL           FILE\n'
+  else
+    printf ' IDX  ACTION  TOOL\n'
+  fi
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    idx=$(printf '%s' "$row" | jq -r '.index')
+    tool=$(printf '%s' "$row" | jq -r '.tool')
+    action=$(printf '%s' "$row" | jq -r '.action')
+    args=$(printf '%s' "$row" | jq -cr '.args // ""')
+    file=$(printf '%s' "$row" | jq -r '.file')
+    printf ' %2s  %-6s  %-13s' "$idx" "$action" "$tool"
+    if [ -n "$args" ]; then printf '  %s' "$args"; fi
+    if "$has_overlay"; then printf '  %s' "$file"; fi
+    printf '\n'
+    rule_count=$((rule_count + 1))
+  done < <(rows)
+  if [ "$rule_count" -eq 0 ]; then
+    printf '(no rules)\n'
+  fi
+  if "$have_default"; then
+    printf 'default: %s\n' "$default"
+  else
+    printf 'default: (none)\n'
+  fi
+}
+
+# cmd_add: append a rule to $SHAI_HOME/policy.json (default: append; --before N inserts at
+# 0-based array position N). Refuses — writing nothing — when an earlier rule for the same
+# tool has no `args` key and therefore decides every call to that tool (first-match-wins,
+# so the new rule could never fire). That is the exactly-decidable shadow case only: no
+# glob-subsumption reasoning, per issue #345. --force appends anyway.
+cmd_add() {
+  local TOOL="" ACTION="" BEFORE="" FORCE=false
+  local -a ARG_PAIRS=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tool)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --tool requires a name\n' >&2
+          exit 2
+        fi
+        TOOL="$1"
+        ;;
+      --action)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --action requires a value\n' >&2
+          exit 2
+        fi
+        ACTION="$1"
+        ;;
+      --args)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --args requires K=V\n' >&2
+          exit 2
+        fi
+        ARG_PAIRS+=("$1")
+        ;;
+      --before)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --before requires an index\n' >&2
+          exit 2
+        fi
+        BEFORE="$1"
+        ;;
+      --force) FORCE=true ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        usage_error
+        ;;
+    esac
+    shift
+  done
+
+  if [ -z "$TOOL" ]; then
+    printf 'error: --tool is required\n' >&2
+    usage_error
+  fi
+  if [ -z "$ACTION" ]; then
+    printf 'error: --action is required\n' >&2
+    usage_error
+  fi
+  if [ "$ACTION" != "allow" ] && [ "$ACTION" != "prompt" ] && [ "$ACTION" != "deny" ]; then
+    printf 'error: invalid action "%s" (expected allow/prompt/deny)\n' "$ACTION" >&2
+    exit 1
+  fi
+  if [ -n "$BEFORE" ] && ! [[ "$BEFORE" =~ ^[0-9]+$ ]]; then
+    printf 'error: --before must be a non-negative integer (got "%s")\n' "$BEFORE" >&2
+    exit 1
+  fi
+  local pair
+  for pair in "${ARG_PAIRS[@]}"; do
+    case "$pair" in
+      ?*=*) ;;
+      *)
+        printf 'error: --args expects K=V with a non-empty key (got "%s")\n' "$pair" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  # Parse before writing: a corrupt existing file aborts here, byte-identical. An absent
+  # file starts fresh as {"rules":[]} (the documented creation behavior).
+  local policy
+  if [ -f "$POLICY_FILE" ]; then
+    policy=$(load_policy "$POLICY_FILE") || exit 1
+  else
+    policy='{"rules":[]}'
+  fi
+
+  # Insertion position: 0-based index into .rules; the default is append (position == length).
+  local len pos
+  len=$(printf '%s' "$policy" | jq -r '(.rules // []) | length')
+  if [ -n "$BEFORE" ]; then
+    pos="$BEFORE"
+    if [ "$pos" -gt "$len" ]; then
+      printf 'error: --before %s is out of range (policy has %s rule(s))\n' "$pos" "$len" >&2
+      exit 1
+    fi
+  else
+    pos="$len"
+  fi
+
+  # Rule values for --args are always glob patterns, i.e. strings — that is the deliberate
+  # asymmetry with `policy test --input`, which takes arbitrary JSON including arrays. The
+  # filter must precede --args: everything after --args is a positional string ($ARGS).
+  local rule
+  if [ "${#ARG_PAIRS[@]}" -gt 0 ]; then
+    rule=$(jq -nc --arg tool "$TOOL" --arg action "$ACTION" \
+      '{tool: $tool, action: $action,
+        args: ($ARGS.positional
+          | map({key: (split("=")[0]), value: (split("=")[1:] | join("="))})
+          | from_entries)}' \
+      --args "${ARG_PAIRS[@]}")
+  else
+    rule=$(jq -nc --arg tool "$TOOL" --arg action "$ACTION" \
+      '{tool: $tool, action: $action}')
+  fi
+
+  # Shadow refusal: an earlier rule, same tool, no `args` key matches every call to that
+  # tool, so the new rule can never fire (first-match-wins). Scope deliberately stops at
+  # that exactly-decidable case; general pattern overlap is left to `policy test`.
+  local shadow_idx=""
+  if [ "$FORCE" != true ]; then
+    shadow_idx=$(printf '%s' "$policy" | jq -r --arg tool "$TOOL" --argjson pos "$pos" '
+      [ ((.rules // []) | to_entries[]
+         | select(.key < $pos)
+         | select(.value.tool == $tool)
+         | select(.value | has("args") | not)
+         | .key)
+      ][0] // empty')
+    if [ -n "$shadow_idx" ]; then
+      local shadow_rule
+      shadow_rule=$(printf '%s' "$policy" | jq -c --argjson i "$shadow_idx" '(.rules // [])[$i]')
+      printf 'error: rule would never match — rules[%s]\n' "$shadow_idx" >&2
+      printf '  %s has no args, so it decides every %s call\n' "$shadow_rule" "$TOOL" >&2
+      printf '  (first-match-wins). Retry with --before %s, or --force to append anyway.\n' "$shadow_idx" >&2
+      exit 1
+    fi
+  fi
+
+  local new_policy
+  new_policy=$(printf '%s' "$policy" | jq -c --argjson rule "$rule" --argjson pos "$pos" \
+    '.rules = (((.rules // [])[0:$pos] + [$rule] + ((.rules // [])[$pos:])))')
+  write_policy "$new_policy" || exit 1
+  printf 'added rule %s: %s\n' "$((pos + 1))" "$rule"
+}
+
+# cmd_remove: delete the rule at <index> — the 1-based index `policy list` prints, the way
+# shai-failures show reuses list ids. Targets $SHAI_HOME/policy.json only: overlays are
+# repo-tracked workflow files, and a CLI that writes them is a CLI that can escalate.
+cmd_remove() {
+  if [ $# -ne 1 ]; then
+    printf 'usage: shai-config policy remove <index>\n' >&2
+    exit 2
+  fi
+  local idx="$1"
+  case "$idx" in
+    -*)
+      printf 'error: unknown option: %s\n' "$idx" >&2
+      exit 2
+      ;;
+  esac
+  if ! [[ "$idx" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'error: index must be a positive integer (got "%s")\n' "$idx" >&2
+    exit 1
+  fi
+
+  local policy len removed new_policy
+  policy=$(load_policy "$POLICY_FILE") || exit 1
+  len=$(printf '%s' "$policy" | jq -r '(.rules // []) | length')
+  if [ "$idx" -gt "$len" ]; then
+    printf 'error: no rule at index %s (%s has %s rule(s))\n' "$idx" "$POLICY_FILE" "$len" >&2
+    exit 1
+  fi
+  removed=$(printf '%s' "$policy" | jq -c --argjson i "$idx" '(.rules // [])[$i - 1]')
+  new_policy=$(printf '%s' "$policy" | jq -c --argjson i "$idx" \
+    '.rules = ((.rules // []) | del(.[$i - 1]))')
+  write_policy "$new_policy" || exit 1
+  printf 'removed rule %s: %s\n' "$idx" "$removed"
+}
+
+# cmd_test: what would the permission gate decide for one call? Calls check_policy from
+# lib/policy.sh — the function shai-dispatch uses — with the full overlay+base stack, and
+# renders its "<action>\t<reason>" verdict. The `input.<k> (tostring) = …` echo is not
+# decoration: the matcher evaluates ($input[$k] // "" | tostring), so a rule pattern must
+# match the JSON rendering (an array prints as ["pr","merge","1"], never "pr merge 1").
+cmd_test() {
+  local TOOL="" INPUT="" OVERLAY_FLAG="" JSON=false have_overlay_flag=false
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tool)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --tool requires a name\n' >&2
+          exit 2
+        fi
+        TOOL="$1"
+        ;;
+      --input)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --input requires JSON\n' >&2
+          exit 2
+        fi
+        INPUT="$1"
+        ;;
+      --overlay)
+        shift
+        if [ -z "${1:-}" ]; then
+          printf 'error: --overlay requires a path\n' >&2
+          exit 2
+        fi
+        OVERLAY_FLAG="$1"
+        have_overlay_flag=true
+        ;;
+      --json) JSON=true ;;
+      *)
+        printf 'error: unknown option: %s\n' "$1" >&2
+        usage_error
+        ;;
+    esac
+    shift
+  done
+
+  if [ -z "$TOOL" ]; then
+    printf 'error: --tool is required\n' >&2
+    usage_error
+  fi
+  if [ -z "$INPUT" ]; then
+    printf 'error: --input is required (the tool input as JSON)\n' >&2
+    usage_error
+  fi
+  if ! jq empty <<<"$INPUT" >/dev/null 2>&1; then
+    printf 'error: --input is not valid JSON: %s\n' "$INPUT" >&2
+    exit 1
+  fi
+
+  # --overlay pins SHAI_POLICY_OVERLAY for this one call; without it the inherited value
+  # wins, exactly as at dispatch time.
+  local overlay_env="${SHAI_POLICY_OVERLAY:-}"
+  if "$have_overlay_flag"; then overlay_env="$OVERLAY_FLAG"; fi
+
+  local result verdict reason
+  result=$(SHAI_POLICY_OVERLAY="$overlay_env" check_policy "$TOOL" "$INPUT")
+  verdict="${result%%$'\t'*}"
+  reason="${result#*$'\t'}"
+
+  # matched: the rule object a rule: verdict names, re-read from that file for display only.
+  # The verdict and reason themselves are check_policy's output — never recomputed here.
+  local matched="null"
+  if [[ "$reason" == rule:* ]]; then
+    local rule_file rule_idx
+    rule_file="${reason#rule:}"
+    rule_idx="${rule_file##*:}"
+    rule_file="${rule_file%:*}"
+    if [[ "$rule_idx" =~ ^[0-9]+$ ]] && [ -f "$rule_file" ]; then
+      matched=$(jq -c --argjson i "$rule_idx" '.rules[($i - 1)] // empty' "$rule_file" 2>/dev/null) || matched="null"
+      if [ -z "$matched" ]; then matched="null"; fi
+    fi
+  fi
+
+  if [ "$JSON" = true ]; then
+    local tostring_map="{}"
+    if printf '%s' "$INPUT" | jq -e 'type == "object"' >/dev/null 2>&1; then
+      tostring_map=$(printf '%s' "$INPUT" | jq -c \
+        'to_entries | map({key: .key, value: (.value | tostring)}) | from_entries')
+    fi
+    jq -cn --arg tool "$TOOL" --argjson input "$INPUT" --argjson tostring "$tostring_map" \
+      --arg verdict "$verdict" --arg reason "$reason" --argjson matched "$matched" \
+      '{tool: $tool, input: $input, tostring: $tostring,
+        verdict: $verdict, reason: $reason, matched: $matched}'
+    return 0
+  fi
+
+  if printf '%s' "$INPUT" | jq -e 'type == "object" and (length > 0)' >/dev/null 2>&1; then
+    printf '%s' "$INPUT" | jq -r 'to_entries[] | "input.\(.key) (tostring) = \(.value | tostring)"'
+    printf '\n'
+  fi
+  printf 'verdict: %s\n' "$verdict"
+  printf 'reason:  %s\n' "$reason"
+  if [ "$matched" = "null" ]; then
+    printf 'matched: (none)\n'
+  else
+    printf 'matched: %s\n' "$matched"
+  fi
+}
+
+NOUN="${1:-}"
+VERB="${2:-}"
+if [ $# -ge 2 ]; then
+  shift 2
+else
+  shift $#
+fi
+
+case "$NOUN" in
+  policy)
+    case "$VERB" in
+      list) cmd_list "$@" ;;
+      add) cmd_add "$@" ;;
+      remove) cmd_remove "$@" ;;
+      test) cmd_test "$@" ;;
+      "")
+        printf 'usage: shai-config policy <list|add|remove|test> [options]\n' >&2
+        exit 2
+        ;;
+      *)
+        printf 'error: unknown policy command: %s\n' "$VERB" >&2
+        usage_error
+        ;;
+    esac
+    ;;
+  "")
+    usage_error
+    ;;
+  *)
+    printf 'error: unknown noun: %s (expected "policy")\n' "$NOUN" >&2
+    usage_error
+    ;;
+esac
