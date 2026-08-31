@@ -69,6 +69,15 @@ _shai_bash_tool_name() {
   fi
   COMPREPLY=( $(compgen -W "$(for d in "${_shai_dir}/tools/"*/run.sh; do [ -x "$d" ] || continue; d="${d%/run.sh}"; n="${d##*/}"; p="$(jq -r '.description // empty' "$d/tool.json" 2>/dev/null)"; printf '%s\t%s\n' "$n" "$p"; done 2>/dev/null | cut -f1)" -- "$cur") )
 }
+_shai_bash_install_version() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  if [ -z "${_shai_dir:-}" ] || [ ! -d "${_shai_dir:-}" ]; then
+    COMPREPLY=()
+    return
+  fi
+  COMPREPLY=( $(compgen -W "$(if [ -L "${_shai_dir%/*}/current" ]; then for d in "${_shai_dir%/*}/"*/; do d="${d%/}"; n="${d##*/}"; [ "$n" = current ] || printf '%s\n' "$n"; done 2>/dev/null; fi | cut -f1)" -- "$cur") )
+}
 
 _shai_read() {
   local cur prev
@@ -360,6 +369,21 @@ _shai_doctor() {
   COMPREPLY=()
 }
 complete -F _shai_doctor shai-doctor
+_shai_update() {
+  local cur prev
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [[ "$prev" == "--rollback" ]]; then
+    _shai_bash_install_version
+    return
+  fi
+  if [[ "$cur" == -* ]]; then
+    COMPREPLY=( $(compgen -W "--check --list --rollback --version --prune --keep --dry-run --yes -y" -- "$cur") )
+    return
+  fi
+  COMPREPLY=()
+}
+complete -F _shai_update shai-update
 _shai_version() {
   local cur prev
   cur="${COMP_WORDS[COMP_CWORD]}"

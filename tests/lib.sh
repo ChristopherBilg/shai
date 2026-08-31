@@ -56,6 +56,70 @@ make_stub_bin() {
   export PATH="$STUB:$PATH"
 }
 
+# build_fake_tarball <work_dir> <version>: a fake release tarball at
+# <work_dir>/shai-<version>.tar.gz containing a minimal executable shai tree —
+# shai-repl, shai-doctor, shai-version, shai-supervise + lib/units.sh, and the real
+# shai-completions with a per-version marker flag injected into completions.json.
+# Shared by tests/test_install.sh and tests/test_update.sh so the installer and the
+# updater are driven from one fixture (which is also what makes the layout-equivalence
+# test practical). The marker flag makes the generated completion content
+# version-specific, so tests can assert the reinstall after an upgrade/rollback came
+# from the target version's tree.
+build_fake_tarball() {
+  local work="$1" version="${2:-v2026.01.01}"
+  local staging="$work/shai-${version}"
+  rm -rf "$staging"
+  mkdir -p "$staging" "$staging/lib"
+  printf '#!/bin/bash\necho hello\n' >"$staging/shai-repl"
+  chmod +x "$staging/shai-repl"
+  printf '#!/bin/bash\necho doctor\n' >"$staging/shai-doctor"
+  chmod +x "$staging/shai-doctor"
+  echo "$version" >"$staging/VERSION"
+  echo "not executable" >"$staging/README.md"
+  printf '{"_comment":"example ci config","version":"1.0","repos":{}}\n' >"$staging/ci.json.example"
+  cp "$DIR/shai-version" "$staging/shai-version"
+  cp "$DIR/shai-supervise" "$staging/shai-supervise"
+  cp "$DIR/lib/units.sh" "$staging/lib/units.sh"
+  # The real completion installer + manifest: install.sh runs both installs best-effort,
+  # shai-update runs them on the critical path, and the suites assert on the generated
+  # files at the standard XDG locations.
+  cp "$DIR/shai-completions" "$staging/shai-completions"
+  jq --arg v "$version" \
+    '.scripts["shai-fixture-marker"] = {
+       "description": "fixture release marker",
+       "flags": {("--marker-" + $v): {"description": ("fixture release " + $v)}}
+     }' "$DIR/completions.json" >"$staging/completions.json"
+  (cd "$work" && tar czf "shai-${version}.tar.gz" "shai-${version}")
+}
+
+# make_install_gh_stub <work_dir> <version>: gh stub handling auth, release download
+# (parsing --dir), and release view (returning the tag) — exactly the three calls
+# install.sh and shai-update make.
+make_install_gh_stub() {
+  local work="$1" version="${2:-v2026.01.01}"
+  mkdir -p "$work/bin"
+  cat >"$work/bin/gh" <<STUB
+#!/bin/bash
+if [ "\$1" = "auth" ]; then exit 0; fi
+if [ "\$1" = "release" ] && [ "\$2" = "download" ]; then
+  dir=""
+  prev=""
+  for i in "\$@"; do
+    if [ "\$prev" = "--dir" ]; then dir="\$i"; break; fi
+    prev="\$i"
+  done
+  cp "$work/shai-${version}.tar.gz" "\$dir/"
+  exit 0
+fi
+if [ "\$1" = "release" ] && [ "\$2" = "view" ]; then
+  printf '%s\n' "${version}"
+  exit 0
+fi
+exit 1
+STUB
+  chmod +x "$work/bin/gh"
+}
+
 # write_curl_stub <http_code> -- response body read from stdin.
 # Emits body then the code line, mimicking shai-eval's `-w '\n%{http_code}'`.
 write_curl_stub() {
