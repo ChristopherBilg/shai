@@ -98,8 +98,9 @@ All seven scripts accept `--json` for structured output and prefix matching on t
 
 `./shai-supervise status [script] [--json]` renders the same style of table for the installed
 `systemd --user` timers (UNIT, STATE, LAST, NEXT, INSTALL), and also accepts `--json`.
-The INSTALL column is `ok` / `stale` / `broken` / `--` (no `.service` file): `stale` means the
-unit's `ExecStart` still points at an older shai install than the one this command runs from.
+The INSTALL column is `ok` / `stale` / `broken` / `--` (no `.service` file, or none with an
+`ExecStart=` line): `stale` means the unit's `ExecStart` still points at an older shai install
+than the one this command runs from.
 
 ## Tests
 ```shell
