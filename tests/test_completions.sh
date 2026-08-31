@@ -3,7 +3,8 @@
 # Covers: shai-completions — usage errors, syntax validity, per-script coverage, flag aliases,
 #         subcommand dispatch, dynamic candidates, install-dir resolution, determinism,
 #         install targets/instructions/write failures, checked-in freshness of
-#         completions/_shai and completions/shai.bash, and the check subcommand
+#         completions/_shai and completions/shai.bash, positional exclusion (--all), and the
+#         check subcommand
 #         (coverage, flag sync, freshness, _completions_ignore) on a hermetic fixture repo
 set -uo pipefail
 # shellcheck source=tests/lib.sh
@@ -591,6 +592,16 @@ assert_contains "$out" "heartbeat" \
 out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_supervise shai-supervise install --interval "")"
 assert_eq "$out" "" "bash: shai-supervise install --interval <TAB> completes nothing at the flag value"
 
+# --all excludes the script positional: the CLI rejects script+--all, so once
+# --all is on the line the completion must stop offering workflow names (the
+# positive control is the next case: without --all the same slot completes).
+# Mutation-checked: without the excludes_positional handling in the generator,
+# `repoint --all <TAB>` offers heartbeat and the empty assertion goes red.
+out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_supervise shai-supervise repoint --all "")"
+assert_eq "$out" "" "bash: shai-supervise repoint --all <TAB> completes nothing (--all excludes the script slot)"
+out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_supervise shai-supervise repoint "")"
+assert_contains "$out" "heartbeat" "bash: shai-supervise repoint <TAB> completes workflow names (positive control)"
+
 out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_prompt shai-prompt sy)"
 assert_contains "$out" "system" "bash: shai-prompt <TAB> completes prompt names"
 
@@ -690,6 +701,31 @@ while [ "\$tries" -lt 10 ]; do
   fi
 done
 print -r -- "\$out"
+zpty shai_rep 'env TERM=dumb zsh -f' || exit 77
+zpty -w shai_rep \$'autoload -Uz compinit && compinit -u && source "$DIR/completions/_shai"\n'
+zpty -w shai_rep \$'shai-supervise repoint --dry-run \t'
+zpty -w shai_rep \$'\cc'
+zpty -w shai_rep \$'print -r -- "==P1=="\n'
+zpty -w shai_rep \$'shai-supervise repoint --all \t'
+zpty -w shai_rep \$'\cc'
+zpty -w shai_rep \$'print -r -- "==P2=="\n'
+zpty -w shai_rep \$'exit\n'
+local out2="" tries=0
+while [ "\$tries" -lt 10 ]; do
+  if zpty -t shai_rep; then
+    if zpty -r shai_rep line; then
+      out2+="\$line"
+      tries=0
+    else
+      break
+    fi
+  else
+    sleep 1
+    tries=\$((tries + 1))
+  fi
+done
+print -r -- "==REPOINT=="
+print -r -- "\$out2"
 EOF
   ZOUT="$(PATH="$STUB_BIN:$PATH" zsh -f "$ZTMP/harness.zsh" 2>/dev/null)"
   if [ "$?" -eq 77 ]; then
@@ -725,6 +761,25 @@ EOF
     assert_contains "$ZOUT" "tool_result" "zsh: shai-events --type <TAB> offers tool_result"
     assert_contains "$ZOUT" "gh" "zsh: shai-events --tool <TAB> completes tool names"
     assert_contains "$ZOUT" "GitHub CLI helper" "zsh: shai-events --tool <TAB> shows the tool description"
+    # repoint's positional exclusion on the zsh side: --dry-run does not exclude
+    # the script slot, so the same session completes workflow names there
+    # (positive control, P1); once --all is on the line the slot is excluded,
+    # so the listing must not offer them (P2). The absence assertion is
+    # mutation-checked — dropping the exclusion list in the generator makes
+    # heartbeat reappear in the P2 listing while the P1 positive control stays
+    # green.
+    ZOUT2="${ZOUT##*==REPOINT==}"
+    ZP1="${ZOUT2%%==P1==*}"
+    assert_contains "$ZP1" "heartbeat" \
+      "zsh: repoint --dry-run <TAB> completes workflow names (positive control)"
+    ZP2="${ZOUT2#*==P1==}"
+    ZP2="${ZP2%%==P2==*}"
+    if [[ "$ZP2" == *heartbeat* ]]; then
+      echo -e "  ${RED}✗${NC} zsh: repoint --all <TAB> still offers workflow names (got $ZP2)"
+      FAILED=1
+    else
+      echo -e "  ${GREEN}✓${NC} zsh: repoint --all <TAB> does not offer workflow names"
+    fi
   fi
 else
   echo "  zsh not found — skipping zsh syntax and runtime checks"

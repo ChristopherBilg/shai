@@ -4,7 +4,8 @@
 #        export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base64 -d | bash
 # Reads: SHAI_VERSION (env, optional — defaults to latest GitHub Release), SHAI_HOME (env,
 #        optional — only to report where the ci tool's ci.json would live)
-# Writes: ~/.local/share/shai/<version>/ (extraction), ~/.local/bin/shai* (exec wrappers)
+# Writes: ~/.local/share/shai/<version>/ (extraction), ~/.local/share/shai/current (symlink
+#         to the active version), ~/.local/bin/shai* (exec wrappers)
 # Exit: 0 on success, 1 on download/extract failure, 2 if gh CLI is missing or unauthenticated
 set -euo pipefail
 
@@ -58,11 +59,23 @@ rm -rf "$DEST"
 mv "$TMPDIR_EXTRACT" "$DEST"
 trap - EXIT
 
+# Point $INSTALL_DIR/current at the version just extracted: every wrapper below and every
+# systemd unit ExecStart resolves through this one link, so an upgrade re-points every
+# reference in a single atomic step. The link target is relative ($VERSION, not $DEST) so
+# the install tree stays relocatable, and the temp name + `mv -Tf` dance is load-bearing:
+# without -T, replacing an existing `current` symlink-to-directory would move the temp link
+# *inside* the pointed-to directory instead of over the link. This is on the critical path
+# (not `|| true` like the completions below) — the wrappers about to be written resolve
+# through this link, so a failure here must fail the install.
+ln -sfn "$VERSION" "$INSTALL_DIR/.current.$$"
+mv -Tf "$INSTALL_DIR/.current.$$" "$INSTALL_DIR/current"
+
 mkdir -p "$BIN_DIR"
 for script in "$DEST"/shai-*; do
   if [ -f "$script" ] && [ -x "$script" ]; then
     wrapper="$BIN_DIR/$(basename "$script")"
-    escaped="${script//\'/\'\\\'\'}"
+    target="$INSTALL_DIR/current/$(basename "$script")"
+    escaped="${target//\'/\'\\\'\'}"
     printf "#!/bin/bash\nexec '%s' \"\$@\"\n" "$escaped" >"$wrapper"
     chmod +x "$wrapper"
   fi
@@ -79,6 +92,7 @@ done
 
 printf '\nshai %s installed successfully\n' "$VERSION"
 printf '  Files:    %s/\n' "$DEST"
+printf '  Current:  %s/current -> %s\n' "$INSTALL_DIR" "$VERSION"
 printf '  Wrappers: %s/\n' "$BIN_DIR"
 
 case ":${PATH}:" in

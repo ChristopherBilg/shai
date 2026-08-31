@@ -42,15 +42,43 @@ def flag_spec($long; $v):
     else
       $long + $body
     end;
+def zexcl($scope):
+  # Flags declared `excludes_positional` suppress the positional slot once they are
+  # on the line (e.g. `repoint --all` — script+--all is a usage error). The zsh side
+  # defers the positional to a state handler that inspects the raw words: an
+  # exclusion list on a positional spec is not honored at runtime, and the word
+  # check is immune to _arguments parsing quirks under -S.
+  [ ($scope.flags // {}) | to_entries[] | select(.value.excludes_positional == true) | .key ];
 def specs_for($scope; $posbase):
   (($scope.flags // {}) | to_entries | map(flag_spec(.key; .value)))
-  + (($scope.positional // []) | to_entries | map((($posbase + .key) | tostring) + ":" + .value.name + ":" + type_action(.value.type)));
+  + (($scope.positional // []) | to_entries | map(
+       (if ((zexcl($scope)) | length) > 0 then
+          (($posbase + .key) | tostring) + ":" + .value.name + ":->" + .value.name
+        else
+          (($posbase + .key) | tostring) + ":" + .value.name + ":" + type_action(.value.type)
+        end)));
 def arg_call($specs; $indent):
   if ($specs | length) == 0 then $indent + "_arguments -S"
   else
     $indent + "_arguments -S \\\n"
     + ($specs | map($indent + "  '" + . + "'") | join(" \\\n"))
   end;
+def zstate_block($scope; $indent):
+  # Runs after `_arguments` when a positional was deferred (`->name`): completes the
+  # positional unless an excludes_positional flag is already on the line. `return 0`
+  # with no additions completes nothing (a non-zero return would fall back to file
+  # completion instead of suppressing the slot).
+  if (((zexcl($scope)) | length) > 0 and (($scope.positional // []) | length) > 0) then
+    [ $indent + "case \"$state\" in"
+    , $indent + "  " + ($scope.positional // [])[0].name + ")"
+    , $indent + "    for _shai_f in " + (zexcl($scope) | join(" ")) + "; do"
+    , $indent + "      [[ -n \"${words[(r)$_shai_f]}\" ]] && return 0"
+    , $indent + "    done"
+    , $indent + "    _shai_type_" + ($scope.positional // [])[0].type
+    , $indent + "    ;;"
+    , $indent + "  esac"
+    ]
+  else [] end;
 def dirblock:
   [ "_shai_bin=\"$(command -v shai-repl 2>/dev/null)\" || _shai_bin=\"\""
   , "if [ -n \"$_shai_bin\" ] && [ -f \"$_shai_bin\" ]; then"
@@ -107,8 +135,9 @@ def zscript_lines:
     + (($s.subcommands // {}) | to_entries | map(
         [ "    " + .key + ")"
         , arg_call(["1:subcommand"] + specs_for(.value; 2); "      ")
-        , "      ;;"
-        ]) | flatten)
+        ] + zstate_block(.value; "      ")
+        + [ "      ;;"
+          ]) | flatten)
     + [ "    *)"
     , arg_call(["1:subcommand"] + specs_for($s; 2); "      ")
     , "      ;;"
@@ -118,7 +147,8 @@ def zscript_lines:
   else
     [ "_" + $name + "() {"
     , arg_call(specs_for($s; 1); "  ")
-    , "}"
+    ] + zstate_block($s; "  ")
+    + [ "}"
     ]
   end;
 [ "#compdef " + ($root.scripts | keys_unsorted | join(" "))
@@ -176,11 +206,15 @@ def bflag_block($scope; $indent):
     , $indent + "fi"
     ]
   else [] end;
+def bpos_excl($scope):
+  # Boolean flags declared `excludes_positional` suppress the positional slot once
+  # they appear on the line (e.g. `repoint --all` — script+--all is a usage error).
+  [ ($scope.flags // {}) | to_entries[] | select(.value.excludes_positional == true) | .key ];
 def bpos_scan($scope; $indent):
   # Count consumed positional words before the cursor, skipping boolean flags
   # and the value words of value-taking flags, so a flag value no longer hides
   # the positional slot (e.g. `shai-supervise install --interval 15min <TAB>`).
-  [ $indent + "local _shai_pos=0 _shai_val=0 _shai_i"
+  [ $indent + (if ((bpos_excl($scope)) | length) > 0 then "local _shai_nopos=0 _shai_pos=0 _shai_val=0 _shai_i" else "local _shai_pos=0 _shai_val=0 _shai_i" end)
   , $indent + "for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do"
   , $indent + "  case \"${COMP_WORDS[_shai_i]}\" in"
   ]
@@ -195,6 +229,11 @@ def bpos_scan($scope; $indent):
          , $indent + "      ;;"
          , $indent + "    " + . + "=*) : ;;"
          ]) | flatten)
+  + (bpos_excl($scope) | map([
+        $indent + "    " + . + ")"
+      , $indent + "      _shai_nopos=1"
+      , $indent + "      ;;"
+      ]) | flatten)
   + [ $indent + "    -*) : ;;"
     , $indent + "    *)"
     , $indent + "      _shai_pos=$((_shai_pos + 1))"
@@ -202,19 +241,23 @@ def bpos_scan($scope; $indent):
     , $indent + "  esac"
     , $indent + "done"
     ];
+def bpos_guard($scope; $posbase; $indent):
+  $indent + "if [ \"$_shai_val\" -eq 0 ]"
+  + (if ((bpos_excl($scope)) | length) > 0 then " && [ \"$_shai_nopos\" -eq 0 ]" else "" end)
+  + " && [ \"$_shai_pos\" -eq " + (($posbase - 1) | tostring) + " ]; then";
 def bpos_block($scope; $posbase; $indent):
   if ((($scope.positional // []) | length) > 0) then
     ($root.types[($scope.positional // [])[0].type // ""] // {}) as $pt |
     if (($pt.command // "") != "") then
       bpos_scan($scope; $indent)
-      + [ $indent + "if [ \"$_shai_val\" -eq 0 ] && [ \"$_shai_pos\" -eq " + (($posbase - 1) | tostring) + " ]; then"
+      + [ bpos_guard($scope; $posbase; $indent)
         , $indent + "  _shai_bash_" + ($scope.positional // [])[0].type
         , $indent + "  return"
         , $indent + "fi"
         ]
     elif ($pt.builtin == true) then
       bpos_scan($scope; $indent)
-      + [ $indent + "if [ \"$_shai_val\" -eq 0 ] && [ \"$_shai_pos\" -eq " + (($posbase - 1) | tostring) + " ]; then"
+      + [ bpos_guard($scope; $posbase; $indent)
         , $indent + "  local IFS=$'\\n'"
         , $indent + "  COMPREPLY=( $(compgen -f -- \"$cur\") )"
         , $indent + "  compopt -o filenames 2>/dev/null"

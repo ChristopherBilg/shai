@@ -1,7 +1,8 @@
 #!/bin/bash
 # test_install.sh — hermetic tests for the shai installer
 # Covers: install.sh — tarball extraction, exec-wrapper installation, download failure cleanup,
-#   gh prereqs, the post-install ci.json.example note, best-effort completion installation
+#   gh prereqs, the post-install ci.json.example note, best-effort completion installation,
+#   the current symlink (relative target, second-install replacement, pre-current self-heal)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -103,8 +104,12 @@ assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai-repl" ] && echo y)" "y" \
 assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai-repl" ] && echo y || echo n)" "n" \
   "install: shai-repl wrapper is a real file, not a symlink"
 assert_contains "$(cat "$FAKE_HOME/.local/bin/shai-repl")" \
-  "exec '$FAKE_HOME/.local/share/shai/v2026.01.01/shai-repl'" \
-  "install: shai-repl wrapper execs the real script path"
+  "exec '$FAKE_HOME/.local/share/shai/current/shai-repl'" \
+  "install: shai-repl wrapper execs through the current symlink"
+assert_eq "$([ -L "$FAKE_HOME/.local/share/shai/current" ] && echo y || echo n)" "y" \
+  "install: current is a symlink"
+assert_eq "$(readlink "$FAKE_HOME/.local/share/shai/current")" "v2026.01.01" \
+  "install: current target is relative and names the installed version"
 assert_eq "$("$FAKE_HOME/.local/bin/shai-repl")" "hello" \
   "install: shai-repl wrapper runs the real script"
 assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai-doctor" ] && echo y)" "y" \
@@ -115,6 +120,28 @@ assert_eq "$("$FAKE_HOME/.local/bin/shai-doctor")" "doctor" \
   "install: shai-doctor wrapper runs the real script"
 assert_eq "$([ -e "$FAKE_HOME/.local/bin/README.md" ] && echo y || echo n)" "n" \
   "install: non-executable README.md gets no wrapper"
+
+# --- Test: a second install re-points current instead of nesting inside it ---
+# `mv -T` exists because a plain `mv tmp current` where current is an existing
+# symlink-to-directory moves tmp *inside* the pointed-to directory. Two consecutive
+# installs must leave current a symlink (asserted as such, not merely re-pointed).
+build_fake_tarball "v2026.02.01"
+make_install_gh_stub "v2026.02.01"
+OUT=$(HOME="$FAKE_HOME" SHAI_VERSION="v2026.02.01" \
+  PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" 2>&1)
+assert_eq "$([ -L "$FAKE_HOME/.local/share/shai/current" ] && echo y || echo n)" "y" \
+  "install: current is still a symlink after a second install"
+assert_eq "$(readlink "$FAKE_HOME/.local/share/shai/current")" "v2026.02.01" \
+  "install: current re-points to the newly installed version"
+assert_eq "$([ -d "$FAKE_HOME/.local/share/shai/v2026.01.01" ] && echo y || echo n)" "y" \
+  "install: the previous version tree survives (rollback / in-flight runs)"
+assert_eq "$(cat "$FAKE_HOME/.local/share/shai/current/VERSION")" "v2026.02.01" \
+  "install: current resolves to the new tree"
+assert_contains "$(cat "$FAKE_HOME/.local/bin/shai-repl")" \
+  "exec '$FAKE_HOME/.local/share/shai/current/shai-repl'" \
+  "install: wrapper still execs through current after the second install"
+assert_contains "$OUT" "current -> v2026.02.01" \
+  "install: success output names what current points at"
 
 # --- Test: failed download cleans up ---
 FAKE_HOME2="$WORK/home2"
@@ -248,5 +275,29 @@ OUT=$(HOME="$FAKE_HOME9" SHAI_VERSION="v2026.06.01" \
 assert_eq "$RC" "0" "install: a missing shai-completions does not fail the install"
 assert_eq "$([ -x "$FAKE_HOME9/.local/bin/shai-repl" ] && echo y)" "y" \
   "install: wrappers still installed when completion install is unavailable"
+
+# --- Test: re-run over a pre-current install self-heals the wrappers ---
+# A release installed before `current` existed has wrappers exec'ing a versioned
+# path and no current symlink. One re-run of install.sh must rewrite the wrappers
+# to resolve through current, with no other user action.
+FAKE_HOME10="$WORK/home10"
+mkdir -p "$FAKE_HOME10/.local/bin"
+mkdir -p "$FAKE_HOME10/.local/share/shai/v2026.01.01"
+printf '#!/bin/bash\necho precurrent\n' >"$FAKE_HOME10/.local/share/shai/v2026.01.01/shai-repl"
+chmod +x "$FAKE_HOME10/.local/share/shai/v2026.01.01/shai-repl"
+printf "#!/bin/bash\nexec '%s' \"\$@\"\n" \
+  "$FAKE_HOME10/.local/share/shai/v2026.01.01/shai-repl" >"$FAKE_HOME10/.local/bin/shai-repl"
+chmod +x "$FAKE_HOME10/.local/bin/shai-repl"
+
+build_fake_tarball "v2026.01.01"
+make_install_gh_stub "v2026.01.01"
+HOME="$FAKE_HOME10" SHAI_VERSION="v2026.01.01" \
+  PATH="$WORK/bin:$PATH" bash "$DIR/install.sh" >/dev/null 2>&1
+
+assert_contains "$(cat "$FAKE_HOME10/.local/bin/shai-repl")" \
+  "exec '$FAKE_HOME10/.local/share/shai/current/shai-repl'" \
+  "install: re-run over a pre-current install rewrites the wrapper through current"
+assert_eq "$("$FAKE_HOME10/.local/bin/shai-repl")" "hello" \
+  "install: the self-healed wrapper runs the freshly installed script"
 
 finish

@@ -15,7 +15,7 @@ Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl
 gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
 ```
 
-Requires `gh` CLI, authenticated (`gh auth login`). Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`. Upgrade by re-running. Rollback: `export SHAI_VERSION=v2026.08.10 && gh api ... | base64 -d | bash`.
+Requires `gh` CLI, authenticated (`gh auth login`). Installs to `~/.local/share/shai/<version>/` with wrappers in `~/.local/bin/`; `~/.local/share/shai/current` always points at the active version. Upgrade by re-running (it re-points `current`); supervised timers then migrate with one `shai-supervise repoint --all` (it preserves customized intervals and API keys). Rollback: `export SHAI_VERSION=v2026.08.10 && gh api ... | base64 -d | bash`.
 
 Check your version: `shai-version`
 
