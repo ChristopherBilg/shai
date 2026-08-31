@@ -205,10 +205,10 @@ for f in "$unit_scan_dir"/shai-*.service; do
         printf '  [WARN] %s points at a missing install\n' "$unit" >&2
       fi
       printf '         ExecStart=%s\n' "$(unit_exec_start "$unit_scan_dir" "$unit")" >&2
-      # `repoint` lands in a later cycle; until it exists, reinstalling over the old unit
-      # is the fix, and --interval must be re-specified because install cannot see the old
-      # timer's interval.
-      printf '         fix: shai-supervise install <script> --interval <interval> (the interval must be re-specified)\n' >&2
+      # `repoint` migrates the ExecStart in place through the current symlink, so a
+      # customized interval and the embedded API key survive — unlike re-running
+      # `install`, which resets the interval and needs the key re-exported.
+      printf '         fix: shai-supervise repoint --all (preserves customized intervals and API keys)\n' >&2
       WARNINGS=$((WARNINGS + 1))
       ;;
   esac
