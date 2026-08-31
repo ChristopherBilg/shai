@@ -46,6 +46,14 @@ if [ -n "$tool_dir" ]; then
   exec bash "$child_run" "$stripped_input"
 fi
 
+# Source the shared URL normalizer from lib/, resolved relative to this script's canonical
+# path (ci_tool) rather than from $0 directly or an installed location: when the tool_dir
+# override (#157) re-execs a clone's ci/run.sh, that clone must source the clone's own
+# lib/git-remote.sh. Hard-coding an installed path would silently orchestrate a dogfooded
+# change with the installed normalizer (issue #344).
+# shellcheck source=lib/git-remote.sh
+source "$(dirname "$ci_tool")/../../lib/git-remote.sh"
+
 if [ "$action" != "list" ] && [ "$action" != "run" ]; then
   printf 'error: action must be "list" or "run" (got "%s")\n' "$action"
   exit 1
@@ -85,29 +93,6 @@ fi
 remote=$(git remote get-url origin 2>/dev/null) || {
   echo "error: not in a git repository or no 'origin' remote"
   exit 1
-}
-
-normalize_url() {
-  local url="$1"
-  url="${url#git+ssh://}"
-  url="${url#ssh://}"
-  url="${url#https://}"
-  url="${url#http://}"
-  # Strip userinfo (user or user:token) so credentials never land in the lookup key.
-  # Only an '@' in the authority (before the first '/') is userinfo.
-  local authority="${url%%/*}"
-  if [[ "$authority" == *@* ]]; then
-    url="${url#*@}"
-  fi
-  # Trailing slashes first, then '.git', then any slash it was hiding, so both
-  # 'host/o/r.git' and 'host/o/r.git/' normalize to 'host/o/r'.
-  while [[ "$url" == */ ]]; do url="${url%/}"; done
-  url="${url%.git}"
-  while [[ "$url" == */ ]]; do url="${url%/}"; done
-  if [[ "$url" =~ ^([^/:]+):(.+)$ ]]; then
-    url="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-  fi
-  printf '%s' "$url"
 }
 
 repo_key=$(normalize_url "$remote")
