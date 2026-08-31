@@ -1,7 +1,7 @@
 #!/bin/bash
 # test_doctor.sh — unit tests for shai-doctor
 # Covers: shai-doctor — CLI tool detection, env var checks, tool-declared config files,
-#   completion installation status, output format, exit codes
+#   completion installation status, supervised-unit install state, output format, exit codes
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -77,6 +77,11 @@ export XDG_DATA_HOME="$FIX/xdg"
 mkdir -p "$XDG_DATA_HOME/zsh/site-functions" "$XDG_DATA_HOME/bash-completion/completions"
 printf '# zsh completion fixture\n' >"$XDG_DATA_HOME/zsh/site-functions/_shai"
 printf '# bash completion fixture\n' >"$XDG_DATA_HOME/bash-completion/completions/shai"
+
+# The Supervised units section scans ${SHAI_UNIT_DIR:-$HOME/.config/systemd/user}; pin it to
+# an absent fixture so the host's real unit directory (which may hold live shai units) never
+# leaks into the exact warning-count assertions below. Tests 31-34 create units here.
+export SHAI_UNIT_DIR="$FIX/units"
 
 # --- Test 1: all checks pass ---
 export DEEPSEEK_API_KEY="test-key"
@@ -476,5 +481,108 @@ assert_eq "$RC" "0" "doctor: top-level scalar policy → exit 0 (WARN, not fatal
 assert_contains "$OUT" '[WARN] $SHAI_HOME/policy.json' "doctor: top-level scalar policy shows WARN"
 assert_contains "$OUT" "must be a JSON object" "doctor: scalar policy warning names the object requirement"
 rm -f "$SHAI_HOME/policy.json"
+
+# --- Test 31: stale supervised unit → WARN with ExecStart + fix hint, exit still 0 ---
+# (mutation-checked: the exit-0 assertion below would pass trivially on a doctor that never
+# detected staleness, so the [WARN] row is asserted first — if detection breaks, this test
+# goes red before the exit-code assertion is reached)
+mkdir -p "$SHAI_UNIT_DIR" "$FIX/oldinstall/workflows/heartbeat"
+printf '#!/bin/bash\nprintf "old heartbeat\\n"\n' >"$FIX/oldinstall/workflows/heartbeat/run.sh"
+chmod +x "$FIX/oldinstall/workflows/heartbeat/run.sh"
+cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$FIX/oldinstall/workflows/heartbeat/run.sh
+Environment=DEEPSEEK_API_KEY=x
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: stale unit → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" "Supervised units:" "doctor: prints the Supervised units section"
+assert_contains "$OUT" "[WARN] shai-heartbeat runs a stale install" "doctor: stale unit shows WARN"
+assert_contains "$OUT" "ExecStart=$FIX/oldinstall/workflows/heartbeat/run.sh" \
+  "doctor: stale WARN names the embedded ExecStart"
+assert_contains "$OUT" "fix: shai-supervise install" "doctor: stale WARN carries the reinstall fix hint"
+assert_contains "$OUT" "interval must be re-specified" \
+  "doctor: stale WARN warns the interval must be re-specified"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: stale unit is exactly one warning"
+
+# --- Test 32: healthy unit → OK line, no stale WARN ---
+# Absence-shaped, paired with the positive control: the same-shaped fixture in Test 31 did
+# produce the [WARN] line, so its absence here means healthy, not blind.
+printf '[Unit]\nDescription=shai shai-heartbeat workflow\n\n[Service]\nType=oneshot\n' \
+  >"$SHAI_UNIT_DIR/shai-heartbeat.service"
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
+#                           # subshell does not change it (shai-doctor resolves the same root)
+printf 'ExecStart=%s/shai-print\n' "$DIR" >>"$SHAI_UNIT_DIR/shai-heartbeat.service"
+printf 'Environment=DEEPSEEK_API_KEY=x\nEnvironment=SHAI_HOME=$HOME/.shai\n' \
+  >>"$SHAI_UNIT_DIR/shai-heartbeat.service"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: healthy unit → exit 0"
+assert_contains "$OUT" "Supervised units:" "doctor: healthy unit still prints the section"
+assert_contains "$OUT" "[OK]   shai-heartbeat" "doctor: healthy unit shows OK"
+if [[ "$OUT" == *"runs a stale install"* ]]; then
+  echo -e "  ${RED}✗${NC} doctor: healthy unit must not warn about a stale install"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} doctor: healthy unit does not warn about a stale install"
+fi
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: healthy unit adds no warnings"
+
+# --- Test 33: broken unit (pruned install dir) → WARN naming the missing install ---
+cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$FIX/pruned-install/workflows/heartbeat/run.sh
+Environment=DEEPSEEK_API_KEY=x
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: broken unit → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" "[WARN] shai-heartbeat points at a missing install" \
+  "doctor: broken unit shows WARN"
+assert_contains "$OUT" "ExecStart=$FIX/pruned-install/workflows/heartbeat/run.sh" \
+  "doctor: broken WARN names the dead ExecStart"
+assert_contains "$OUT" "fix: shai-supervise install" "doctor: broken WARN carries the reinstall fix hint"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: broken unit is exactly one warning"
+
+# --- Test 34: no shai units → the section is entirely silent ---
+# Absence-shaped, paired with the positive control in Tests 31-33: the section and its WARNs
+# appear the moment a unit exists, so silence here means "none present", not "never scanned".
+rm -f "$SHAI_UNIT_DIR"/shai-*.service
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: empty unit dir → exit 0"
+if [[ "$OUT" == *"Supervised units:"* ]]; then
+  echo -e "  ${RED}✗${NC} doctor: empty unit dir must print nothing for the Supervised units section"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} doctor: empty unit dir prints nothing for the Supervised units section"
+fi
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: empty unit dir adds no warnings"
+
+rmdir "$SHAI_UNIT_DIR"
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: absent unit dir → exit 0"
+if [[ "$OUT" == *"Supervised units:"* ]]; then
+  echo -e "  ${RED}✗${NC} doctor: absent unit dir must print nothing for the Supervised units section"
+  FAILED=1
+else
+  echo -e "  ${GREEN}✓${NC} doctor: absent unit dir prints nothing for the Supervised units section"
+fi
 
 finish

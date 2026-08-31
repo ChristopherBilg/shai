@@ -2,13 +2,16 @@
 # shai-doctor — validate environment prerequisites for shai
 # Usage: shai-doctor
 # Reads: $PATH (CLI tool availability), environment variables, tool-declared config files,
-#        $SHAI_HOME/policy.json and $SHAI_POLICY_OVERLAY (policy file validation)
+#        $SHAI_HOME/policy.json and $SHAI_POLICY_OVERLAY (policy file validation),
+#        installed systemd unit files under $SHAI_UNIT_DIR (supervised-unit install state)
 # Writes: diagnostic report to stderr
 # Exit: 0 if all core checks pass; 1 if any core check fails
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 # shellcheck source=lib/workflow.sh
 source "$DIR/lib/workflow.sh"
+# shellcheck source=lib/units.sh
+source "$DIR/lib/units.sh"
 
 ERRORS=0
 WARNINGS=0
@@ -169,6 +172,47 @@ else
     "$BASH_COMPLETIONS" >&2
   WARNINGS=$((WARNINGS + 1))
 fi
+
+# Supervised units: a unit whose ExecStart resolves outside this install runs old code on
+# every timer trigger while the wrappers already run new code — stale. Detection is a pure
+# file read through lib/units.sh, deliberately not `shai-supervise status --json`: that
+# queries `systemctl show`, which fails without a user bus, and systemctl is merely
+# conditional here — staleness must be reported even without a bus. WARN, never FAIL: a
+# stale timer still runs, just old code, so it gets the same degraded-but-usable treatment
+# as the completions warnings and doctor exits on FAIL alone. Units without an ExecStart
+# line ("--") are not ones cmd_install produced and are skipped silently; the whole section
+# is silent when the unit directory is absent or holds no shai units, matching the
+# "missing files are silent" convention.
+unit_scan_dir="${SHAI_UNIT_DIR:-$HOME/.config/systemd/user}"
+supervised_reported=0
+for f in "$unit_scan_dir"/shai-*.service; do
+  [ -e "$f" ] || continue
+  unit="$(basename "$f" .service)"
+  state="$(unit_install_state "$unit_scan_dir" "$DIR" "$unit")"
+  [ "$state" = "--" ] && continue
+  if [ "$supervised_reported" -eq 0 ]; then
+    printf '\nSupervised units:\n' >&2
+    supervised_reported=1
+  fi
+  case "$state" in
+    ok)
+      printf '  [OK]   %s\n' "$unit" >&2
+      ;;
+    stale | broken)
+      if [ "$state" = "stale" ]; then
+        printf '  [WARN] %s runs a stale install\n' "$unit" >&2
+      else
+        printf '  [WARN] %s points at a missing install\n' "$unit" >&2
+      fi
+      printf '         ExecStart=%s\n' "$(unit_exec_start "$unit_scan_dir" "$unit")" >&2
+      # `repoint` lands in a later cycle; until it exists, reinstalling over the old unit
+      # is the fix, and --interval must be re-specified because install cannot see the old
+      # timer's interval.
+      printf '         fix: shai-supervise install <script> --interval <interval> (the interval must be re-specified)\n' >&2
+      WARNINGS=$((WARNINGS + 1))
+      ;;
+  esac
+done
 
 # Derive additional deps from tool plugins
 if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
