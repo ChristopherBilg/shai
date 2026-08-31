@@ -416,6 +416,26 @@ out="$(run_bash _shai_completions shai-completions install "")"
 assert_contains "$out" "zsh" "bash: shai-completions install <TAB> offers zsh"
 assert_contains "$out" "bash" "bash: shai-completions install <TAB> offers bash"
 
+# shai-config noun-as-subcommand (#347): the subcommand list and the new ci
+# noun's static ci_verb list must complete behaviorally, not just exist as
+# generated functions (the issue's manual verification: shai-config <TAB>
+# -> policy ci; shai-config ci <TAB> -> list add remove).
+out="$(run_bash _shai_config shai-config "")"
+assert_contains "$out" "policy" "bash: shai-config <TAB> offers policy"
+assert_contains "$out" "ci" "bash: shai-config <TAB> offers ci"
+
+out="$(run_bash _shai_config shai-config ci "")"
+assert_contains "$out" "list" "bash: shai-config ci <TAB> offers list"
+assert_contains "$out" "add" "bash: shai-config ci <TAB> offers add"
+assert_contains "$out" "remove" "bash: shai-config ci <TAB> offers remove"
+
+# policy is the pre-existing sibling (positive control for the same shape).
+out="$(run_bash _shai_config shai-config policy "")"
+assert_contains "$out" "list" "bash: shai-config policy <TAB> offers list"
+assert_contains "$out" "add" "bash: shai-config policy <TAB> offers add"
+assert_contains "$out" "remove" "bash: shai-config policy <TAB> offers remove"
+assert_contains "$out" "test" "bash: shai-config policy <TAB> offers test"
+
 # shai-events typed value completions: the static event_type/event_source lists
 # come from completions.json types with a static command (the same pattern as the
 # shell type) and complete both full and prefix forms (#327).
@@ -685,6 +705,10 @@ zpty -w shai_comp \$'shai-events --type \t'
 zpty -w shai_comp \$'\cc'
 zpty -w shai_comp \$'shai-events --tool \t'
 zpty -w shai_comp \$'\cc'
+zpty -w shai_comp \$'shai-config \t'
+zpty -w shai_comp \$'\cc'
+zpty -w shai_comp \$'shai-config ci \t'
+zpty -w shai_comp \$'\cc'
 zpty -w shai_comp \$'exit\n'
 local out="" line tries=0
 while [ "\$tries" -lt 10 ]; do
@@ -761,6 +785,16 @@ EOF
     assert_contains "$ZOUT" "tool_result" "zsh: shai-events --type <TAB> offers tool_result"
     assert_contains "$ZOUT" "gh" "zsh: shai-events --tool <TAB> completes tool names"
     assert_contains "$ZOUT" "GitHub CLI helper" "zsh: shai-events --tool <TAB> shows the tool description"
+    # shai-config noun-as-subcommand (#347): the ci noun must complete for real
+    # in compsys, not just parse. The ci candidate name itself is asserted via
+    # its listing description (a bare "ci" substring would also match the
+    # echoed "shai-config" command line).
+    assert_contains "$ZOUT" "policy" "zsh: shai-config <TAB> offers the policy subcommand"
+    assert_contains "$ZOUT" "Manage CI check definitions" \
+      "zsh: shai-config <TAB> offers the ci subcommand"
+    assert_contains "$ZOUT" "list" "zsh: shai-config ci <TAB> offers list"
+    assert_contains "$ZOUT" "add" "zsh: shai-config ci <TAB> offers add"
+    assert_contains "$ZOUT" "remove" "zsh: shai-config ci <TAB> offers remove"
     # repoint's positional exclusion on the zsh side: --dry-run does not exclude
     # the script slot, so the same session completes workflow names there
     # (positive control, P1); once --all is on the line the slot is excluded,
