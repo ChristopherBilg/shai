@@ -53,6 +53,23 @@ assert_eq "$MLRC" "3" "dispatch: missing lib/read-only.sh → exit 3 (dispatch f
 assert_contains "$MLOUT" "install incomplete" "dispatch: missing lib/read-only.sh → clear error message"
 assert_contains "$MLOUT" "exit 3" "dispatch: missing lib/read-only.sh → error names the exit code"
 
+# --- exit-code contract (#257): the new lib/policy.sh pre-flight (the one non-mechanical change
+#     from #343) gets its own fixture — with lib/read-only.sh present and sourceable, a missing
+#     lib/policy.sh must still exit 3 with the explicit "install incomplete" message. A dropped
+#     guard would let the bare `source` abort with status 1 — "a tool ran" — and shai-loop would
+#     re-evaluate forever.
+POLICYLIB_DIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$POLICYLIB_DIR")
+cp "$DIR/shai-dispatch" "$POLICYLIB_DIR/shai-dispatch"
+chmod +x "$POLICYLIB_DIR/shai-dispatch"
+mkdir -p "$POLICYLIB_DIR/lib"
+cp "$DIR/lib/read-only.sh" "$POLICYLIB_DIR/lib/read-only.sh"
+PLOUT=$(echo "$NOTOOL" | "$POLICYLIB_DIR/shai-dispatch" 2>&1)
+PLRC=$?
+assert_eq "$PLRC" "3" "dispatch: missing lib/policy.sh → exit 3 (dispatch failed, not a tool ran)"
+assert_contains "$PLOUT" "install incomplete" "dispatch: missing lib/policy.sh → clear error message"
+assert_contains "$PLOUT" "policy.sh" "dispatch: missing lib/policy.sh → error names the missing file"
+
 # --- exit-code contract (#257): the ERR trap itself needs a direct test — the pre-flight check
 #     above covers the explicit `exit 3`, but the trap is what normalizes an unexpected set -e
 #     abort (any failure that is not a deliberate `exit`) to 3. Cheap trigger: a copy of
