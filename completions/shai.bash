@@ -464,7 +464,7 @@ _shai_supervise() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "install uninstall start stop status logs" -- "$cur") )
+    COMPREPLY=( $(compgen -W "install uninstall start stop status repoint logs" -- "$cur") )
     return
   fi
   case "${COMP_WORDS[1]}" in
@@ -558,6 +558,29 @@ _shai_supervise() {
         esac
       done
       if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
+        _shai_bash_workflow_name
+        return
+      fi
+      COMPREPLY=()
+      ;;
+    repoint)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--all --dry-run" -- "$cur") )
+        return
+      fi
+      local _shai_nopos=0 _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          --all)
+            _shai_nopos=1
+            ;;
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_nopos" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_workflow_name
         return
       fi

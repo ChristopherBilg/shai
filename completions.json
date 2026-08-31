@@ -504,6 +504,25 @@
             }
           }
         },
+        "repoint": {
+          "description": "Re-point installed units from a versioned path to the current install",
+          "positional": [
+            {
+              "name": "script",
+              "type": "workflow_name",
+              "description": "Script or workflow to repoint (or --all for every installed unit)"
+            }
+          ],
+          "flags": {
+            "--all": {
+              "description": "Repoint every installed shai-*.service unit",
+              "excludes_positional": true
+            },
+            "--dry-run": {
+              "description": "Print the diff without writing"
+            }
+          }
+        },
         "logs": {
           "description": "Follow a workflow's journald output",
           "positional": [

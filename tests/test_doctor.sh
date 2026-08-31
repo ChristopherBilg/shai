@@ -506,9 +506,9 @@ assert_contains "$OUT" "Supervised units:" "doctor: prints the Supervised units 
 assert_contains "$OUT" "[WARN] shai-heartbeat runs a stale install" "doctor: stale unit shows WARN"
 assert_contains "$OUT" "ExecStart=$FIX/oldinstall/workflows/heartbeat/run.sh" \
   "doctor: stale WARN names the embedded ExecStart"
-assert_contains "$OUT" "fix: shai-supervise install" "doctor: stale WARN carries the reinstall fix hint"
-assert_contains "$OUT" "interval must be re-specified" \
-  "doctor: stale WARN warns the interval must be re-specified"
+assert_contains "$OUT" "fix: shai-supervise repoint --all" "doctor: stale WARN carries the repoint fix hint"
+assert_contains "$OUT" "preserves customized intervals" \
+  "doctor: stale WARN notes repoint preserves the customized interval"
 SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: stale unit is exactly one warning"
 
@@ -554,7 +554,7 @@ assert_contains "$OUT" "[WARN] shai-heartbeat points at a missing install" \
   "doctor: broken unit shows WARN"
 assert_contains "$OUT" "ExecStart=$FIX/pruned-install/workflows/heartbeat/run.sh" \
   "doctor: broken WARN names the dead ExecStart"
-assert_contains "$OUT" "fix: shai-supervise install" "doctor: broken WARN carries the reinstall fix hint"
+assert_contains "$OUT" "fix: shai-supervise repoint --all" "doctor: broken WARN carries the repoint fix hint"
 SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: broken unit is exactly one warning"
 

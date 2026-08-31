@@ -303,6 +303,7 @@ _shai-supervise() {
     'start:Start a workflow'"'"'s systemd timer'
     'stop:Stop a workflow'"'"'s systemd timer'
     'status:Show timer state for supervised workflows'
+    'repoint:Re-point installed units from a versioned path to the current install'
     'logs:Follow a workflow'"'"'s journald output'
   )
   if (( CURRENT == 2 )); then
@@ -336,6 +337,21 @@ _shai-supervise() {
         '1:subcommand' \
         '--json[Emit JSON]' \
         '2:script:_shai_type_workflow_name'
+      ;;
+    repoint)
+      _arguments -S \
+        '1:subcommand' \
+        '--all[Repoint every installed shai-*.service unit]' \
+        '--dry-run[Print the diff without writing]' \
+        '2:script:->script'
+      case "$state" in
+        script)
+          for _shai_f in --all; do
+            [[ -n "${words[(r)$_shai_f]}" ]] && return 0
+          done
+          _shai_type_workflow_name
+          ;;
+        esac
       ;;
     logs)
       _arguments -S \
