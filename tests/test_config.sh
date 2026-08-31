@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_config.sh — unit tests for shai-config policy list|add|remove|test
+# test_config.sh — unit tests for shai-config policy list|add|remove|test and ci list|add|remove
 # Covers: shai-config — noun/verb dispatch and usage errors (exit 2), policy list (human
 #         table + --json, overlay FILE column, effective default line), policy add (append,
 #         --args objects, duplicate --args key refusal, --before insertion and leading-zero
@@ -8,7 +8,14 @@
 #         policy remove (list index, out-of-range index, corrupt file untouched), policy
 #         test (verdicts from lib/policy.sh check_policy — rule/default/readonly reasons,
 #         tostring echo, --overlay, --json), corrupt-policy parse-before-write and atomic
-#         temp-file writes preserving the existing mode
+#         temp-file writes preserving the existing mode; ci list (human + --json, resolved
+#         key naming), ci add (origin-derived and --repo keys normalized through
+#         lib/git-remote.sh, file creation with version 1.0 and no _comment, --timeout/
+#         --env storage and validation including env-var-name keys and the dash-leading
+#         --name refusal, existing-check refusal), ci remove (single-check removal
+#         leaving the repo entry and checks: {}, unknown check listing available
+#         names), corrupt-ci.json parse-before-write including a missing/null .repos
+#         shape, no-git-remote exit 1, and the round-trip against tools/ci/run.sh
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -370,5 +377,302 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.input.args[0]')" "pr" "test --json: in
 OUT=$(SHAI_HOME="$PDIR" "$CFG" policy test --tool gh --input 'nope {' 2>&1) && rc=0 || rc=$?
 assert_eq "$rc" "1" "test: invalid --input JSON → exit 1"
 assert_contains "$OUT" "error: --input is not valid JSON" "test: invalid --input → own error: prefix"
+
+# ================================ ci half ================================
+echo "shai-config ci"
+
+# ci_home <json>: temp dir whose ci.json contains the given content; echoes the path.
+ci_home() {
+  local d
+  d=$(mktemp -d)
+  _CLEANUP_DIRS+=("$d")
+  printf '%s' "$1" >"$d/ci.json"
+  printf '%s' "$d"
+}
+
+# empty_ci_home: temp dir with no ci.json at all; echoes the path.
+empty_ci_home() {
+  local d
+  d=$(mktemp -d)
+  _CLEANUP_DIRS+=("$d")
+  printf '%s' "$d"
+}
+
+# git_repo <remote-url>: temp dir holding a git repository whose origin remote is
+# <remote-url>; echoes the path. Local only — git init + git remote add needs no network.
+git_repo() {
+  local url="$1" d
+  d=$(mktemp -d)
+  _CLEANUP_DIRS+=("$d")
+  git -C "$d" init -q
+  git -C "$d" remote add origin "$url"
+  printf '%s' "$d"
+}
+
+# --- usage dispatch: exit 2 for unknown noun/verb/flag, missing required options ---
+assert_exit 2 "ci without a verb is a usage error" -- "$CFG" ci
+assert_exit 2 "ci unknown verb is a usage error" -- "$CFG" ci bogus
+assert_exit 2 "ci list: unknown flag is a usage error" -- "$CFG" ci list --bogus
+assert_exit 2 "ci add: unknown flag is a usage error" -- "$CFG" ci add --bogus
+assert_exit 2 "ci add: missing --name is a usage error" -- "$CFG" ci add --command c
+assert_exit 2 "ci add: missing --command is a usage error" -- "$CFG" ci add --name n
+assert_exit 2 "ci remove: no name is a usage error" -- "$CFG" ci remove
+assert_exit 2 "ci remove: flag-like name is a usage error" -- "$CFG" ci remove --json
+assert_exit 2 "ci list: --repo without a value is a usage error" -- "$CFG" ci list --repo
+
+# --- ci add: derives the key from the origin remote, via lib/git-remote.sh ---
+REPO=$(git_repo "https://github.com/ChristopherBilg/shai.git")
+CIHOME=$(empty_ci_home)
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --name tests --command ./tests/run.sh --timeout 900) && rc=0 || rc=$?
+assert_eq "$rc" "0" "add: exits 0"
+assert_contains "$OUT" "repo: github.com/ChristopherBilg/shai  (from origin)" \
+  "add: prints the derived key and where it came from"
+assert_contains "$OUT" 'added check "tests"' "add: reports the added check"
+assert_eq "$(jq -r '.repos["github.com/ChristopherBilg/shai"].checks.tests.command' "$CIHOME/ci.json")" "./tests/run.sh" \
+  "add: command stored under the normalized origin key"
+assert_eq "$(jq -r '.repos["github.com/ChristopherBilg/shai"].checks.tests.timeout' "$CIHOME/ci.json")" "900" \
+  "add: --timeout stored"
+assert_eq "$(jq -r '.version' "$CIHOME/ci.json")" "1.0" "add: created file carries version 1.0"
+# Absence assertions, mutation-checked: creating the file by copying ci.json.example
+# instead of the fresh {"version":"1.0","repos":{}} literal makes both go red.
+assert_eq "$(jq -r 'has("_comment")' "$CIHOME/ci.json")" "false" \
+  "add: the written file carries no _comment (the example's is not copied)"
+assert_eq "$(jq -r '.repos["github.com/ChristopherBilg/shai"].checks.tests | has("env")' "$CIHOME/ci.json")" "false" \
+  "add: no env key when --env omitted"
+
+REPO_SCP=$(git_repo "git@github.com:scp/repo.git")
+CIHOME_SCP=$(empty_ci_home)
+(cd "$REPO_SCP" && SHAI_HOME="$CIHOME_SCP" "$CFG" ci add --name t --command c)
+assert_eq "$(jq -r '.repos | keys[0]' "$CIHOME_SCP/ci.json")" "github.com/scp/repo" \
+  "add: scp-style origin runs through the shared normalizer"
+
+# --- ci add: --repo is normalized through the same function (the mis-keying guard) ---
+# The key written into the file is asserted, not just the printed line: a private
+# normalizer that printed the right line but wrote the raw URL would pass the print
+# assertion and leave a dead entry. Mutation-checked: bypassing normalize_url for the
+# --repo path (key="$override") turns all four assertions red.
+NODIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$NODIR")
+CIHOME=$(empty_ci_home)
+OUT=$(cd "$NODIR" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo https://github.com/o/r.git --name lint --command 'make lint')
+assert_contains "$OUT" "repo: github.com/o/r  (normalized from --repo)" \
+  "add --repo: normalized key and provenance printed"
+assert_contains "$OUT" 'added check "lint"' "add --repo: reports the added check"
+assert_eq "$(jq -r '.repos | keys[0]' "$CIHOME/ci.json")" "github.com/o/r" \
+  "add --repo: the normalized key is what lands in the file"
+assert_eq "$(jq -r '.repos | has("https://github.com/o/r.git")' "$CIHOME/ci.json")" "false" \
+  "add --repo: the un-normalized spelling is never a key"
+
+# --- ci add: appends into an existing file, preserving unrelated entries ---
+CIHOME=$(ci_home '{"version":"1.0","repos":{"github.com/other/repo":{"checks":{"t":{"command":"x"}}}}}')
+(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --name lint --command 'make lint' --repo github.com/o/r)
+assert_eq "$(jq -r '.repos | keys | length' "$CIHOME/ci.json")" "2" "add: a new repo entry lands beside the existing one"
+assert_eq "$(jq -r '.repos["github.com/other/repo"].checks.t.command' "$CIHOME/ci.json")" "x" \
+  "add: the other repo's checks untouched"
+assert_eq "$(jq -r '.version' "$CIHOME/ci.json")" "1.0" "add: version preserved"
+
+CIHOME=$(ci_home '{"version":"1.0","repos":{"github.com/o/r":{"checks":{"tests":{"command":"echo a"}}}}}')
+(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --name lint --command 'make lint' --repo github.com/o/r)
+assert_eq "$(jq -r '.repos["github.com/o/r"].checks.tests.command' "$CIHOME/ci.json")" "echo a" \
+  "add: existing check preserved"
+assert_eq "$(jq -r '.repos["github.com/o/r"].checks.lint.command' "$CIHOME/ci.json")" "make lint" \
+  "add: second check added alongside the first"
+
+# --- ci add: --env builds the per-check env map (values verbatim, = preserved) ---
+CIHOME=$(empty_ci_home)
+(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --name tests --command ./tests/run.sh --env FOO=bar --env 'BAZ=qux=quux')
+assert_eq "$(jq -r '.repos["github.com/ChristopherBilg/shai"].checks.tests.env.FOO' "$CIHOME/ci.json")" "bar" \
+  "add: first --env pair stored"
+assert_eq "$(jq -r '.repos["github.com/ChristopherBilg/shai"].checks.tests.env.BAZ' "$CIHOME/ci.json")" "qux=quux" \
+  "add: value containing = stored verbatim"
+assert_eq "$(jq -r '.repos["github.com/ChristopherBilg/shai"].checks.tests.env | keys | length' "$CIHOME/ci.json")" "2" \
+  "add: both --env pairs stored"
+
+# --- ci add: value validation and the existing-name refusal write nothing ---
+CIHOME=$(ci_home '{"version":"1.0","repos":{"github.com/o/r":{"checks":{"tests":{"command":"echo old"}}}}}')
+SNAPSHOT=$(cat "$CIHOME/ci.json")
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name tests --command new 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: existing check name is refused (remove + add covers edits)"
+assert_contains "$OUT" 'error: check "tests" already exists for github.com/o/r' \
+  "add: refusal names the check and the repo key (own error: prefix)"
+assert_contains "$OUT" "shai-config ci remove tests" "add: refusal names the remove + add path"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "add: refusal leaves the file byte-identical"
+
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --timeout 0 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: --timeout 0 → exit 1"
+assert_contains "$OUT" 'error: --timeout must be a positive integer in seconds (got "0")' \
+  "add: --timeout 0 → own error: prefix"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --timeout xyz 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: non-integer --timeout → exit 1"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --env noequals 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: --env without = → exit 1"
+assert_contains "$OUT" "error: --env expects K=V" "add: bad --env → own error: prefix"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --env K=A --env K=B 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: duplicate --env key → exit 1"
+assert_contains "$OUT" 'error: duplicate --env key "K"' "add: duplicate --env → own error: prefix"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --env 'BAD KEY=1' 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: --env key with a space → exit 1"
+assert_contains "$OUT" 'error: --env key "BAD KEY" is not an environment variable name' \
+  "add: non env-var-name key → own error: prefix"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name t --command c --env '9BAD=1' 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: digit-leading --env key → exit 1"
+assert_contains "$OUT" 'error: --env key "9BAD" is not an environment variable name' \
+  "add: digit-leading env key → own error: prefix"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --repo github.com/o/r --name -foo --command c 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: dash-leading --name → exit 1"
+assert_contains "$OUT" 'error: --name must not start with "-" (got "-foo")' \
+  "add: dash-leading --name → own error: prefix"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "add: every rejected value left the file byte-identical"
+
+# --- ci add/remove: corrupt ci.json aborts with exit 1, byte-identical ---
+# The byte-identical assertions were mutation-checked: replacing the
+# parse-before-write branch with an unconditional fresh
+# {"version":"1.0","repos":{}} lets add/remove rewrite the corrupt file and turns
+# them red; the temp-file-litter assertions fail alongside (the temp file is only
+# ever created on a write path).
+CIHOME=$(ci_home 'not json {')
+SNAPSHOT=$(cat "$CIHOME/ci.json")
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --name tests --command ./tests/run.sh 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: corrupt ci.json → exit 1"
+assert_contains "$OUT" "error:" "add: corrupt ci.json → own error: prefix"
+assert_contains "$OUT" "shai-doctor" "add: corrupt ci.json → shai-doctor pointer"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "add: corrupt ci.json left byte-identical (mutation-checked)"
+assert_eq "$(ls -A "$CIHOME")" "ci.json" "add: corrupt abort leaves no temp file behind"
+
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove tests 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "remove: corrupt ci.json → exit 1"
+assert_contains "$OUT" "error:" "remove: corrupt ci.json → own error: prefix"
+assert_contains "$OUT" "shai-doctor" "remove: corrupt ci.json → shai-doctor pointer"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "remove: corrupt ci.json left byte-identical (mutation-checked)"
+assert_eq "$(ls -A "$CIHOME")" "ci.json" "remove: corrupt abort leaves no temp file behind"
+
+# --- ci list/remove/add: a missing or null .repos is a corrupt shape, not an empty one ---
+# load_ci must reject these up front: a // {} fallback in the shape check once let
+# {"version":"1.0"} pass validation, and the command paths then died on .repos[$key]
+# with a raw jq "Cannot index null" error instead of this tool's clean shai-doctor
+# abort. Mutation-checked: restoring the fallback turns these red while the corrupt-byte
+# tests above stay green.
+CIHOME=$(ci_home '{"version":"1.0"}')
+SNAPSHOT=$(cat "$CIHOME/ci.json")
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci list 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "list: .repos missing → exit 1"
+assert_contains "$OUT" "not a valid ci config" "list: .repos missing → own error: prefix"
+assert_contains "$OUT" "shai-doctor" "list: .repos missing → shai-doctor pointer"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "list: .repos missing left the file byte-identical"
+
+CIHOME=$(ci_home '{"version":"1.0","repos":null}')
+SNAPSHOT=$(cat "$CIHOME/ci.json")
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove tests 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "remove: null .repos → exit 1"
+assert_contains "$OUT" "not a valid ci config" "remove: null .repos → own error: prefix"
+assert_contains "$OUT" "shai-doctor" "remove: null .repos → shai-doctor pointer"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "remove: null .repos left the file byte-identical"
+
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --name t --command c 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: null .repos → exit 1"
+assert_contains "$OUT" "not a valid ci config" "add: null .repos → own error: prefix"
+assert_eq "$(cat "$CIHOME/ci.json")" "$SNAPSHOT" "add: null .repos left the file byte-identical"
+
+# --- ci add/remove: an existing file's mode survives the atomic rewrite ---
+CIHOME=$(ci_home '{"version":"1.0","repos":{}}')
+chmod 644 "$CIHOME/ci.json"
+(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci add --name t --command c --repo github.com/o/r)
+assert_eq "$(stat -c '%a' "$CIHOME/ci.json")" "644" "add: existing 0644 mode preserved across the rewrite"
+(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove t --repo github.com/o/r)
+assert_eq "$(stat -c '%a' "$CIHOME/ci.json")" "644" "remove: existing 0644 mode preserved across the rewrite"
+
+# --- ci list: human rows and --json for the resolved repo key ---
+CIHOME=$(ci_home '{"version":"1.0","repos":{"github.com/o/r":{"checks":{"tests":{"command":"./tests/run.sh","timeout":900},"lint":{"command":"make lint"}}}}}')
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci list --repo https://github.com/o/r.git) && rc=0 || rc=$?
+assert_eq "$rc" "0" "list --repo: exits 0"
+assert_contains "$OUT" "repo: github.com/o/r  (normalized from --repo)" \
+  "list --repo: normalized key line with provenance"
+assert_contains "$OUT" "  tests: ./tests/run.sh" "list: first check row"
+assert_contains "$OUT" "  lint: make lint" "list: second check row"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci list --repo github.com/o/r --json)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.repo')" "github.com/o/r" "list --json: repo key"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.file')" "$CIHOME/ci.json" "list --json: file"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.checks.tests.command')" "./tests/run.sh" "list --json: check command preserved"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.checks.tests.timeout')" "900" "list --json: timeout preserved"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.checks | length')" "2" "list --json: both checks"
+
+# --- ci list/remove: an absent repo key names the resolved key (exit 1) ---
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci list 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "list: repo key absent from the file → exit 1"
+assert_contains "$OUT" 'error: repository "github.com/ChristopherBilg/shai" not found in' \
+  "list: absent key names the resolved key (own error: prefix)"
+assert_contains "$OUT" "$CIHOME/ci.json" "list: absent key names the file"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove tests 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "remove: repo key absent → exit 1"
+assert_contains "$OUT" 'error: repository "github.com/ChristopherBilg/shai" not found in' \
+  "remove: absent key names the resolved key (own error: prefix)"
+assert_eq "$(jq -r '.repos | keys | length' "$CIHOME/ci.json")" "1" "remove: absent key wrote nothing"
+
+# --- ci list/remove: no ci.json at all (the ci tool's wording) ---
+CIHOME=$(empty_ci_home)
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci list 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "list: no ci.json → exit 1"
+assert_contains "$OUT" "error: no CI config found at" "list: missing file → own error: prefix (the ci tool's wording)"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove tests 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "remove: no ci.json → exit 1"
+assert_contains "$OUT" "error: no CI config found at" "remove: missing file → own error: prefix"
+
+# --- no git remote and no --repo → exit 1 naming both fixes ---
+OUT=$(cd "$NODIR" && SHAI_HOME="$CIHOME" "$CFG" ci add --name t --command c 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: not in a git repo and no --repo → exit 1"
+assert_contains "$OUT" "error: not in a git repository or no 'origin' remote" \
+  "add: no remote → the ci tool's wording (own error: prefix)"
+assert_contains "$OUT" "pass --repo KEY to target another repository, or add an 'origin' remote" \
+  "add: no remote names both fixes"
+assert_eq "$(test -f "$CIHOME/ci.json" && echo exists || echo absent)" "absent" "add: no remote wrote nothing"
+OUT=$(cd "$NODIR" && SHAI_HOME="$CIHOME" "$CFG" ci list 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "list: no git remote and no --repo → exit 1"
+assert_contains "$OUT" "error: not in a git repository or no 'origin' remote" "list: no remote → own error: prefix"
+
+# --- ci remove: drops one check, never the repo entry ---
+# The empty-checks and repo-entry-kept assertions were mutation-checked: changing the
+# rewrite to `del(.repos[$key])` makes both red (checks: {} becomes null, the key
+# vanishes), the positive controls beside them stay green.
+CIHOME=$(ci_home '{"version":"1.0","repos":{"github.com/o/r":{"checks":{"tests":{"command":"echo a"},"lint":{"command":"echo b"}}}}}')
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove tests --repo github.com/o/r)
+assert_contains "$OUT" "repo: github.com/o/r  (normalized from --repo)" "remove: prints the resolved key and provenance"
+assert_contains "$OUT" 'removed check "tests"' "remove: reports the removed check"
+assert_eq "$(jq -r '.repos["github.com/o/r"].checks | has("tests")' "$CIHOME/ci.json")" "false" \
+  "remove: the named check is gone"
+assert_eq "$(jq -r '.repos["github.com/o/r"].checks.lint.command' "$CIHOME/ci.json")" "echo b" \
+  "remove: the other check is kept"
+assert_eq "$(jq -r '.repos | keys | length' "$CIHOME/ci.json")" "1" "remove: the repo entry itself is never removed"
+(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove lint --repo github.com/o/r)
+assert_eq "$(jq -r '.repos["github.com/o/r"].checks | length' "$CIHOME/ci.json")" "0" \
+  "remove: the last check leaves checks: {} (mutation-checked)"
+assert_eq "$(jq -r '.repos | has("github.com/o/r")' "$CIHOME/ci.json")" "true" \
+  "remove: the emptied repo entry stays (a valid state the ci tool reports as none configured)"
+assert_eq "$(jq empty "$CIHOME/ci.json" >/dev/null 2>&1 && echo ok)" "ok" "remove: file still valid JSON"
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci list --repo github.com/o/r) && rc=0 || rc=$?
+assert_eq "$rc" "0" "list: empty checks map exits 0 (a valid state)"
+assert_contains "$OUT" "  (none configured)" "list: empty checks map reports (none configured)"
+
+# --- ci remove: unknown check lists the available names (exit 1) ---
+CIHOME=$(ci_home '{"version":"1.0","repos":{"github.com/o/r":{"checks":{"tests":{"command":"echo a"},"lint":{"command":"echo b"}}}}}')
+OUT=$(cd "$REPO" && SHAI_HOME="$CIHOME" "$CFG" ci remove nope --repo github.com/o/r 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "remove: unknown check → exit 1"
+assert_contains "$OUT" 'error: no check "nope" for github.com/o/r' \
+  "remove: unknown check names the check and repo (own error: prefix)"
+assert_contains "$OUT" "available checks:" "remove: unknown check lists the available names"
+assert_contains "$OUT" "  tests" "remove: available names list tests"
+assert_contains "$OUT" "  lint" "remove: available names list lint"
+assert_eq "$(jq -r '.repos["github.com/o/r"].checks | length' "$CIHOME/ci.json")" "2" \
+  "remove: unknown check wrote nothing"
+
+# --- round-trip with the real tool: a check written here is found by tools/ci/run.sh ---
+REPO_RT=$(git_repo "https://github.com/o/r.git")
+CIHOME=$(empty_ci_home)
+(cd "$REPO_RT" && SHAI_HOME="$CIHOME" "$CFG" ci add --name smoke --command 'echo ok')
+OUT=$(cd "$REPO_RT" && SHAI_HOME="$CIHOME" "$DIR/tools/ci/run.sh" '{"action":"list"}')
+assert_contains "$OUT" "smoke: echo ok" "round-trip: the ci tool lists the check shai-config wrote"
+OUT=$(cd "$REPO_RT" && SHAI_HOME="$CIHOME" "$DIR/tools/ci/run.sh" '{"action":"run","check":"smoke"}') && rc=0 || rc=$?
+assert_eq "$rc" "0" "round-trip: the ci tool runs the check shai-config wrote"
+assert_contains "$OUT" "exit_code: 0" "round-trip: the run succeeded"
+assert_contains "$OUT" "ok" "round-trip: the check output is visible"
 
 finish
