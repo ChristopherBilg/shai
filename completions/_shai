@@ -124,7 +124,17 @@ _shai_type_policy_verb() {
     [ -n "$line" ] || continue
     items+=("${line/$'\t'/:}")
   done < <(printf '%s\n' list add remove test)
-  _describe -t policy_verb 'shai-config policy command' items
+  _describe -t policy_verb 'shai-config policy operation' items
+}
+(( $+functions[_shai_type_ci_verb] )) ||
+_shai_type_ci_verb() {
+  local -a items
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    items+=("${line/$'\t'/:}")
+  done < <(printf '%s\n' list add remove)
+  _describe -t ci_verb 'shai-config ci operation' items
 }
 (( $+functions[_shai_type_policy_action] )) ||
 _shai_type_policy_action() {
@@ -451,7 +461,8 @@ _shai-completions() {
 _shai-config() {
   local -a cmds
   cmds=(
-    'policy:Inspect, edit, and test permission-gate policy rules'
+    'policy:Manage permission rules in $SHAI_HOME/policy.json'
+    'ci:Manage CI check definitions in $SHAI_HOME/ci.json'
   )
   if (( CURRENT == 2 )); then
     _describe -t subcommands 'subcommand' cmds
@@ -469,7 +480,18 @@ _shai-config() {
         '--input[Tool input JSON to evaluate against the policy]:JSON:' \
         '--overlay[Overlay policy file to consult before the base policy]:PATH:_files' \
         '--json[Emit JSON]' \
-        '2:command:_shai_type_policy_verb'
+        '2:verb:_shai_type_policy_verb'
+      ;;
+    ci)
+      _arguments -S \
+        '1:subcommand' \
+        '--json[Emit JSON]' \
+        '--repo[Repository key to operate on (default: the cwd'"'"'s origin remote, normalized)]:KEY:' \
+        '--name[Check name to add]:NAME:' \
+        '--command[Check command to run]:CMD:' \
+        '--timeout[Check timeout in seconds]:SECONDS:' \
+        '--env[Environment variable for the check (repeatable)]:K=V:' \
+        '2:verb:_shai_type_ci_verb'
       ;;
     *)
       _arguments -S \

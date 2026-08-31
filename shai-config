@@ -559,8 +559,6 @@ cmd_test() {
 # refuses to run anything without, and which nothing else creates. The repo key under
 # .repos is always computed by normalize_url from lib/git-remote.sh, the same function the
 # ci tool reads entries by, so a hand-typed --repo cannot create a mis-keyed dead entry.
-# _completions_ignore: --repo --name --command --timeout --env (the ci subcommand's
-# completions.json entry lands in a separate issue; declared there, not silently ignored)
 
 # load_ci <path>: the ci config's JSON (compact, one line) on stdout. Exit 1 with a
 # shai-doctor pointer on stderr when the file is not a JSON object whose .repos map holds

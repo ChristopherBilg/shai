@@ -83,6 +83,11 @@ _shai_bash_policy_verb() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   COMPREPLY=( $(compgen -W "$(printf '%s\n' list add remove test | cut -f1)" -- "$cur") )
 }
+_shai_bash_ci_verb() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=( $(compgen -W "$(printf '%s\n' list add remove | cut -f1)" -- "$cur") )
+}
 _shai_bash_policy_action() {
   local cur
   cur="${COMP_WORDS[COMP_CWORD]}"
@@ -708,7 +713,7 @@ _shai_config() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD-1]}"
   if [ "$COMP_CWORD" -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "policy" -- "$cur") )
+    COMPREPLY=( $(compgen -W "policy ci" -- "$cur") )
     return
   fi
   case "${COMP_WORDS[1]}" in
@@ -784,6 +789,61 @@ _shai_config() {
       done
       if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
         _shai_bash_policy_verb
+        return
+      fi
+      COMPREPLY=()
+      ;;
+    ci)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--json --repo --name --command --timeout --env" -- "$cur") )
+        return
+      fi
+      local _shai_pos=0 _shai_val=0 _shai_i
+      for (( _shai_i = 1; _shai_i < COMP_CWORD; _shai_i++ )); do
+        case "${COMP_WORDS[_shai_i]}" in
+          --repo)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --repo=*) : ;;
+          --name)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --name=*) : ;;
+          --command)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --command=*) : ;;
+          --timeout)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --timeout=*) : ;;
+          --env)
+            if [ $((_shai_i + 1)) -ge "$COMP_CWORD" ]; then
+              _shai_val=1
+            fi
+            _shai_i=$((_shai_i + 1))
+            ;;
+          --env=*) : ;;
+          -*) : ;;
+          *)
+            _shai_pos=$((_shai_pos + 1))
+            ;;
+        esac
+      done
+      if [ "$_shai_val" -eq 0 ] && [ "$_shai_pos" -eq 1 ]; then
+        _shai_bash_ci_verb
         return
       fi
       COMPREPLY=()
