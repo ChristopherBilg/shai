@@ -261,6 +261,18 @@ assert_contains "$OUT" "shai-doctor" "remove: corrupt policy → shai-doctor poi
 assert_eq "$(cat "$CDIR/policy.json")" "$SNAPSHOT" "remove: corrupt policy left byte-identical"
 assert_eq "$(ls -A "$CDIR")" "policy.json" "remove: corrupt abort leaves no temp file behind"
 
+# --- policy add/remove: an existing file's mode survives the atomic rewrite ---
+# mktemp creates the temp file 0600 and mv carries that mode onto the policy, so without
+# preservation a successful rewrite silently tightens a hand-edited 0644 file. The 644
+# assertions were mutation-checked: deleting the chmod in write_policy makes add/remove
+# leave the file at 600 and turns them red.
+PDIR=$(policy_home '{"rules":[{"tool":"gh","action":"allow"}]}')
+chmod 644 "$PDIR/policy.json"
+SHAI_HOME="$PDIR" "$CFG" policy add --tool git --action deny
+assert_eq "$(stat -c '%a' "$PDIR/policy.json")" "644" "add: existing 0644 mode preserved across the rewrite"
+SHAI_HOME="$PDIR" "$CFG" policy remove 2
+assert_eq "$(stat -c '%a' "$PDIR/policy.json")" "644" "remove: existing 0644 mode preserved across the rewrite"
+
 # --- policy remove: list index addressing ---
 PDIR=$(policy_home '{"default":"allow","rules":[{"tool":"gh","action":"allow"},{"tool":"git","action":"deny"},{"tool":"jira","action":"allow"}]}')
 OUT=$(SHAI_HOME="$PDIR" "$CFG" policy remove 2) && rc=0 || rc=$?

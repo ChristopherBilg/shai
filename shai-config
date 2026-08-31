@@ -58,11 +58,33 @@ load_policy() {
   printf '%s' "$parsed"
 }
 
+# file_mode <path>: echo the file's octal permission bits, or nothing when unavailable.
+# GNU coreutils and BSD/macOS stat disagree on flags, so try both (the repo targets both).
+# Always returns 0: the caller assigns via command substitution, and a non-zero status
+# there would abort the script under `set -e`.
+file_mode() {
+  local mode high low
+  if mode=$(stat -c '%a' "$1" 2>/dev/null); then
+    printf '%s' "$mode"
+  elif high=$(stat -f '%Mp' "$1" 2>/dev/null) && low=$(stat -f '%Lp' "$1" 2>/dev/null); then
+    while [ "${#low}" -lt 3 ]; do low="0$low"; done
+    printf '%s%s' "$high" "$low"
+  fi
+  return 0
+}
+
 # write_policy <json>: atomically replace $STATE_DIR/policy.json — temp file + mv, the
 # shai-completions install pattern. A failed write never leaves a truncated policy behind
-# and never destroys the existing one.
+# and never destroys the existing one. An existing file's permission bits are preserved
+# across the replacement: mktemp creates the temp file 0600 and mv would otherwise carry
+# that mode onto the policy, silently tightening a hand-edited 0644 file. A brand-new
+# policy keeps the temp file's 0600 (the conservative default for a file the user never
+# created).
 write_policy() {
-  local tmp
+  local tmp mode=""
+  if [ -f "$POLICY_FILE" ]; then
+    mode=$(file_mode "$POLICY_FILE")
+  fi
   if ! mkdir -p "$STATE_DIR"; then
     printf 'error: cannot create state directory %s\n' "$STATE_DIR" >&2
     return 1
@@ -72,6 +94,11 @@ write_policy() {
     return 1
   fi
   if ! printf '%s\n' "$1" >"$tmp"; then
+    rm -f "$tmp"
+    printf 'error: cannot write %s\n' "$POLICY_FILE" >&2
+    return 1
+  fi
+  if [ -n "$mode" ] && ! chmod "$mode" "$tmp"; then
     rm -f "$tmp"
     printf 'error: cannot write %s\n' "$POLICY_FILE" >&2
     return 1
