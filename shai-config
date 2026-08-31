@@ -276,6 +276,13 @@ cmd_add() {
     printf 'error: --before must be a non-negative integer (got "%s")\n' "$BEFORE" >&2
     exit 1
   fi
+  # Leading-zero forms pass the digit check ("09", "00") but break everything downstream:
+  # bash arithmetic reads "09" as an invalid octal and jq's JSON grammar rejects leading
+  # zeros, so the user would get a raw jq error instead of the documented exit-1 validation
+  # failure. Normalize to a plain decimal here.
+  if [ -n "$BEFORE" ]; then
+    BEFORE=$((10#$BEFORE))
+  fi
   local pair
   for pair in "${ARG_PAIRS[@]}"; do
     case "$pair" in

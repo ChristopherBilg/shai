@@ -186,6 +186,22 @@ PDIR=$(policy_home '{"rules":[{"tool":"gh","action":"allow"},{"tool":"git","acti
 SHAI_HOME="$PDIR" "$CFG" policy add --tool sleep --action allow --before 1
 assert_eq "$(jq -r '.rules[1].tool' "$PDIR/policy.json")" "sleep" "add --before 1: inserted mid-file"
 
+# --- policy add: --before leading zeros normalize to a plain decimal ---
+# "09"/"00" pass the digit check but are invalid octal for bash arithmetic and invalid JSON
+# for jq --argjson, which used to surface as a raw jq error; they must normalize instead.
+PDIR=$(policy_home "$(jq -nc '{rules: [range(0;10) | {tool: ("t" + tostring), action: "allow"}]}')")
+OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool gh --action allow --before 09) && rc=0 || rc=$?
+assert_eq "$rc" "0" "add --before 09: normalized to 9, exits 0 (no raw jq error)"
+assert_eq "$(jq -r '.rules | length' "$PDIR/policy.json")" "11" "add --before 09: one rule appended"
+assert_eq "$(jq -r '.rules[9].tool' "$PDIR/policy.json")" "gh" "add --before 09: inserted at 0-based position 9"
+OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool git --action allow --before 00) && rc=0 || rc=$?
+assert_eq "$rc" "0" "add --before 00: normalized to 0, exits 0"
+assert_eq "$(jq -r '.rules[0].tool' "$PDIR/policy.json")" "git" "add --before 00: inserted at 0-based position 0"
+PDIR=$(policy_home '{"rules":[{"tool":"gh","action":"allow"}]}')
+OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool gh --action allow --before 09 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add --before 09 out of range → exit 1 (clean validation, not a raw jq error)"
+assert_contains "$OUT" "error: --before 9 is out of range" "add: out-of-range leading zero → own error: prefix"
+
 # --- policy add: value validation ---
 PDIR=$(policy_home '{"rules":[]}')
 OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool gh --action frobnicate 2>&1) && rc=0 || rc=$?
