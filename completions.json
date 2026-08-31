@@ -628,16 +628,16 @@
       }
     },
     "shai-config": {
-      "description": "Edit and test shai configuration",
+      "description": "Manage policy and CI configuration",
       "flags": {},
       "subcommands": {
         "policy": {
-          "description": "Inspect, edit, and test permission-gate policy rules",
+          "description": "Manage permission rules in $SHAI_HOME/policy.json",
           "positional": [
             {
-              "name": "command",
+              "name": "verb",
               "type": "policy_verb",
-              "description": "Policy command: list, add, remove, or test"
+              "description": "Operation to perform"
             }
           ],
           "flags": {
@@ -673,6 +673,41 @@
             },
             "--json": {
               "description": "Emit JSON"
+            }
+          }
+        },
+        "ci": {
+          "description": "Manage CI check definitions in $SHAI_HOME/ci.json",
+          "positional": [
+            {
+              "name": "verb",
+              "type": "ci_verb",
+              "description": "Operation to perform"
+            }
+          ],
+          "flags": {
+            "--json": {
+              "description": "Emit JSON"
+            },
+            "--repo": {
+              "arg": "KEY",
+              "description": "Repository key to operate on (default: the cwd's origin remote, normalized)"
+            },
+            "--name": {
+              "arg": "NAME",
+              "description": "Check name to add"
+            },
+            "--command": {
+              "arg": "CMD",
+              "description": "Check command to run"
+            },
+            "--timeout": {
+              "arg": "SECONDS",
+              "description": "Check timeout in seconds"
+            },
+            "--env": {
+              "arg": "K=V",
+              "description": "Environment variable for the check (repeatable)"
             }
           }
         }
@@ -725,8 +760,12 @@
       "command": "if [ -L \"${_shai_dir%/*}/current\" ]; then for d in \"${_shai_dir%/*}/\"*/; do d=\"${d%/}\"; n=\"${d##*/}\"; [ \"$n\" = current ] || printf '%s\\n' \"$n\"; done 2>/dev/null; fi"
     },
     "policy_verb": {
-      "description": "shai-config policy command",
+      "description": "shai-config policy operation",
       "command": "printf '%s\\n' list add remove test"
+    },
+    "ci_verb": {
+      "description": "shai-config ci operation",
+      "command": "printf '%s\\n' list add remove"
     },
     "policy_action": {
       "description": "Policy rule verdict",

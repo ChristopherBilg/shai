@@ -5,7 +5,7 @@ Date: 2026-08-27
 ## Context
 
 An audit of shai's top-level script surface area against best practices for a
-Unix-philosophy CLI tool suite of this maturity. The project currently has 25
+Unix-philosophy CLI tool suite of this maturity. The project currently has 27
 top-level scripts, 9 workflows, and 11 tool plugins. This document identifies
 gaps across new features, observability, and maintenance.
 
@@ -16,7 +16,7 @@ gaps across new features, observability, and maintenance.
 | Pipeline core | `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-loop`, `shai-print`, `shai-stamp`, `shai-ask` |
 | REPL + retry | `shai-repl`, `shai-retry` |
 | Observability | `shai-sessions`, `shai-runs`, `shai-events`, `shai-trace`, `shai-stats`, `shai-failures`, `shai-ledgers` |
-| Infrastructure | `shai-doctor`, `shai-version`, `shai-update`, `shai-tools`, `shai-prompt`, `shai-workflow`, `shai-supervise`, `shai-prune`, `shai-completions` |
+| Infrastructure | `shai-doctor`, `shai-version`, `shai-update`, `shai-tools`, `shai-prompt`, `shai-workflow`, `shai-supervise`, `shai-prune`, `shai-completions`, `shai-config` |
 
 ## New Features
 
@@ -51,13 +51,22 @@ byte — the `completions` CI job runs it on every push.
 
 ### `shai-config` — programmatic configuration management
 
-Policy rules and CI checks are hand-edited JSON. `shai-config` would replace
-error-prone JSON editing with validated commands:
-
-- `shai-config policy list|add|remove|test` — manage permission rules
-- `shai-config ci list|add|remove` — manage CI check definitions
-- `shai-config policy test gh 'pr merge ...'` — dry-run the policy engine
-  against a hypothetical tool call (useful for debugging "why was this denied?")
+**Implemented** — `shai-config` is now a top-level script (see #343, #344, #345,
+#346, and #347), replacing error-prone JSON editing of policy rules and CI
+checks with validated commands: `shai-config policy list|add|remove|test`
+manages permission rules in `$SHAI_HOME/policy.json`, and
+`shai-config ci list|add|remove` manages CI check definitions in
+`$SHAI_HOME/ci.json`. The "why was this denied?" debugging use case for
+`policy test` is mostly covered elsewhere — #294 logs
+`policy: <action> <tool> (<reason>)` with `rule:<file>:<idx>` for every real
+call — so `test`'s remaining value is the *hypothetical* dry-run: it evaluates
+one would-be call through the same `check_policy` the dispatcher uses, without
+executing anything. The larger value of the script is **validated writes**: a
+malformed `policy.json` silently discards every rule, and a mis-keyed `ci.json`
+entry is silently never found, so `shai-config` parses a config before writing
+it and aborts on a corrupt file rather than replacing it, and CI entries are
+keyed with the same `normalize_url` the `ci` tool looks them up by — a
+mis-keyed entry cannot be written.
 
 ### `shai-update` — self-update
 
