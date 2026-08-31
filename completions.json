@@ -626,6 +626,57 @@
           "flags": {}
         }
       }
+    },
+    "shai-config": {
+      "description": "Edit and test shai configuration",
+      "flags": {},
+      "subcommands": {
+        "policy": {
+          "description": "Inspect, edit, and test permission-gate policy rules",
+          "positional": [
+            {
+              "name": "command",
+              "type": "policy_verb",
+              "description": "Policy command: list, add, remove, or test"
+            }
+          ],
+          "flags": {
+            "--tool": {
+              "arg": "NAME",
+              "arg_type": "tool_name",
+              "description": "Tool the rule matches (add), or the tool to test (test)"
+            },
+            "--action": {
+              "arg": "ACTION",
+              "arg_type": "policy_action",
+              "description": "Verdict for the new rule: allow, prompt, or deny"
+            },
+            "--args": {
+              "arg": "K=V",
+              "description": "Argument pattern the rule matches (repeatable)"
+            },
+            "--before": {
+              "arg": "N",
+              "description": "Insert at 0-based index N instead of appending"
+            },
+            "--force": {
+              "description": "Add the rule even when an earlier rule shadows it"
+            },
+            "--input": {
+              "arg": "JSON",
+              "description": "Tool input JSON to evaluate against the policy"
+            },
+            "--overlay": {
+              "arg": "PATH",
+              "arg_type": "file",
+              "description": "Overlay policy file to consult before the base policy"
+            },
+            "--json": {
+              "description": "Emit JSON"
+            }
+          }
+        }
+      }
     }
   },
   "types": {
@@ -672,6 +723,14 @@
     "install_version": {
       "description": "Installed shai version from the install directory",
       "command": "if [ -L \"${_shai_dir%/*}/current\" ]; then for d in \"${_shai_dir%/*}/\"*/; do d=\"${d%/}\"; n=\"${d##*/}\"; [ \"$n\" = current ] || printf '%s\\n' \"$n\"; done 2>/dev/null; fi"
+    },
+    "policy_verb": {
+      "description": "shai-config policy command",
+      "command": "printf '%s\\n' list add remove test"
+    },
+    "policy_action": {
+      "description": "Policy rule verdict",
+      "command": "printf '%s\\n' allow prompt deny"
     }
   }
 }
