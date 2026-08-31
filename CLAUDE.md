@@ -24,6 +24,15 @@ export DEEPSEEK_API_KEY=sk-...        # required at runtime
 gh api repos/ChristopherBilg/shai/contents/install.sh --jq '.content' | base64 -d | bash
 export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base64 -d | bash
 
+# Update / rollback / version retention (in place):
+./shai-update --check                    # report only; exits 0 whether or not an update exists
+./shai-update                            # check, confirm, then upgrade
+./shai-update -y                         # same, without the prompt (unattended)
+./shai-update --version v2026.09.01      # install a specific release
+./shai-update --rollback [VERSION]       # re-point current to the previous (or named) version
+./shai-update --list                     # versions on disk, marking current
+./shai-update --prune --keep 3 [--dry-run]  # remove all but the newest 3, never current's target
+
 # Run the pipeline by hand (every stage is a filter):
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 
@@ -221,6 +230,25 @@ The scripts:
   resolved in order: the `VERSION` file next to the script (written by release tarballs), then
   `git describe --tags` in the install directory (dev clones), then the literal `dev`. Single
   purpose and pipeable: it has no REPL dependency and needs no `DEEPSEEK_API_KEY`. Exit 0 always.
+- **`shai-update [--check|--list|--rollback [VERSION]|--version V|--prune --keep N [--dry-run]] [-y|--yes]`**
+  (`shai-update:1`) — the in-place updater on top of the `$INSTALL_DIR/current` layout:
+  `install.sh` bootstraps, `shai-update` upgrades. A bare run resolves the latest release via
+  `gh release view`, prompts (`-y`/`--yes` skips), downloads and extracts to a temp dir, moves
+  the tree to `$INSTALL_DIR/<version>`, re-points `current` with the `ln -sfn` + `mv -Tf` pair,
+  rewrites the `~/.local/bin` wrappers (idempotent; heals pre-`current` installs), then runs
+  `shai-supervise repoint --all` and both completion installs **through `current`**, never a
+  versioned path (a versioned invocation would re-bake versioned `ExecStart` lines — the defect
+  this layout exists to remove). `--check` reports `up to date (v…)` or
+  `update available: v… -> v…` and exits 0 either way, writing nothing; `--list` (offline) lists
+  installed versions marking current; `--rollback [VERSION]` (offline) re-points to the previous
+  or a named version and runs the same repoint/completions sequence from that version's tree;
+  `--prune --keep N [--dry-run]` (offline) removes all but the newest N, never the directory
+  `current` points at — `shai-update` itself never deletes a version directory, which is what
+  keeps in-flight runs and rollback safe (and why the self-re-pointing upgrade is safe: the
+  process holds an open fd on the old inode). Exit 0 on success (including already up to date,
+  both `--check` verdicts, an aborted prompt, nothing to prune); 1 on failure — note gh missing
+  or unauthenticated exits 1, not `install.sh`'s 2, because 2 is the suite-wide usage-error
+  code; 2 on usage errors.
 - **`shai-completions generate|install <zsh|bash>` / `shai-completions check`**
   (`shai-completions:1`) — generates, installs, and validates zsh/bash tab completions from
   `completions.json` (the completion manifest: a `scripts` map with `flags`/`subcommands` per

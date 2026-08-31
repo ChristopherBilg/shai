@@ -16,7 +16,7 @@ gaps across new features, observability, and maintenance.
 | Pipeline core | `shai-read`, `shai-context`, `shai-eval`, `shai-dispatch`, `shai-loop`, `shai-print`, `shai-stamp`, `shai-ask` |
 | REPL + retry | `shai-repl`, `shai-retry` |
 | Observability | `shai-sessions`, `shai-runs`, `shai-events`, `shai-trace`, `shai-stats`, `shai-failures`, `shai-ledgers` |
-| Infrastructure | `shai-doctor`, `shai-version`, `shai-tools`, `shai-prompt`, `shai-workflow`, `shai-supervise`, `shai-prune`, `shai-completions` |
+| Infrastructure | `shai-doctor`, `shai-version`, `shai-update`, `shai-tools`, `shai-prompt`, `shai-workflow`, `shai-supervise`, `shai-prune`, `shai-completions` |
 
 ## New Features
 
