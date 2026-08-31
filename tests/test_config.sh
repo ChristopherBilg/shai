@@ -173,6 +173,28 @@ assert_eq "$(jq -r '.rules[1].tool' "$PDIR/policy.json")" "gh" "add --force: the
 OUT=$(SHAI_HOME="$PDIR" "$CFG" policy test --tool gh --input '{"args":["pr","merge","1"]}')
 assert_contains "$OUT" "verdict: allow" "add --force: rules[0] still decides the call"
 
+# --- policy add: shadow refusal also catches a hand-edited empty args object ---
+# check_policy's `to_entries | all` is vacuously true on "args": {}, so an earlier empty-args
+# rule is a blanket rule exactly like a missing args key — equally decidable, so refused too.
+# The rules-length and byte-identical assertions in this block were mutation-checked:
+# dropping the empty-object clause from the shadow filter lets the rule append and turns
+# them red; the adjacent --force call stays green either way (positive control).
+PDIR=$(policy_home '{"rules":[{"tool":"gh","args":{},"action":"allow"}]}')
+OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool gh --action deny --args 'args=pr merge*' 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: empty-args-object shadowed rule is refused (exit 1)"
+assert_contains "$OUT" "error: rule would never match — rules[0]" \
+  "add: empty-args shadow refusal names the shadowing index (own error: prefix)"
+assert_contains "$OUT" '{"tool":"gh","args":{},"action":"allow"}' \
+  "add: empty-args shadow refusal shows the shadowing rule"
+assert_eq "$(jq -r '.rules | length' "$PDIR/policy.json")" "1" \
+  "add: empty-args shadow refusal writes nothing (rules length unchanged — mutation-checked)"
+assert_eq "$(cat "$PDIR/policy.json")" '{"rules":[{"tool":"gh","args":{},"action":"allow"}]}' \
+  "add: empty-args shadow refusal leaves the file byte-identical"
+OUT=$(SHAI_HOME="$PDIR" "$CFG" policy test --tool gh --input '{"args":["pr","merge","1"]}')
+assert_contains "$OUT" "verdict: allow" "empty-args blanket: rules[0] decides even a specific call"
+OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool gh --action deny --args 'args=pr merge*' --force) && rc=0 || rc=$?
+assert_eq "$rc" "0" "add --force: appends past the empty-args blanket (positive control)"
+
 # --- policy add: --before N inserts at the 0-based position ---
 PDIR=$(policy_home '{"rules":[{"tool":"gh","action":"allow"}]}')
 OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool gh --action deny --before 0) && rc=0 || rc=$?

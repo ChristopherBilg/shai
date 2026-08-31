@@ -211,9 +211,11 @@ cmd_list() {
 
 # cmd_add: append a rule to $SHAI_HOME/policy.json (default: append; --before N inserts at
 # 0-based array position N). Refuses — writing nothing — when an earlier rule for the same
-# tool has no `args` key and therefore decides every call to that tool (first-match-wins,
-# so the new rule could never fire). That is the exactly-decidable shadow case only: no
-# glob-subsumption reasoning, per issue #345. --force appends anyway.
+# tool has no `args` key (or a hand-edited empty args object, which check_policy's
+# `to_entries | all` also treats as matching every call) and therefore decides every call
+# to that tool (first-match-wins, so the new rule could never fire). Those are the
+# exactly-decidable shadow cases only: no glob-subsumption reasoning, per issue #345.
+# --force appends anyway.
 cmd_add() {
   local TOOL="" ACTION="" BEFORE="" FORCE=false
   local -a ARG_PAIRS=()
@@ -332,23 +334,26 @@ cmd_add() {
       '{tool: $tool, action: $action}')
   fi
 
-  # Shadow refusal: an earlier rule, same tool, no `args` key matches every call to that
-  # tool, so the new rule can never fire (first-match-wins). Scope deliberately stops at
-  # that exactly-decidable case; general pattern overlap is left to `policy test`.
+  # Shadow refusal: an earlier rule for the same tool with no `args` key — or a hand-edited
+  # empty args object, on which check_policy's `to_entries | all` is vacuously true — decides
+  # every call to that tool, so the new rule can never fire (first-match-wins). Scope
+  # deliberately stops at those exactly-decidable cases; general pattern overlap is left to
+  # `policy test`.
   local shadow_idx=""
   if [ "$FORCE" != true ]; then
     shadow_idx=$(printf '%s' "$policy" | jq -r --arg tool "$TOOL" --argjson pos "$pos" '
       [ ((.rules // []) | to_entries[]
          | select(.key < $pos)
          | select(.value.tool == $tool)
-         | select(.value | has("args") | not)
+         | select((.value | has("args") | not)
+                  or ((.value.args | type) == "object" and (.value.args | length) == 0))
          | .key)
       ][0] // empty')
     if [ -n "$shadow_idx" ]; then
       local shadow_rule
       shadow_rule=$(printf '%s' "$policy" | jq -c --argjson i "$shadow_idx" '(.rules // [])[$i]')
       printf 'error: rule would never match — rules[%s]\n' "$shadow_idx" >&2
-      printf '  %s has no args, so it decides every %s call\n' "$shadow_rule" "$TOOL" >&2
+      printf '  %s has no args (or an empty args object), so it decides every %s call\n' "$shadow_rule" "$TOOL" >&2
       printf '  (first-match-wins). Retry with --before %s, or --force to append anyway.\n' "$shadow_idx" >&2
       exit 1
     fi
