@@ -238,6 +238,9 @@ assert_contains "$OUT" "error: --before must be a non-negative integer" "add: ba
 OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool gh --action allow --args noequals 2>&1) && rc=0 || rc=$?
 assert_eq "$rc" "1" "add: --args without = → exit 1"
 assert_contains "$OUT" "error: --args expects K=V" "add: bad --args → own error: prefix"
+OUT=$(SHAI_HOME="$PDIR" "$CFG" policy add --tool gh --action allow --args k=A --args k=B 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "add: duplicate --args key → exit 1"
+assert_contains "$OUT" 'error: duplicate --args key "k"' "add: duplicate --args → own error: prefix"
 assert_eq "$(jq -r '.rules | length' "$PDIR/policy.json")" "0" "add: every rejected value wrote nothing"
 
 # --- policy add/remove: corrupt policy aborts with exit 1, byte-identical ---

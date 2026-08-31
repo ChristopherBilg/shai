@@ -295,6 +295,17 @@ cmd_add() {
         ;;
     esac
   done
+  # from_entries silently keeps the last of duplicate keys, so `--args k=A --args k=B`
+  # would discard A and write only B — refuse the pair instead of letting a pattern vanish.
+  local i j
+  for ((i = 0; i < ${#ARG_PAIRS[@]}; i++)); do
+    for ((j = i + 1; j < ${#ARG_PAIRS[@]}; j++)); do
+      if [ "${ARG_PAIRS[i]%%=*}" = "${ARG_PAIRS[j]%%=*}" ]; then
+        printf 'error: duplicate --args key "%s" (each key may appear once)\n' "${ARG_PAIRS[i]%%=*}" >&2
+        exit 1
+      fi
+    done
+  done
 
   # Parse before writing: a corrupt existing file aborts here, byte-identical. An absent
   # file starts fresh as {"rules":[]} (the documented creation behavior).
