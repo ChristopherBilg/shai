@@ -2,11 +2,13 @@
 # test_config.sh — unit tests for shai-config policy list|add|remove|test
 # Covers: shai-config — noun/verb dispatch and usage errors (exit 2), policy list (human
 #         table + --json, overlay FILE column, effective default line), policy add (append,
-#         --args objects, --before insertion, shadow refusal naming the shadowing index and
-#         writing nothing, --force, file creation when absent), policy remove (list index,
-#         out-of-range index, corrupt file untouched), policy test (verdicts from
-#         lib/policy.sh check_policy — rule/default/readonly reasons, tostring echo,
-#         --overlay, --json), corrupt-policy parse-before-write and atomic temp-file writes
+#         --args objects, duplicate --args key refusal, --before insertion and leading-zero
+#         normalization, shadow refusal naming the shadowing index and writing nothing —
+#         no-args and empty-args-object blankets — --force, file creation when absent),
+#         policy remove (list index, out-of-range index, corrupt file untouched), policy
+#         test (verdicts from lib/policy.sh check_policy — rule/default/readonly reasons,
+#         tostring echo, --overlay, --json), corrupt-policy parse-before-write and atomic
+#         temp-file writes preserving the existing mode
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -305,7 +307,7 @@ assert_eq "$rc" "1" "remove: no policy file → exit 1"
 assert_contains "$OUT" "error: no policy file" "remove: missing file → own error: prefix"
 
 # --- policy test: verdicts come from lib/policy.sh check_policy ---
-# Drift cross-check with tests/test_dispatch.sh: that suite asserts shai-dispatch prints
+# Drift cross-check with tests/test_policy.sh: that suite asserts shai-dispatch prints
 # `policy: deny list_directory (rule:<tmp>/policy.json:1)` on stderr for this exact fixture;
 # `policy test` must report the identical reason string — one function, two callers — so a
 # future re-divergence is visible here instead of silent.
