@@ -241,9 +241,11 @@ The scripts:
   this layout exists to remove). `--check` reports `up to date (v…)` or
   `update available: v… -> v…` and exits 0 either way, writing nothing; `--list` (offline) lists
   installed versions marking current; `--rollback [VERSION]` (offline) re-points to the previous
-  or a named version and runs the same repoint/completions sequence from that version's tree;
+  or a named version (which must be an installed version: `current`, `.`, and `..` are refused)
+  and runs the same repoint/completions sequence from that version's tree;
   `--prune --keep N [--dry-run]` (offline) removes all but the newest N, never the directory
-  `current` points at — `shai-update` itself never deletes a version directory, which is what
+  `current` points at, refusing when the `current` symlink is missing or dangling —
+  `shai-update` itself never deletes a version directory, which is what
   keeps in-flight runs and rollback safe (and why the self-re-pointing upgrade is safe: the
   process holds an open fd on the old inode). Exit 0 on success (including already up to date,
   both `--check` verdicts, an aborted prompt, nothing to prune); 1 on failure — note gh missing

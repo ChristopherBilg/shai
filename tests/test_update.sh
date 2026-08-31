@@ -4,8 +4,9 @@
 #   wrapper rewrite, repoint --all + completions invoked through current), --check
 #   verdicts and its write-nothing guarantee, the confirmation prompt and -y/--yes,
 #   two consecutive upgrades keeping current a symlink, upgrades deleting nothing,
-#   --list, --rollback (previous, named, unknown, none available), --prune --keep N
-#   (dry-run, current's target exempt), offline subcommands with no gh, gh missing or
+#   --list, --rollback (previous, named, unknown, refused self-loop/path-escape targets,
+#   none available), --prune --keep N (dry-run, current's target exempt, refusing when
+#   current is missing or dangling), offline subcommands with no gh, gh missing or
 #   unauthenticated exiting 1, layout equivalence with install.sh, and the
 #   install_version completion candidates
 set -uo pipefail
@@ -218,6 +219,7 @@ assert_exit 2 "--keep without --prune is a usage error" -- "$DIR/shai-update" --
 assert_exit 2 "--dry-run without --prune is a usage error" -- "$DIR/shai-update" --dry-run
 assert_exit 2 "--version without a value is a usage error" -- "$DIR/shai-update" --version
 assert_exit 2 "--version combined with --check is a usage error" -- "$DIR/shai-update" --version v1 --check
+assert_exit 2 "--version followed by a flag is a usage error" -- "$DIR/shai-update" --version --check
 assert_exit 2 "non-numeric --keep is a usage error" -- "$DIR/shai-update" --prune --keep abc
 
 # --- the prompt: bare invocation prompts, EOF aborts, a piped y proceeds ---
@@ -304,6 +306,31 @@ assert_contains "$ERR" "error: version v2099.01.01 is not installed" \
 assert_eq "$(readlink "$INSTALL_DIR/current")" "v2026.02.01" \
   "--rollback v2099.01.01: current untouched"
 
+# --- --rollback of the current symlink entry itself is refused (no self-loop) ---
+# The guard is version_dirs membership, not [ -d ]: a bare [ -d ] follows symlinks, so
+# `--rollback current` would re-point current to itself (mutation-checked: restoring the
+# old [ -d ] check makes this assertion red with a self-looped current).
+ERR=$(upd_offline --rollback current 2>&1)
+RC=$?
+assert_eq "$RC" "1" "--rollback current: exits 1"
+assert_contains "$ERR" "error: version current is not installed" \
+  "--rollback current: refused by version_dirs membership"
+assert_eq "$(readlink "$INSTALL_DIR/current")" "v2026.02.01" \
+  "--rollback current: current untouched (no self-loop)"
+
+# --- --rollback of a path escape is refused before any re-pointing ---
+ERR=$(upd_offline --rollback .. 2>&1)
+RC=$?
+assert_eq "$RC" "1" "--rollback ..: exits 1"
+assert_contains "$ERR" "must not contain" "--rollback ..: rejected by validate_version"
+ERR=$(upd_offline --rollback . 2>&1)
+RC=$?
+assert_eq "$RC" "1" "--rollback .: exits 1"
+assert_contains "$ERR" "error: version . is not installed" \
+  "--rollback .: refused by version_dirs membership"
+assert_eq "$(readlink "$INSTALL_DIR/current")" "v2026.02.01" \
+  "--rollback . / ..: current untouched"
+
 # --- --rollback with no previous version ---
 RB_HOME="$WORK/rbhome"
 mkdir -p "$RB_HOME/.local/share/shai/v2026.01.01"
@@ -379,6 +406,31 @@ assert_contains "$OUT" "would remove $PR2_INSTALL/v2026.02.01" \
   "--prune --dry-run: names what it would remove"
 assert_contains "$OUT" "1 version(s) would be removed (dry run)" \
   "--prune --dry-run: prints the dry-run count"
+
+# --- --prune refuses when there is no current symlink (a pre-cycle-2 install) ---
+# Without current, no version is provably the one the wrappers exec, so nothing may be
+# exempted (mutation-checked: removing the guard makes the oldest-version assertion red
+# because the run deletes it).
+NP_HOME="$WORK/nphome"
+NP_INSTALL="$NP_HOME/.local/share/shai"
+mkdir -p "$NP_INSTALL/v2026.01.01" "$NP_INSTALL/v2026.02.01"
+ERR=$(HOME="$NP_HOME" PATH="$STUB:$PATH" "$DIR/shai-update" --prune --keep 1 2>&1)
+RC=$?
+assert_eq "$RC" "1" "--prune: exits 1 with no current symlink"
+assert_contains "$ERR" "refusing to prune" "--prune: names the missing current symlink"
+assert_eq "$([ -d "$NP_INSTALL/v2026.01.01" ] && echo y)" "y" \
+  "--prune: the oldest version survives"
+assert_eq "$([ -d "$NP_INSTALL/v2026.02.01" ] && echo y)" "y" \
+  "--prune: nothing was removed"
+
+# --- ... and when current is dangling ---
+ln -s v2026.03.01 "$NP_INSTALL/current"
+ERR=$(HOME="$NP_HOME" PATH="$STUB:$PATH" "$DIR/shai-update" --prune --keep 1 2>&1)
+RC=$?
+assert_eq "$RC" "1" "--prune: exits 1 with a dangling current symlink"
+assert_contains "$ERR" "refusing to prune" "--prune: names the dangling current symlink"
+assert_eq "$([ -d "$NP_INSTALL/v2026.01.01" ] && echo y)" "y" \
+  "--prune: nothing removed with a dangling current"
 
 # Every offline section above ran with the recording gh stub shadowing the real gh, so
 # an empty log means --list/--rollback/--prune never reached for gh (mutation-checked:

@@ -7,11 +7,11 @@
 #   and gh release view/download in the network modes (default, --check, --version)
 # Writes: a new version tree, the current symlink, ~/.local/bin wrappers, systemd
 #   ExecStart lines (via shai-supervise repoint), and shell completions (via
-#   shai-completions install); --prune removes old version trees, never current's target;
-#   --check and --list write nothing
+#   shai-completions install); --prune removes old version trees, never current's target
+#   (refusing when current is missing or dangling); --check and --list write nothing
 # Exit: 0 success (including already up to date, both --check verdicts, an aborted
 #   prompt, nothing to prune); 1 failure (download/extract/rewrite error, unknown rollback
-#   target, gh missing or unauthenticated); 2 usage error
+#   target, prune with no current symlink, gh missing or unauthenticated); 2 usage error
 set -euo pipefail
 
 REPO="ChristopherBilg/shai"
@@ -41,12 +41,15 @@ while [ $# -gt 0 ]; do
       fi
       ;;
     --version)
-      [ -n "${2:-}" ] || {
+      # The value is mandatory and never a flag: `--version --check` must be the
+      # documented exit-2 combination error, not a download attempt for tag "--check".
+      if [ -n "${2:-}" ] && [ "${2:0:1}" != "-" ]; then
+        version_override="$2"
+        shift
+      else
         printf 'error: --version requires a version argument\n' >&2
         exit 2
-      }
-      version_override="$2"
-      shift
+      fi
       ;;
     --prune) mode_prune=true ;;
     --keep)
@@ -117,11 +120,19 @@ version_dirs() {
   done | LC_ALL=C sort
 }
 
-# current_name: the version current points at ("" when current is missing or dangling).
+# current_name: the version current points at ("" when current is missing, dangling, or
+# points outside the install dir — nothing a prune can exempt or a rollback switch to).
 current_name() {
   local resolved=""
   if [ -L "$INSTALL_DIR/current" ]; then
+    # readlink -f resolves a dangling final component without failing (it prints the
+    # would-be path), so the resolved path must still be an existing directory under
+    # $INSTALL_DIR to count as current.
     resolved="$(readlink -f "$INSTALL_DIR/current" 2>/dev/null || true)"
+    case "$resolved" in
+      "$INSTALL_DIR"/*) [ -d "$resolved" ] || resolved="" ;;
+      *) resolved="" ;;
+    esac
   fi
   printf '%s' "${resolved##*/}"
 }
@@ -227,10 +238,23 @@ cmd_list() {
 }
 
 cmd_rollback() {
-  local version="${1:-}" current prev dirs=() n
+  local version="${1:-}" current prev dirs=() n found=false
   current="$(current_name)"
+  mapfile -t dirs < <(version_dirs)
   if [ -n "$version" ]; then
-    if [ ! -d "$INSTALL_DIR/$version" ]; then
+    # A named target must be an installed version directory. A bare [ -d ] follows
+    # symlinks, so `--rollback current` (tab-completable) would re-point current to
+    # itself — a self-loop — and `.`/`..` would escape the install directory. Membership
+    # in version_dirs (which excludes `current`) plus validate_version (which blocks
+    # path escapes) is the guard.
+    validate_version "$version"
+    for n in "${dirs[@]}"; do
+      if [ "$n" = "$version" ]; then
+        found=true
+        break
+      fi
+    done
+    if [ "$found" = false ]; then
       printf 'error: version %s is not installed\n' "$version" >&2
       exit 1
     fi
@@ -238,7 +262,6 @@ cmd_rollback() {
     # The previous version: the newest installed version that is not current's target
     # (dirs arrive oldest first, so the last non-current one wins).
     prev=""
-    mapfile -t dirs < <(version_dirs)
     for n in "${dirs[@]}"; do
       if [ "$n" != "$current" ]; then
         prev="$n"
@@ -271,6 +294,14 @@ cmd_prune() {
 
   current="$(current_name)"
   mapfile -t dirs < <(version_dirs)
+  # With no current symlink (a pre-cycle-2 install, or current missing/dangling), no
+  # version is provably the one the wrappers exec, so the exemption below cannot work:
+  # refuse rather than risk deleting the tree the wrappers still point at. An entirely
+  # empty install dir still reports "nothing to prune".
+  if [ -z "$current" ] && [ "${#dirs[@]}" -gt 0 ]; then
+    printf 'error: no current version (current symlink missing or dangling); refusing to prune\n' >&2
+    exit 1
+  fi
   for n in "${dirs[@]}"; do
     [ "$n" = "$current" ] || others=$((others + 1))
   done
@@ -283,6 +314,13 @@ cmd_prune() {
   # too, and gap-analysis.md lists auto-retention under Deliberately Excluded); keeping
   # current's target unconditionally is what keeps in-flight runs and rollback safe.
   to_remove=$((others - keep))
+  # Re-check right before the removal loop: an upgrade could re-point current between
+  # the snapshot above and here, making the exemption stale. Refusing is safe — the
+  # next run re-snapshots.
+  if [ "$(current_name)" != "$current" ]; then
+    printf 'error: current changed during prune (concurrent update?); not pruning\n' >&2
+    exit 1
+  fi
   for n in "${dirs[@]}"; do
     if [ "$n" = "$current" ]; then
       continue
