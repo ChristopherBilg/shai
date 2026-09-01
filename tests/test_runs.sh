@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_runs.sh — tests for shai-runs observability filter
-# Covers: run listing, session scoping, status detection, --failed, --recent, --after/--before, --json, prefix matching
+# Covers: run listing, session scoping, status detection, --failed, --recent, --after/--before, --json, prefix matching, argument validation
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -122,13 +122,13 @@ S1="sess_20260811T090000_aabb"
 S2="sess_20260811T100000_ccdd"
 fixture_event "message" "user" '{"text":"a"}' "run_a" "$S1" "span_1" >"$SHAI_HOME/sessions/$S1.jsonl"
 fixture_event "message" "user" '{"text":"b"}' "run_b" "$S2" "span_1" >"$SHAI_HOME/sessions/$S2.jsonl"
-assert_exit 1 "ambiguous prefix" -- "$RUNS" --session "sess_20260811"
+assert_fails 1 'error: ambiguous prefix "sess_20260811" matches:' "ambiguous prefix" -- "$RUNS" --session "sess_20260811"
 
 desc "--session prefix: no match produces error"
 setup_runs
 SID="sess_20260811T090000_aabb"
 fixture_event "message" "user" '{"text":"hi"}' "run_a" "$SID" "span_1" >"$SHAI_HOME/sessions/$SID.jsonl"
-assert_exit 1 "no match prefix" -- "$RUNS" --session "sess_nope"
+assert_fails 1 'error: no match for "sess_nope"' "no match prefix" -- "$RUNS" --session "sess_nope"
 
 desc "tool count: counts tool_result events"
 setup_runs
@@ -315,9 +315,14 @@ make_run "run_20260811T090000_json01" \
 OUT=$("$RUNS" --after 2026-08-10 --json)
 assert_eq "$(printf '%s' "$OUT" | jq '.[0] | has("date")')" "false" "date absent from --json output"
 
-desc "invalid args: exit 1"
-assert_exit 1 "unknown flag" -- "$RUNS" --bogus
-assert_exit 1 "--after bad date" -- "$RUNS" --after not-a-date
-assert_exit 1 "--before bad date" -- "$RUNS" --before 2026/08/10
+desc "invalid args: each error branch asserts its distinct message"
+assert_fails 1 "error: --session requires an ID or prefix" "--session missing value" -- "$RUNS" --session
+assert_fails 1 "error: --recent requires a value" "--recent missing value" -- "$RUNS" --recent
+assert_fails 1 "error: --recent value must be an integer" "--recent non-integer value" -- "$RUNS" --recent abc
+assert_fails 1 "error: --after requires a date (YYYY-MM-DD)" "--after missing value" -- "$RUNS" --after
+assert_fails 1 "error: --after date must be YYYY-MM-DD" "--after bad date" -- "$RUNS" --after not-a-date
+assert_fails 1 "error: --before requires a date (YYYY-MM-DD)" "--before missing value" -- "$RUNS" --before
+assert_fails 1 "error: --before date must be YYYY-MM-DD" "--before bad date" -- "$RUNS" --before 2026/08/10
+assert_fails 1 "error: unknown option: --bogus" "unknown flag" -- "$RUNS" --bogus
 
 finish
