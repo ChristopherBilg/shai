@@ -122,7 +122,7 @@ S1="sess_20260811T090000_aabb"
 S2="sess_20260811T100000_ccdd"
 fixture_event "message" "user" '{"text":"a"}' "run_a" "$S1" "span_1" >"$SHAI_HOME/sessions/$S1.jsonl"
 fixture_event "message" "user" '{"text":"b"}' "run_b" "$S2" "span_1" >"$SHAI_HOME/sessions/$S2.jsonl"
-assert_fails 1 'error: ambiguous prefix "sess_20260811" matches:' "ambiguous prefix" -- "$RUNS" --session "sess_20260811"
+assert_fails 1 $'error: ambiguous prefix "sess_20260811" matches:\n  sess_20260811T090000_aabb' "ambiguous prefix" -- "$RUNS" --session "sess_20260811"
 
 desc "--session prefix: no match produces error"
 setup_runs
