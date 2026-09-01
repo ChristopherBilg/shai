@@ -53,6 +53,24 @@ assert_exit() {
   assert_eq "$?" "$expected" "$desc"
 }
 
+# assert_fails <expected_code> <stderr_fragment> <description> -- <command...>: assert the
+# exit code AND that stderr contains the fragment (stderr captured, stdout dropped).
+assert_fails() {
+  local expected="$1" frag="$2" desc="$3"
+  shift 3
+  [ "${1:-}" = "--" ] && shift
+  if [ -z "$frag" ]; then
+    echo -e "  ${RED}✗${NC} $desc (usage error: empty stderr fragment)"
+    FAILED=1
+    return 1
+  fi
+  local err rc
+  err=$("$@" 2>&1 >/dev/null) # capture stderr only: dup before the stdout redirect
+  rc=$?
+  assert_eq "$rc" "$expected" "$desc (exit)"
+  assert_contains "$err" "$frag" "$desc (stderr)"
+}
+
 _CLEANUP_DIRS=()
 _cleanup() {
   local d

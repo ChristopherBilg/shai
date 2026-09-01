@@ -135,6 +135,6 @@ OUT=$("$SESSIONS")
 assert_contains "$OUT" "--" "human output shows -- for missing runs/tokens"
 
 desc "invalid args: exit 1"
-assert_exit 1 "unknown flag" -- "$SESSIONS" --bogus
+assert_fails 1 "error: unknown option: --bogus" "unknown flag" -- "$SESSIONS" --bogus
 
 finish
