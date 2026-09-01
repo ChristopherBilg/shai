@@ -191,7 +191,7 @@ desc "--workflow prefix: ambiguous produces an error"
 setup_ledgers
 make_ledger "issue_dispatcher" "$(ledger_entry "k:1" "2026-08-01T09:00:00Z")"
 make_ledger "issue_worker" "$(ledger_entry "k:2" "2026-08-01T09:00:00Z")"
-assert_exit 1 "ambiguous prefix" -- "$LEDGERS" --workflow issue_
+assert_fails 1 "error: ambiguous prefix \"issue_\"" "ambiguous prefix" -- "$LEDGERS" --workflow issue_
 ERR=$("$LEDGERS" --workflow issue_ 2>&1 >/dev/null)
 assert_contains "$ERR" "ambiguous" "stderr says ambiguous"
 assert_contains "$ERR" "issue_dispatcher" "stderr lists the first candidate"
@@ -200,7 +200,7 @@ assert_contains "$ERR" "issue_worker" "stderr lists the second candidate"
 desc "--workflow prefix: no match produces an error"
 setup_ledgers
 make_ledger "issue_dispatcher" "$(ledger_entry "k:1" "2026-08-01T09:00:00Z")"
-assert_exit 1 "no match prefix" -- "$LEDGERS" --workflow nope
+assert_fails 1 "error: no match for \"nope\"" "no match prefix" -- "$LEDGERS" --workflow nope
 ERR=$("$LEDGERS" --workflow nope 2>&1 >/dev/null)
 assert_contains "$ERR" "no match" "stderr says no match"
 
@@ -271,23 +271,23 @@ assert_contains "$ERR" "dropped" "warning reports dropped line count"
 # --- Error handling ---
 desc "--workflow path traversal: / rejected"
 setup_ledgers
-assert_exit 1 "slash in workflow name" -- "$LEDGERS" --workflow "../sessions/foo"
+assert_fails 1 "error: --workflow must not contain / or .. (got \"../sessions/foo\")" "slash in workflow name" -- "$LEDGERS" --workflow "../sessions/foo"
 ERR=$("$LEDGERS" --workflow "../sessions/foo" 2>&1 >/dev/null || true)
 assert_contains "$ERR" "must not contain" "error message for path traversal"
 
 desc "--workflow path traversal: .. rejected"
 setup_ledgers
-assert_exit 1 "dotdot in workflow name" -- "$LEDGERS" --workflow "..ledger"
+assert_fails 1 "error: --workflow must not contain / or .. (got \"..ledger\")" "dotdot in workflow name" -- "$LEDGERS" --workflow "..ledger"
 ERR=$("$LEDGERS" --workflow "..ledger" 2>&1 >/dev/null || true)
 assert_contains "$ERR" "must not contain" "error message for dotdot"
 
 desc "invalid args: exit 1"
 setup_ledgers
-assert_exit 1 "unknown flag" -- "$LEDGERS" --bogus
-assert_exit 1 "--workflow with no value" -- "$LEDGERS" --workflow
-assert_exit 1 "--recent with no value" -- "$LEDGERS" --recent
-assert_exit 1 "--recent with a non-integer value" -- "$LEDGERS" --recent abc
-assert_exit 1 "--after with a bad date format" -- "$LEDGERS" --after not-a-date
-assert_exit 1 "--before with a bad date format" -- "$LEDGERS" --before 2026/08/10
+assert_fails 1 "error: unknown option: --bogus" "unknown flag" -- "$LEDGERS" --bogus
+assert_fails 1 "error: --workflow requires a name or prefix" "--workflow with no value" -- "$LEDGERS" --workflow
+assert_fails 1 "error: --recent requires a value" "--recent with no value" -- "$LEDGERS" --recent
+assert_fails 1 "error: --recent value must be an integer" "--recent with a non-integer value" -- "$LEDGERS" --recent abc
+assert_fails 1 "error: --after date must be YYYY-MM-DD" "--after with a bad date format" -- "$LEDGERS" --after not-a-date
+assert_fails 1 "error: --before date must be YYYY-MM-DD" "--before with a bad date format" -- "$LEDGERS" --before 2026/08/10
 
 finish
