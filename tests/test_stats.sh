@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_stats.sh — tests for shai-stats observability filter
-# Covers: aggregate metrics, session scoping, date filtering, --json, empty state, missing api data, malformed file handling, failure-store stats
+# Covers: aggregate metrics, per-run averages, avg latency, status percentages, session scoping, date filtering, arg validation, --json, empty state, missing api data, malformed file handling, failure-store stats
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -43,13 +43,92 @@ SID="sess_20260811T090000_aabb"
     '{"content":"a2","finish_reason":"stop"}' \
     "run_2" "$SID" "span_1" \
     '{"message_id":"m2","model":"m","usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300},"latency_ms":2000}'
+  # Second round for run_2: 3 api/latency events across 2 runs, so spans != runs and a
+  # spans-vs-runs denominator bug no longer yields the same averages.
+  fixture_event "message" "user" '{"text":"q3"}' "run_2" "$SID" "span_2"
+  fixture_event "message" "assistant" \
+    '{"content":"a3","finish_reason":"stop"}' \
+    "run_2" "$SID" "span_2" \
+    '{"message_id":"m3","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":3000}'
 } >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$STATS" --json)
 assert_eq "$(printf '%s' "$OUT" | jq '.sessions')" "1" "1 session"
 assert_eq "$(printf '%s' "$OUT" | jq '.runs')" "2" "2 runs"
-assert_eq "$(printf '%s' "$OUT" | jq '.tokens.input')" "300" "input tokens"
-assert_eq "$(printf '%s' "$OUT" | jq '.tokens.output')" "150" "output tokens"
-assert_eq "$(printf '%s' "$OUT" | jq '.tokens.total')" "450" "total tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.tokens.input')" "400" "input tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.tokens.output')" "200" "output tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.tokens.total')" "600" "total tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.input')" "200" "avg input tokens per run"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.output')" "100" "avg output tokens per run"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_latency_ms')" "2000" "avg latency ms"
+
+desc "averages: human output lines"
+setup_stats
+SID="sess_20260811T090000_aabb"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":1000}'
+  fixture_event "message" "user" '{"text":"q2"}' "run_2" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a2","finish_reason":"stop"}' \
+    "run_2" "$SID" "span_1" \
+    '{"message_id":"m2","model":"m","usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300},"latency_ms":2000}'
+  # Same spans != runs shape as the --json aggregates test above.
+  fixture_event "message" "user" '{"text":"q3"}' "run_2" "$SID" "span_2"
+  fixture_event "message" "assistant" \
+    '{"content":"a3","finish_reason":"stop"}' \
+    "run_2" "$SID" "span_2" \
+    '{"message_id":"m3","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":3000}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS")
+assert_contains "$OUT" "Avg per run:  200 in / 100 out tokens" "avg per run line (2 runs, 400/200 tokens)"
+assert_contains "$OUT" "Avg latency:  2000ms per span" "avg latency line (3 spans, 6000ms)"
+
+desc "averages: zero runs → zeroed averages, no avg lines"
+setup_stats
+SID="sess_20260811T090000_aabb"
+# An envelope-less event (pre-1.0 log entry): valid JSON, but contributes no run ids,
+# so runs == 0 while sessions == 1 — the fixture is live, not merely empty.
+printf '{"type":"message","source":"user","payload":{"text":"old"}}\n' >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.sessions')" "1" "session counted, fixture is live"
+assert_eq "$(printf '%s' "$OUT" | jq '.runs')" "0" "zero runs"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.input')" "0" "avg input stays 0 with no runs"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.output')" "0" "avg output stays 0 with no runs"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_latency_ms')" "0" "avg latency stays 0 with no runs"
+# Absence assertions (mutation-checked: force-printing the lines turns these red).
+# Positive control: the "averages: human output lines" test above produces both lines
+# from the same fixture shape that here contributes no runs.
+HOUT=$("$STATS")
+NO_AVG=no
+[[ "$HOUT" == *"Avg per run"* ]] && NO_AVG=yes
+assert_eq "$NO_AVG" "no" "Avg per run line suppressed with no runs"
+NO_LAT=no
+[[ "$HOUT" == *"Avg latency"* ]] && NO_LAT=yes
+assert_eq "$NO_LAT" "no" "Avg latency line suppressed with no runs"
+
+desc "averages: zero latency → avg_latency_ms 0, no Avg latency line"
+setup_stats
+SID="sess_20260811T090000_aabb"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_1" "$SID" "span_1"
+  fixture_event "message" "assistant" \
+    '{"content":"a","finish_reason":"stop"}' \
+    "run_1" "$SID" "span_1" \
+    '{"message_id":"m","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}'
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '.runs')" "1" "one run, fixture is live"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.input')" "100" "avg per run computed (positive control)"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_latency_ms')" "0" "avg latency 0 with no latency spans"
+HOUT=$("$STATS")
+assert_contains "$HOUT" "Avg per run:  100 in / 50 out tokens" "avg per run line present (positive control)"
+# Absence assertion (mutation-checked: removing the [ avg_latency -gt 0 ] guard turns this red).
+NO_LAT=no
+[[ "$HOUT" == *"Avg latency"* ]] && NO_LAT=yes
+assert_eq "$NO_LAT" "no" "Avg latency line suppressed with no latency spans"
 
 desc "status breakdown: counts by status"
 setup_stats
@@ -63,6 +142,22 @@ SID="sess_20260811T090000_aabb"
 OUT=$("$STATS" --json)
 assert_eq "$(printf '%s' "$OUT" | jq '.statuses.complete')" "1" "1 complete"
 assert_eq "$(printf '%s' "$OUT" | jq '.statuses.error')" "1" "1 error"
+
+desc "status breakdown: human percentages (non-round)"
+setup_stats
+SID="sess_20260811T090000_aabb"
+{
+  fixture_event "message" "user" '{"text":"q"}' "run_ok" "$SID" "span_1"
+  fixture_event "message" "assistant" '{"content":"a","finish_reason":"stop"}' "run_ok" "$SID" "span_1"
+  fixture_event "message" "user" '{"text":"q2"}' "run_err" "$SID" "span_1"
+  fixture_event "error" "system" '{"text":"fail"}' "run_err" "$SID" "span_1"
+  fixture_event "message" "user" '{"text":"q3"}' "run_err2" "$SID" "span_1"
+  fixture_event "error" "system" '{"text":"fail2"}' "run_err2" "$SID" "span_1"
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$STATS")
+assert_contains "$OUT" "  complete:   1 (33%)" "complete line with truncated percentage"
+assert_contains "$OUT" "  error:      2 (66%)" "error line with truncated percentage"
+assert_contains "$OUT" "  incomplete: 0 (0%)" "incomplete line with zero percentage"
 
 desc "tool usage: counts by tool name"
 setup_stats
@@ -342,7 +437,45 @@ HOUT=$("$STATS")
 assert_contains "$HOUT" "No sessions found." "no sessions message"
 assert_contains "$HOUT" "Failures:" "failures section still shown"
 
-desc "invalid args: exit 1"
-assert_exit 1 "unknown flag" -- "$STATS" --bogus
+# Arg validation: each branch asserts its specific stderr message, not just exit 1.
+# (Issue #349's assert_fails helper has not landed yet; these use the suite-wide
+# `OUT=$(... 2>&1) && rc=0 || rc=$?` capture idiom and can be converted when it does.)
+
+desc "invalid args: unknown option"
+OUT=$("$STATS" --bogus 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "unknown option exits 1"
+assert_contains "$OUT" "error: unknown option: --bogus" "unknown option message"
+
+desc "invalid args: --after must be YYYY-MM-DD"
+OUT=$("$STATS" --after not-a-date 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "--after bad format exits 1"
+assert_contains "$OUT" "error: --after must be YYYY-MM-DD" "--after message"
+
+desc "invalid args: --before must be YYYY-MM-DD"
+OUT=$("$STATS" --before 2026/08/10 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "--before bad format exits 1"
+assert_contains "$OUT" "error: --before must be YYYY-MM-DD" "--before message"
+
+desc "invalid args: --session no match"
+setup_stats
+OUT=$("$STATS" --session sess_nope 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "no match exits 1"
+assert_contains "$OUT" 'error: no match for "sess_nope"' "no-match message"
+
+desc "invalid args: --session ambiguous prefix"
+setup_stats
+S1="sess_20260811T090000_aabb"
+S2="sess_20260811T090001_ccdd"
+{
+  fixture_event "message" "user" '{"text":"a"}' "run_1" "$S1" "span_1"
+  fixture_event "message" "assistant" '{"content":"a","finish_reason":"stop"}' "run_1" "$S1" "span_1"
+} >"$SHAI_HOME/sessions/$S1.jsonl"
+{
+  fixture_event "message" "user" '{"text":"b"}' "run_2" "$S2" "span_1"
+  fixture_event "message" "assistant" '{"content":"b","finish_reason":"stop"}' "run_2" "$S2" "span_1"
+} >"$SHAI_HOME/sessions/$S2.jsonl"
+OUT=$("$STATS" --session sess_20260811T09 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "ambiguous prefix exits 1"
+assert_contains "$OUT" 'error: ambiguous prefix "sess_20260811T09"' "ambiguous-prefix message"
 
 finish
