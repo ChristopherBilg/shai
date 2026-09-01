@@ -707,15 +707,13 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "prefix: unambiguous prefix 
 
 make_failure issue_worker 2026-08-21T09:00:00Z api_error "boom"
 ERR=$("$FAILURES" list --workflow issue_ 2>&1 >/dev/null)
-RC=$?
-assert_eq "$RC" "1" "prefix: ambiguous exits 1"
+assert_fails 1 "error: ambiguous prefix \"issue_\"" "prefix: ambiguous exits 1" -- "$FAILURES" list --workflow issue_
 assert_contains "$ERR" "ambiguous" "prefix: ambiguous message"
 assert_contains "$ERR" "issue_dispatcher" "prefix: first candidate listed"
 assert_contains "$ERR" "issue_worker" "prefix: second candidate listed"
 
 ERR=$("$FAILURES" list --workflow nope 2>&1 >/dev/null)
-RC=$?
-assert_eq "$RC" "1" "prefix: no match exits 1"
+assert_fails 1 "error: no match for \"nope\"" "prefix: no match exits 1" -- "$FAILURES" list --workflow nope
 assert_contains "$ERR" "no match" "prefix: no-match message"
 
 # --- list empty state ---
@@ -791,12 +789,12 @@ assert_contains "$OUT" "Category:  tool_error" "show-null: record still fully di
 desc "show: invalid ids exit 1"
 setup_failures
 make_failure pr_reviewer 2026-08-22T03:14:00Z workflow_error "gh pr view failed"
-assert_exit 1 "show: id without colon" -- "$FAILURES" show pr_reviewer
-assert_exit 1 "show: non-integer line" -- "$FAILURES" show pr_reviewer:abc
-assert_exit 1 "show: zero line" -- "$FAILURES" show pr_reviewer:0
-assert_exit 1 "show: line beyond EOF" -- "$FAILURES" show pr_reviewer:99
-assert_exit 1 "show: unknown workflow" -- "$FAILURES" show nope:1
-assert_exit 1 "show: traversal" -- "$FAILURES" show "../sessions/foo:1"
+assert_fails 1 "error: invalid failure id \"pr_reviewer\" (expected <workflow>:<line>)" "show: id without colon" -- "$FAILURES" show pr_reviewer
+assert_fails 1 "error: invalid line number \"abc\" in failure id \"pr_reviewer:abc\"" "show: non-integer line" -- "$FAILURES" show pr_reviewer:abc
+assert_fails 1 "error: invalid line number \"0\" in failure id \"pr_reviewer:0\"" "show: zero line" -- "$FAILURES" show pr_reviewer:0
+assert_fails 1 "error: no failure record at pr_reviewer:99 (file has fewer lines)" "show: line beyond EOF" -- "$FAILURES" show pr_reviewer:99
+assert_fails 1 "error: no failure records for workflow \"nope\"" "show: unknown workflow" -- "$FAILURES" show nope:1
+assert_fails 1 "error: workflow must not contain / or .. (got \"../sessions/foo\")" "show: traversal" -- "$FAILURES" show "../sessions/foo:1"
 ERR=$("$FAILURES" show pr_reviewer 2>&1 >/dev/null || true)
 assert_contains "$ERR" "expected <workflow>:<line>" "show: bad id message"
 ERR=$("$FAILURES" show pr_reviewer:99 2>&1 >/dev/null || true)
@@ -889,16 +887,16 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.by_workflow | length')" "0" "summary e
 # --- usage / argument errors ---
 desc "usage errors exit 2; invalid arguments exit 1"
 setup_failures
-assert_exit 2 "no subcommand" -- "$FAILURES"
-assert_exit 2 "unknown subcommand" -- "$FAILURES" frobnicate
-assert_exit 2 "show without id" -- "$FAILURES" show
-assert_exit 1 "list unknown flag" -- "$FAILURES" list --bogus
-assert_exit 1 "list --workflow without value" -- "$FAILURES" list --workflow
-assert_exit 1 "list --recent non-integer" -- "$FAILURES" list --recent abc
-assert_exit 1 "list --after bad date" -- "$FAILURES" list --after not-a-date
-assert_exit 1 "list --before bad date" -- "$FAILURES" list --before 2026/08/10
-assert_exit 1 "summary --after bad date" -- "$FAILURES" summary --after 20260810
-assert_exit 1 "show unknown flag" -- "$FAILURES" show pr_reviewer:1 --bogus
+assert_fails 2 "usage: shai-failures <list|show|summary>" "no subcommand" -- "$FAILURES"
+assert_fails 2 "error: unknown subcommand: frobnicate" "unknown subcommand" -- "$FAILURES" frobnicate
+assert_fails 2 "usage: shai-failures show <workflow>:<line>" "show without id" -- "$FAILURES" show
+assert_fails 1 "error: unknown option: --bogus" "list unknown flag" -- "$FAILURES" list --bogus
+assert_fails 1 "error: --workflow requires a name or prefix" "list --workflow without value" -- "$FAILURES" list --workflow
+assert_fails 1 "error: --recent value must be an integer" "list --recent non-integer" -- "$FAILURES" list --recent abc
+assert_fails 1 "error: --after date must be YYYY-MM-DD" "list --after bad date" -- "$FAILURES" list --after not-a-date
+assert_fails 1 "error: --before date must be YYYY-MM-DD" "list --before bad date" -- "$FAILURES" list --before 2026/08/10
+assert_fails 1 "error: --after date must be YYYY-MM-DD" "summary --after bad date" -- "$FAILURES" summary --after 20260810
+assert_fails 1 "error: unknown option: --bogus" "show unknown flag" -- "$FAILURES" show pr_reviewer:1 --bogus
 ERR=$("$FAILURES" list --bogus 2>&1 >/dev/null || true)
 assert_contains "$ERR" "unknown option" "invalid arg: message names the option"
 
