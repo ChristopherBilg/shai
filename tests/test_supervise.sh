@@ -1,14 +1,20 @@
 #!/bin/bash
 # test_supervise.sh — unit tests for shai-supervise
 # Covers: shai-supervise — unit file generation, naming, validation, subcommand dispatch,
-#   status INSTALL column (stale/ok detection), JSON install key, repoint (ExecStart
-#   rewrite through current, skip/warn cases, dry-run, usage errors, versioned-dir refusal)
+#   status rendering (status_next timestamp + raw-usec next elapse, table + JSON, INSTALL
+#   column stale/ok detection), repoint (ExecStart rewrite through current, skip/warn
+#   cases, dry-run, usage errors, versioned-dir refusal)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "shai-supervise"
 
 make_stub_bin
+
+# raw-usec next-elapse value for the shai-rawusec systemctl fixture below: 9 digits
+# (inside status_next's 15-digit bound), ~988 s of uptime — the form systemd reports
+# for OnBootSec=/OnUnitActiveSec= timers when it does not render a timestamp
+RAW_USEC=987654321
 
 # stub systemctl and journalctl
 SYSTEMCTL_LOG="$STUB/systemctl.log"
@@ -39,6 +45,15 @@ SYSTEMCTL_LOG="$STUB/systemctl.log"
   printf '    printf "LastTriggerUSec=Mon 2026-08-18 14:30:00 EDT\\n"\n'
   printf '    printf "NextElapseUSecRealtime=n/a\\n"\n'
   printf '    printf "NextElapseUSecMonotonic=Mon 2026-08-18 15:15:00 EDT\\n"\n'
+  printf '    ;;\n'
+  # raw-usec monotonic elapse (the form `install`'s OnBootSec=/OnUnitActiveSec= timers
+  # actually produce): realtime is unset, monotonic is microseconds since boot
+  printf '  *show*shai-rawusec.timer*)\n'
+  printf '    printf "LoadState=loaded\\n"\n'
+  printf '    printf "ActiveState=active\\n"\n'
+  printf '    printf "LastTriggerUSec=0\\n"\n'
+  printf '    printf "NextElapseUSecRealtime=n/a\\n"\n'
+  printf '    printf "NextElapseUSecMonotonic=%s\\n"\n' "$RAW_USEC"
   printf '    ;;\n'
   # a garbage timestamp must not be passed through half-truncated
   printf '  *show*shai-badstamp.timer*)\n'
@@ -79,6 +94,131 @@ chmod +x "$STUB/journalctl"
 TMP="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP")
 export SHAI_UNIT_DIR="$TMP"
+
+# --- status_next unit tests: extract the functions instead of sourcing the script ---
+# shai-supervise runs its `case` dispatch at the global scope (no `main` guard), so it
+# cannot be `source`d without also executing the dispatch against the test's own
+# arguments. Extract just the function definitions — everything from the top of the
+# file up to (but not including) the global `case` — and eval them inside a helper,
+# mirroring tests/test_policy.sh. Two isolation layers matter here:
+#   - every call site below invokes run_status_next inside a `$(...)` command
+#     substitution, which forks a subshell, so the extracted `set -euo pipefail` can
+#     never leak into (or change the behavior of) this test script;
+#   - the eval'd DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")")" resolves to tests/
+#     (${BASH_SOURCE[0]} is this file under eval), so the eval'd `source` of
+#     lib/units.sh is rewritten below to the real repo lib instead of tests/lib/.
+extract_functions() {
+  sed -n '1,/^case "/p' "$DIR/shai-supervise" | head -n -1 |
+    sed -e "s|\$DIR/lib/units.sh|$DIR/lib/units.sh|g"
+}
+
+run_status_next() {
+  local realtime="$1" monotonic="$2" extracted
+  extracted=$(extract_functions)
+  # If the ^case " anchor in extract_functions ever stops matching, sed prints the
+  # whole file — including the global `case` dispatch — and eval'ing it would run the
+  # dispatch against this helper's own arguments before dying as a confusing RC. A
+  # correct extraction stops before the dispatch, so it contains no column-0
+  # `case "` line; reject that text by name instead of eval'ing the dispatch.
+  if [[ "$extracted" == *$'\ncase "'* ]]; then
+    printf '%s\n' 'run_status_next: extraction broken — extract_functions printed the global dispatch (the ^case " anchor no longer matches shai-supervise)' >&2
+    exit 1
+  fi
+  eval "$extracted"
+  # Catch the inverse break too: an anchor that stops matching early truncates the
+  # extraction before status_next, leaving it undefined — name that here instead of
+  # failing as a bare command-not-found at the call below.
+  declare -F status_next >/dev/null 2>&1 ||
+    {
+      printf '%s\n' 'run_status_next: extraction broken — status_next is not defined after eval (the ^case " anchor stopped matching before it)' >&2
+      exit 1
+    }
+  status_next "$realtime" "$monotonic"
+}
+
+# status_next reads the boot time via `awk '/^btime /…' /proc/stat` and renders the
+# converted epoch via `date -d`. Both are stubbed so the two guard branches below
+# (no btime line; date failure) can be driven directly: those conditions are not
+# reachable end-to-end on a Linux host, and guard branches get unit tests, not
+# integration tests — please don't "fix" these tests into provoking the guards
+# through the status fixture. The awk stub's default mode reproduces the real
+# /proc/stat btime (captured here, before the stub shadows the real awk), so the
+# shipped-path tests below stay conversion-true without hardcoding a wall clock.
+REAL_DATE="$(command -v date)"
+REAL_BTIME=$(awk '/^btime /{print $2; exit}' /proc/stat 2>/dev/null)
+{
+  printf '#!/bin/bash\n'
+  printf 'if [ "${AWK_BTIME_MODE:-btime}" = "none" ]; then exit 0; fi\n'
+  printf 'printf "%%s\\n" "%s"\n' "$REAL_BTIME"
+} >"$STUB/awk"
+chmod +x "$STUB/awk"
+{
+  printf '#!/bin/bash\n'
+  printf 'if [ "${DATE_STUB_FAIL:-0}" = "1" ]; then echo "date stub: simulated failure" >&2; exit 1; fi\n'
+  printf 'exec %s "$@"\n' "$REAL_DATE"
+} >"$STUB/date"
+chmod +x "$STUB/date"
+
+# --- status_next: raw-usec branch (the shipped `install` path) ---
+# The expectation is derived the same way the implementation derives its output —
+# btime + usec/1000000 through `date -d` — never a hardcoded wall-clock string, so it
+# stays correct across reboots and machines. The shape assertion guards the fixture
+# itself: if this environment's `date -d` ever fails, the derived expectation is empty
+# and the comparisons below would pass vacuously (see the mutation rules in CLAUDE.md).
+USEC=123456789 # ~123.46 s after boot
+EXPECTED=$(date -d "@$((REAL_BTIME + USEC / 1000000))" '+%Y-%m-%d %H:%M' 2>/dev/null)
+if [[ "$EXPECTED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}$ ]]; then
+  SHAPE=ok
+else
+  SHAPE=bad
+fi
+assert_eq "$SHAPE" "ok" "status_next: derived expectation has the rendered shape (date -d works here)"
+NEXT=$(run_status_next "" "$USEC")
+RC=$?
+assert_eq "$RC" "0" "status_next: raw-usec conversion completes"
+assert_eq "$NEXT" "$EXPECTED" "status_next: raw usec converted via btime + date"
+
+# --- status_next: the 15-digit bound keeps USEC_INFINITY out of the arithmetic ---
+# USEC_INFINITY (18446744073709551615 — systemd's "never") is 20 digits: converting
+# the full value overflows bash's signed 64-bit arithmetic, so the ^[0-9]{1,15}$ bound
+# must reject it first. Mutation-checked: widening the bound to {1,20} lets
+# USEC_INFINITY through and the empty-output assertion below went red (on the bash
+# tested here the arithmetic silently wrapped, rendering boot's own wall clock instead
+# of empty; on a bash that aborts the conversion the extracted `set -e` kills the
+# subshell — the RC assertion above covers that flavor).
+NEXT=$(run_status_next "" "18446744073709551615")
+RC=$?
+assert_eq "$RC" "0" "status_next: USEC_INFINITY rejected without an arithmetic abort"
+assert_eq "$NEXT" "" "status_next: USEC_INFINITY renders empty (-- in the table)"
+
+# --- status_next: monotonic 0 means "not scheduled", not "epoch + 0" ---
+# Mutation-checked: dropping the `!= 0` guard lets 0 reach the conversion, which
+# renders btime's own wall clock instead of empty — the assertion below goes red.
+NEXT=$(run_status_next "" "0")
+RC=$?
+assert_eq "$RC" "0" "status_next: monotonic 0 rejected without an arithmetic abort"
+assert_eq "$NEXT" "" "status_next: monotonic 0 renders empty (-- in the table), not epoch + 0"
+
+# --- status_next: /proc/stat without a btime line renders empty ---
+# Guard branch, driven directly through the awk stub (AWK_BTIME_MODE=none): no Linux
+# /proc/stat actually lacks a btime line, so this cannot be provoked end-to-end — keep
+# it a direct guard test. Mutation-checked: deleting the `-n "$boot"` guard converts
+# the empty boot through `date -d @<usec/1000000>` and the assertion below goes red.
+NEXT=$(AWK_BTIME_MODE=none run_status_next "" "$USEC")
+RC=$?
+assert_eq "$RC" "0" "status_next: missing btime line does not abort"
+assert_eq "$NEXT" "" "status_next: missing btime line renders empty (-- in the table)"
+
+# --- status_next: a failing `date -d` renders empty instead of aborting ---
+# Guard branch (`|| true`), driven directly through the date stub (DATE_STUB_FAIL=1):
+# date failures are not reachable end-to-end here. Mutation-checked: deleting the
+# `|| true` kills the subshell under the extracted `set -e` — the RC assertion is the
+# control that goes red (again, the aborted subshell prints nothing, so the
+# empty-output assertion alone would stay green).
+NEXT=$(DATE_STUB_FAIL=1 run_status_next "" "$USEC")
+RC=$?
+assert_eq "$RC" "0" "status_next: a failing date -d does not abort"
+assert_eq "$NEXT" "" "status_next: a failing date -d renders empty (-- in the table)"
 
 # --- unit naming ---
 NAME=$("$DIR/shai-supervise" __unit_name shai-heartbeat 2>/dev/null)
@@ -378,15 +518,37 @@ assert_exit 1 "status: extra positional argument rejected" -- "$DIR/shai-supervi
 ERR=$("$DIR/shai-supervise" status heartbeat extra 2>&1)
 assert_contains "$ERR" "unexpected argument: extra" "status: extra argument error message"
 
-# --- status: monotonic timers (what install writes) still report NEXT ---
+# --- status: timestamp-form monotonic next elapse (systemd can render the monotonic
+#     value as a timestamp) still reports NEXT. This fixture supplies the timestamp
+#     form, which takes status_next's early `return`; the raw-usec form of the same
+#     value — the shai-rawusec fixture and the status_next unit tests above — is
+#     covered separately. ---
 : >"$SYSTEMCTL_LOG"
 OUT=$("$DIR/shai-supervise" status monotonic 2>&1)
 assert_contains "$(cat "$SYSTEMCTL_LOG")" "NextElapseUSecMonotonic" "status: queries NextElapseUSecMonotonic too"
-assert_contains "$OUT" "2026-08-18 15:15" "status: falls back to monotonic next-elapse when realtime is n/a"
+assert_contains "$OUT" "2026-08-18 15:15" "status: falls back to timestamp-form monotonic next-elapse when realtime is n/a"
 
 OUT=$("$DIR/shai-supervise" status monotonic --json 2>&1)
 NEXT=$(echo "$OUT" | jq -r '.[0].next' 2>/dev/null)
-assert_eq "$NEXT" "2026-08-18 15:15" "status --json: monotonic fallback shared with table renderer"
+assert_eq "$NEXT" "2026-08-18 15:15" "status --json: timestamp-form monotonic fallback shared with table renderer"
+
+# --- status: raw-usec monotonic next elapse (the form `install`'s
+#     OnBootSec=/OnUnitActiveSec= timers actually produce) is converted in the table
+#     and in --json, which share status_query and therefore cannot disagree ---
+RAW_EXPECTED=$(date -d "@$((REAL_BTIME + RAW_USEC / 1000000))" '+%Y-%m-%d %H:%M' 2>/dev/null)
+if [[ "$RAW_EXPECTED" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]][0-9]{2}:[0-9]{2}$ ]]; then
+  RAW_SHAPE=ok
+else
+  RAW_SHAPE=bad
+fi
+assert_eq "$RAW_SHAPE" "ok" "status: derived raw-usec expectation has the rendered shape"
+: >"$SYSTEMCTL_LOG"
+OUT=$("$DIR/shai-supervise" status rawusec 2>&1)
+assert_contains "$OUT" "$RAW_EXPECTED" "status: raw-usec next elapse converted to wall clock in the table"
+
+OUT=$("$DIR/shai-supervise" status rawusec --json 2>&1)
+NEXT=$(echo "$OUT" | jq -r '.[0].next' 2>/dev/null)
+assert_eq "$NEXT" "$RAW_EXPECTED" "status --json: raw-usec conversion shared with the table renderer"
 
 # --- status: unparseable timestamps render as -- rather than being truncated ---
 OUT=$("$DIR/shai-supervise" status badstamp 2>&1)
