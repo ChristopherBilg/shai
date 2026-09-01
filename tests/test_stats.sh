@@ -43,16 +43,23 @@ SID="sess_20260811T090000_aabb"
     '{"content":"a2","finish_reason":"stop"}' \
     "run_2" "$SID" "span_1" \
     '{"message_id":"m2","model":"m","usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300},"latency_ms":2000}'
+  # Second round for run_2: 3 api/latency events across 2 runs, so spans != runs and a
+  # spans-vs-runs denominator bug no longer yields the same averages.
+  fixture_event "message" "user" '{"text":"q3"}' "run_2" "$SID" "span_2"
+  fixture_event "message" "assistant" \
+    '{"content":"a3","finish_reason":"stop"}' \
+    "run_2" "$SID" "span_2" \
+    '{"message_id":"m3","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":3000}'
 } >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$STATS" --json)
 assert_eq "$(printf '%s' "$OUT" | jq '.sessions')" "1" "1 session"
 assert_eq "$(printf '%s' "$OUT" | jq '.runs')" "2" "2 runs"
-assert_eq "$(printf '%s' "$OUT" | jq '.tokens.input')" "300" "input tokens"
-assert_eq "$(printf '%s' "$OUT" | jq '.tokens.output')" "150" "output tokens"
-assert_eq "$(printf '%s' "$OUT" | jq '.tokens.total')" "450" "total tokens"
-assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.input')" "150" "avg input tokens per run"
-assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.output')" "75" "avg output tokens per run"
-assert_eq "$(printf '%s' "$OUT" | jq '.avg_latency_ms')" "1500" "avg latency ms"
+assert_eq "$(printf '%s' "$OUT" | jq '.tokens.input')" "400" "input tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.tokens.output')" "200" "output tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.tokens.total')" "600" "total tokens"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.input')" "200" "avg input tokens per run"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_per_run.output')" "100" "avg output tokens per run"
+assert_eq "$(printf '%s' "$OUT" | jq '.avg_latency_ms')" "2000" "avg latency ms"
 
 desc "averages: human output lines"
 setup_stats
@@ -68,10 +75,16 @@ SID="sess_20260811T090000_aabb"
     '{"content":"a2","finish_reason":"stop"}' \
     "run_2" "$SID" "span_1" \
     '{"message_id":"m2","model":"m","usage":{"prompt_tokens":200,"completion_tokens":100,"total_tokens":300},"latency_ms":2000}'
+  # Same spans != runs shape as the --json aggregates test above.
+  fixture_event "message" "user" '{"text":"q3"}' "run_2" "$SID" "span_2"
+  fixture_event "message" "assistant" \
+    '{"content":"a3","finish_reason":"stop"}' \
+    "run_2" "$SID" "span_2" \
+    '{"message_id":"m3","model":"m","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},"latency_ms":3000}'
 } >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$STATS")
-assert_contains "$OUT" "Avg per run:  150 in / 75 out tokens" "avg per run line (2 runs, 300/150 tokens)"
-assert_contains "$OUT" "Avg latency:  1500ms per span" "avg latency line (2 spans, 3000ms)"
+assert_contains "$OUT" "Avg per run:  200 in / 100 out tokens" "avg per run line (2 runs, 400/200 tokens)"
+assert_contains "$OUT" "Avg latency:  2000ms per span" "avg latency line (3 spans, 6000ms)"
 
 desc "averages: zero runs → zeroed averages, no avg lines"
 setup_stats
