@@ -53,8 +53,10 @@ assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed cur
 assert_contains "$EV" '"finish_reason":"stop"' "eval: finish_reason parsed"
 assert_contains "$EV" 'stub reply' "eval: content passed through"
 # absence assertion, mutation-checked (#356): emitting a progress printf on the
-# 200-success path makes this red — a first-attempt success must be silent on stderr
-assert_eq "$(cat "$STUB/.eval_stderr")" "" "eval: first-attempt success emits no retry progress on stderr"
+# 200-success path makes this red — a first-attempt success must be silent on stderr.
+# Byte-exact via wc -c: "$(cat ...)" command substitution strips trailing newlines,
+# so a newline-only stderr emission would falsely compare equal to "".
+assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" "eval: first-attempt success emits no retry progress on stderr"
 
 env -u DEEPSEEK_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
 assert_eq "$?" "1" "eval: health-check fails without key"
@@ -405,7 +407,7 @@ OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: SHAI_EVAL_RETRIES=0 disables retry"
 CALL_COUNT=$(cat "$STUB/.retry_count")
 assert_eq "$CALL_COUNT" "1" "retry: SHAI_EVAL_RETRIES=0 makes exactly 1 attempt"
-assert_eq "$(cat "$STUB/.eval_stderr")" "" \
+assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" \
   "retry: no progress line when retries are disabled (positive control: the 503 case above)"
 
 # 4xx (not 429) is never retried
@@ -415,7 +417,7 @@ OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: 401 is not retried"
 CALL_COUNT=$(cat "$STUB/.retry_count")
 assert_eq "$CALL_COUNT" "1" "retry: 401 makes exactly 1 attempt"
-assert_eq "$(cat "$STUB/.eval_stderr")" "" \
+assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" \
   "retry: no progress line for a non-retried 401 (positive control: the 429 case above)"
 
 # curl hard-failure is retried
