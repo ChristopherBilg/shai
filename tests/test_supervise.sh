@@ -113,8 +113,26 @@ extract_functions() {
 }
 
 run_status_next() {
-  local realtime="$1" monotonic="$2"
-  eval "$(extract_functions)"
+  local realtime="$1" monotonic="$2" extracted
+  extracted=$(extract_functions)
+  # If the ^case " anchor in extract_functions ever stops matching, sed prints the
+  # whole file — including the global `case` dispatch — and eval'ing it would run the
+  # dispatch against this helper's own arguments before dying as a confusing RC. A
+  # correct extraction stops before the dispatch, so it contains no column-0
+  # `case "` line; reject that text by name instead of eval'ing the dispatch.
+  if [[ "$extracted" == *$'\ncase "'* ]]; then
+    printf '%s\n' 'run_status_next: extraction broken — extract_functions printed the global dispatch (the ^case " anchor no longer matches shai-supervise)' >&2
+    exit 1
+  fi
+  eval "$extracted"
+  # Catch the inverse break too: an anchor that stops matching early truncates the
+  # extraction before status_next, leaving it undefined — name that here instead of
+  # failing as a bare command-not-found at the call below.
+  declare -F status_next >/dev/null 2>&1 ||
+    {
+      printf '%s\n' 'run_status_next: extraction broken — status_next is not defined after eval (the ^case " anchor stopped matching before it)' >&2
+      exit 1
+    }
   status_next "$realtime" "$monotonic"
 }
 
