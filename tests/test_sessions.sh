@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_sessions.sh — tests for shai-sessions observability filter
-# Covers: session listing, date filtering, --recent, --json, graceful degradation
+# Covers: session listing, date filtering, --recent, --json, graceful degradation, argument validation
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -134,7 +134,13 @@ printf '{"type":"message","source":"user","payload":{"text":"old"}}\n' >"$SHAI_H
 OUT=$("$SESSIONS")
 assert_contains "$OUT" "--" "human output shows -- for missing runs/tokens"
 
-desc "invalid args: exit 1"
+desc "invalid args: each error branch asserts its distinct message"
+assert_fails 1 "error: --recent requires a value" "--recent missing value" -- "$SESSIONS" --recent
+assert_fails 1 "error: --recent value must be an integer" "--recent non-integer value" -- "$SESSIONS" --recent abc
+assert_fails 1 "error: --after requires a date (YYYY-MM-DD)" "--after missing value" -- "$SESSIONS" --after
+assert_fails 1 "error: --after date must be YYYY-MM-DD" "--after bad date" -- "$SESSIONS" --after not-a-date
+assert_fails 1 "error: --before requires a date (YYYY-MM-DD)" "--before missing value" -- "$SESSIONS" --before
+assert_fails 1 "error: --before date must be YYYY-MM-DD" "--before bad date" -- "$SESSIONS" --before 2026/08/10
 assert_fails 1 "error: unknown option: --bogus" "unknown flag" -- "$SESSIONS" --bogus
 
 finish
