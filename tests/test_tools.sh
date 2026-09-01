@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_tools.sh — unit tests for shai-tools
-# Covers: shai-tools — plugin scanning, validation, aggregation, capabilities stripping
+# Covers: shai-tools — plugin scanning, JSON-parse and required-field validation,
+#         name/run.sh/executable/capabilities validation, aggregation, capabilities stripping
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -61,12 +62,61 @@ set -euo pipefail
 echo "ok"
 SH
 chmod +x "$MDIR/tools/broken/run.sh"
-if "$DIR/shai-tools" "$MDIR/tools" >/dev/null 2>&1; then
-  echo -e "  ${RED}✗${NC} tools: missing tool.json should fail"
-  FAILED=1
-else
-  echo -e "  ${GREEN}✓${NC} tools: missing tool.json fails with non-zero exit"
-fi
+OUT=$("$DIR/shai-tools" "$MDIR/tools" 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "tools: missing tool.json exits 1"
+assert_contains "$OUT" "broken/tool.json not found" "tools: missing tool.json reports not found"
+
+# --- tool.json is not valid JSON ---
+JDIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$JDIR")
+mkdir -p "$JDIR/tools/badjson"
+printf '{ "name": ' >"$JDIR/tools/badjson/tool.json"
+cat >"$JDIR/tools/badjson/run.sh" <<'SH'
+#!/bin/bash
+set -euo pipefail
+echo "ok"
+SH
+chmod +x "$JDIR/tools/badjson/run.sh"
+OUT=$("$DIR/shai-tools" "$JDIR/tools" 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "tools: invalid tool.json exits 1"
+assert_contains "$OUT" "badjson/tool.json is not valid JSON" "tools: invalid tool.json reports not valid JSON"
+
+# --- missing required field: one case per field, each must name the right field ---
+for field in name description parameters; do
+  REQDIR=$(mktemp -d)
+  _CLEANUP_DIRS+=("$REQDIR")
+  mkdir -p "$REQDIR/tools/no_${field}"
+  jq -nc --arg f "$field" \
+    '{name:("no_"+$f), description:"Missing required field fixture.", parameters:{type:"object",properties:{},required:[]}} | del(.[$f])' \
+    >"$REQDIR/tools/no_${field}/tool.json"
+  cat >"$REQDIR/tools/no_${field}/run.sh" <<'SH'
+#!/bin/bash
+set -euo pipefail
+echo "ok"
+SH
+  chmod +x "$REQDIR/tools/no_${field}/run.sh"
+  OUT=$("$DIR/shai-tools" "$REQDIR/tools" 2>&1) && rc=0 || rc=$?
+  assert_eq "$rc" "1" "tools: missing required field $field exits 1"
+  assert_contains "$OUT" "no_${field}/tool.json missing required field: ${field}" \
+    "tools: missing required field $field names the field"
+done
+
+# --- invalid JSON that is also missing fields: the parse error must win ---
+ODIR=$(mktemp -d)
+_CLEANUP_DIRS+=("$ODIR")
+mkdir -p "$ODIR/tools/badorder"
+printf '{ "name": ' >"$ODIR/tools/badorder/tool.json"
+cat >"$ODIR/tools/badorder/run.sh" <<'SH'
+#!/bin/bash
+set -euo pipefail
+echo "ok"
+SH
+chmod +x "$ODIR/tools/badorder/run.sh"
+OUT=$("$DIR/shai-tools" "$ODIR/tools" 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "tools: invalid JSON + missing fields exits 1"
+assert_contains "$OUT" "badorder/tool.json is not valid JSON" "tools: invalid JSON + missing fields reports parse error"
+assert_not_contains "$OUT" "missing required field" \
+  "tools: parse error precedes field validation"
 
 # --- missing run.sh ---
 RDIR=$(mktemp -d)
@@ -80,12 +130,9 @@ cat >"$RDIR/tools/norush/tool.json" <<'JSON'
   "parameters": { "type": "object", "properties": {}, "required": [] }
 }
 JSON
-if "$DIR/shai-tools" "$RDIR/tools" >/dev/null 2>&1; then
-  echo -e "  ${RED}✗${NC} tools: missing run.sh should fail"
-  FAILED=1
-else
-  echo -e "  ${GREEN}✓${NC} tools: missing run.sh fails with non-zero exit"
-fi
+OUT=$("$DIR/shai-tools" "$RDIR/tools" 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "tools: missing run.sh exits 1"
+assert_contains "$OUT" "norush/run.sh not found" "tools: missing run.sh reports not found"
 
 # --- non-executable run.sh ---
 XDIR=$(mktemp -d)
@@ -105,12 +152,9 @@ set -euo pipefail
 echo "ok"
 SH
 # deliberately NOT chmod +x
-if "$DIR/shai-tools" "$XDIR/tools" >/dev/null 2>&1; then
-  echo -e "  ${RED}✗${NC} tools: non-executable run.sh should fail"
-  FAILED=1
-else
-  echo -e "  ${GREEN}✓${NC} tools: non-executable run.sh fails with non-zero exit"
-fi
+OUT=$("$DIR/shai-tools" "$XDIR/tools" 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "tools: non-executable run.sh exits 1"
+assert_contains "$OUT" "noexec/run.sh is not executable" "tools: non-executable run.sh reports not executable"
 
 # --- name mismatch ---
 NDIR=$(mktemp -d)
@@ -130,12 +174,10 @@ set -euo pipefail
 echo "ok"
 SH
 chmod +x "$NDIR/tools/dir_name/run.sh"
-if "$DIR/shai-tools" "$NDIR/tools" >/dev/null 2>&1; then
-  echo -e "  ${RED}✗${NC} tools: name mismatch should fail"
-  FAILED=1
-else
-  echo -e "  ${GREEN}✓${NC} tools: name mismatch fails with non-zero exit"
-fi
+OUT=$("$DIR/shai-tools" "$NDIR/tools" 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "tools: name mismatch exits 1"
+assert_contains "$OUT" 'dir_name/tool.json name "wrong_name" does not match directory name' \
+  "tools: name mismatch reports the mismatched name"
 
 # --- invalid capabilities (non-object) ---
 CDIR=$(mktemp -d)
@@ -155,12 +197,10 @@ set -euo pipefail
 echo "ok"
 SH
 chmod +x "$CDIR/tools/badcap/run.sh"
-if "$DIR/shai-tools" "$CDIR/tools" >/dev/null 2>&1; then
-  echo -e "  ${RED}✗${NC} tools: invalid capabilities should fail"
-  FAILED=1
-else
-  echo -e "  ${GREEN}✓${NC} tools: invalid capabilities (non-object) fails with non-zero exit"
-fi
+OUT=$("$DIR/shai-tools" "$CDIR/tools" 2>&1) && rc=0 || rc=$?
+assert_eq "$rc" "1" "tools: invalid capabilities exits 1"
+assert_contains "$OUT" "badcap/tool.json capabilities must be an object (got string)" \
+  "tools: invalid capabilities reports non-object capabilities"
 
 # --- multiple valid plugins ---
 MLTDIR=$(mktemp -d)
