@@ -119,8 +119,8 @@ fixture_event "message" "user" '{"text":"b"}' "run_b" "$S2" "span_1" >"$SHAI_HOM
 OUT=$("$EVENTS" --session "sess_20260811T0900" --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "unambiguous prefix resolves"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].meta.session_id')" "$S1" "resolved session id"
-assert_exit 1 "ambiguous prefix" -- "$EVENTS" --session "sess_20260811"
-assert_exit 1 "no match prefix" -- "$EVENTS" --session "sess_nope"
+assert_fails 1 "error: ambiguous prefix \"sess_20260811\"" "ambiguous prefix" -- "$EVENTS" --session "sess_20260811"
+assert_fails 1 "error: no match for \"sess_nope\"" "no match prefix" -- "$EVENTS" --session "sess_nope"
 
 desc "--run: filters events by meta.run_id prefix"
 setup_events
@@ -348,15 +348,15 @@ OUT=$("$EVENTS" --type error --source user)
 assert_eq "$OUT" "" "no matches -> no output"
 
 desc "invalid args: exit 1"
-assert_exit 1 "unknown flag" -- "$EVENTS" --bogus
-assert_exit 1 "--after bad date" -- "$EVENTS" --after not-a-date
-assert_exit 1 "--before bad date" -- "$EVENTS" --before 2026/08/10
-assert_exit 1 "--recent not an integer" -- "$EVENTS" --recent nope
-assert_exit 1 "--type missing value" -- "$EVENTS" --type
-assert_exit 1 "--source missing value" -- "$EVENTS" --source
-assert_exit 1 "--tool missing value" -- "$EVENTS" --tool
-assert_exit 1 "--session missing value" -- "$EVENTS" --session
-assert_exit 1 "--run missing value" -- "$EVENTS" --run
-assert_exit 1 "--recent missing value" -- "$EVENTS" --recent
+assert_fails 1 "error: unknown option: --bogus" "unknown flag" -- "$EVENTS" --bogus
+assert_fails 1 "error: --after date must be YYYY-MM-DD" "--after bad date" -- "$EVENTS" --after not-a-date
+assert_fails 1 "error: --before date must be YYYY-MM-DD" "--before bad date" -- "$EVENTS" --before 2026/08/10
+assert_fails 1 "error: --recent value must be an integer" "--recent not an integer" -- "$EVENTS" --recent nope
+assert_fails 1 "error: --type requires a value" "--type missing value" -- "$EVENTS" --type
+assert_fails 1 "error: --source requires a value" "--source missing value" -- "$EVENTS" --source
+assert_fails 1 "error: --tool requires a value" "--tool missing value" -- "$EVENTS" --tool
+assert_fails 1 "error: --session requires an ID or prefix" "--session missing value" -- "$EVENTS" --session
+assert_fails 1 "error: --run requires an ID or prefix" "--run missing value" -- "$EVENTS" --run
+assert_fails 1 "error: --recent requires a value" "--recent missing value" -- "$EVENTS" --recent
 
 finish
