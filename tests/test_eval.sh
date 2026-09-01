@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_eval.sh — unit tests for shai-eval
-# Covers: shai-eval — payload build, error-event invariants, dry-run, health-check
+# Covers: shai-eval — payload build, error-event invariants, dry-run, health-check, retry state machine (stderr progress lines), arg guards
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -48,10 +48,15 @@ make_stub_bin
 write_curl_stub 200 <<'STUB'
 {"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
 STUB
-EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
+EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
 assert_contains "$EV" '"finish_reason":"stop"' "eval: finish_reason parsed"
 assert_contains "$EV" 'stub reply' "eval: content passed through"
+# absence assertion, mutation-checked (#356): emitting a progress printf on the
+# 200-success path makes this red — a first-attempt success must be silent on stderr.
+# Byte-exact via wc -c: "$(cat ...)" command substitution strips trailing newlines,
+# so a newline-only stderr emission would falsely compare equal to "".
+assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" "eval: first-attempt success emits no retry progress on stderr"
 
 env -u DEEPSEEK_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
 assert_eq "$?" "1" "eval: health-check fails without key"
@@ -90,6 +95,14 @@ assert_contains "$DRYOVR" '"max_tokens":42' "eval: --max-tokens override in payl
 
 # new: unknown option → exit 2
 assert_exit 2 "eval: unknown option exits 2" -- "$DIR/shai-eval" --bogus
+
+# new: --tools-file with no value → controlled exit 2. Last of shai-eval's "requires a
+# value" guards without a test; matters because shai-loop forwards --tools-file through,
+# so a rejected forwarded value must fail cleanly rather than crash the pipeline.
+TFNOVAL=$("$DIR/shai-eval" --tools-file </dev/null 2>&1)
+RC=$?
+assert_eq "$RC" "2" "eval: --tools-file without value exits 2"
+assert_contains "$TFNOVAL" "error: --tools-file requires a path" "eval: --tools-file without value → clear message"
 
 # new: value-taking options validate their argument (controlled exit 2, not a set -u/jq crash)
 MODELERR=$("$DIR/shai-eval" --model </dev/null 2>&1)
@@ -350,17 +363,34 @@ STUBEOF
 # retry succeeds after transient 503
 make_stub_bin
 write_retry_curl_stub 2 503 '{"id":"msg_retry","choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
-OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
+RETRY_ERR=$(cat "$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: recovers after transient 503"
 assert_contains "$OUT" "recovered" "retry: final response content correct"
 CALL_COUNT=$(cat "$STUB/.retry_count")
 assert_eq "$CALL_COUNT" "3" "retry: made 3 total attempts (1 initial + 2 retries)"
+# retry progress is a documented contract (CLAUDE.md: "Retry attempts log to stderr"):
+# one line per retry, numbered attempt N/M with M = EVAL_RETRIES + 1 and N = ATTEMPT + 2
+assert_eq "$(printf '%s' "$RETRY_ERR" | grep -c '^shai-eval: retrying (attempt' | tr -d ' ')" "2" \
+  "retry: exactly one stderr progress line per retry (2 retries → 2 lines)"
+assert_eq "$(printf '%s' "$RETRY_ERR" | sed -n '1p')" \
+  'shai-eval: retrying (attempt 2/3) after HTTP 503, backoff 1s' \
+  "retry: first progress line numbers the attempt 2/3 with backoff 1s"
+assert_eq "$(printf '%s' "$RETRY_ERR" | sed -n '2p')" \
+  'shai-eval: retrying (attempt 3/3) after HTTP 503, backoff 2s' \
+  "retry: second progress line numbers the attempt 3/3 with backoff 2s"
 
 # retry succeeds after transient 429
 make_stub_bin
 write_retry_curl_stub 1 429 '{"id":"msg_429","choices":[{"message":{"role":"assistant","content":"ok429"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
-OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
+RETRY_ERR=$(cat "$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: recovers after 429"
+assert_eq "$(printf '%s' "$RETRY_ERR" | grep -c '^shai-eval: retrying (attempt' | tr -d ' ')" "1" \
+  "retry: 429 → exactly one stderr progress line"
+assert_eq "$(printf '%s' "$RETRY_ERR" | sed -n '1p')" \
+  'shai-eval: retrying (attempt 2/3) after HTTP 429, backoff 1s' \
+  "retry: 429 progress line numbers the attempt 2/3"
 
 # retry exhausted → error event (not crash)
 make_stub_bin
@@ -373,18 +403,22 @@ assert_eq "$RC" "0" "retry: exhausted retries still exits 0"
 # SHAI_EVAL_RETRIES=0 disables retry — first failure is final
 make_stub_bin
 write_retry_curl_stub 1 503 '{"id":"msg_no","choices":[{"message":{"role":"assistant","content":"nope"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
-OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval" 2>/dev/null)
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: SHAI_EVAL_RETRIES=0 disables retry"
 CALL_COUNT=$(cat "$STUB/.retry_count")
 assert_eq "$CALL_COUNT" "1" "retry: SHAI_EVAL_RETRIES=0 makes exactly 1 attempt"
+assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" \
+  "retry: no progress line when retries are disabled (positive control: the 503 case above)"
 
 # 4xx (not 429) is never retried
 make_stub_bin
 write_retry_curl_stub 1 401 '{"id":"msg_auth","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
-OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: 401 is not retried"
 CALL_COUNT=$(cat "$STUB/.retry_count")
 assert_eq "$CALL_COUNT" "1" "retry: 401 makes exactly 1 attempt"
+assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" \
+  "retry: no progress line for a non-retried 401 (positive control: the 429 case above)"
 
 # curl hard-failure is retried
 make_stub_bin
@@ -404,8 +438,14 @@ JSON
 echo "200"
 STUBEOF
 chmod +x "$STUB/curl"
-OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
+OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
+RETRY_ERR=$(cat "$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: curl hard-failure recovered on retry"
+assert_eq "$(printf '%s' "$RETRY_ERR" | grep -c '^shai-eval: retrying (attempt' | tr -d ' ')" "1" \
+  "retry: curl failure → exactly one stderr progress line"
+assert_eq "$(printf '%s' "$RETRY_ERR" | sed -n '1p')" \
+  'shai-eval: retrying (attempt 2/3) after curl failure, backoff 1s' \
+  "retry: curl-failure variant distinguished (attempt 2/3, 'after curl failure')"
 
 # invalid SHAI_EVAL_RETRIES → exit 2
 EVERR=$(SHAI_EVAL_RETRIES=abc "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
