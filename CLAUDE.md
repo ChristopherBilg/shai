@@ -343,9 +343,13 @@ The scripts:
   `--health-check` exits 1 when `DEEPSEEK_API_KEY` is missing). Transient failures (curl errors,
   HTTP 429, 5xx) are retried with exponential backoff (1s, 2s, 4s, …) up to
   `SHAI_EVAL_RETRIES` times (default 2; max 10; set to 0 to disable); non-transient errors (4xx other
-  than 429) and retries-exhausted both emit a single error event immediately. Retry attempts
-  log to stderr so the user sees progress. `--dry-run` prints the payload
-  without calling out; `--tools-file <path>` attaches the aggregated tool array at that path
+  than 429) and retries-exhausted both emit a single error event immediately. Each retry logs
+  one line to stderr so the user sees progress, in the exact format
+  `shai-eval: retrying (attempt N/M) after <cause>, backoff <n>s` — `N` is the upcoming attempt,
+  `M` is `SHAI_EVAL_RETRIES + 1` (total attempts), `<cause>` is `curl failure` or `HTTP <code>`,
+  and `<n>` is that attempt's backoff in seconds. `tests/test_eval.sh` pins these lines verbatim,
+  so a change to the format must update this doc and the tests together. `--dry-run` prints the
+  payload without calling out; `--tools-file <path>` attaches the aggregated tool array at that path
   (built by `shai-tools`). Before each real call it best-effort dumps the exact request to
   `$SHAI_HOME/runs/<run_id>/<span_id>-request.json`. On success it parses `choices[0].message`
   (`content`, `tool_calls`) plus the top-level `finish_reason` into the assistant event, and
