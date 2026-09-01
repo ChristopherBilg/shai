@@ -128,7 +128,7 @@ setup_trace
 RID="run_20260811T090000_reqmissing"
 make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hi"}' "$RID" "sess_test" "span_1")"
-assert_exit 1 "missing span value" -- "$TRACE" "$RID" --request
+assert_fails 1 "error: --request requires a span_id" "missing span value" -- "$TRACE" "$RID" --request
 
 desc "--request: malformed dump file exits 1 with a clean error"
 setup_trace
@@ -137,7 +137,7 @@ make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hi"}' "$RID" "sess_test" "span_1")"
 printf '{"model":"m", invalid' >"$SHAI_HOME/runs/$RID/span_1-request.json"
 ERR=$("$TRACE" "$RID" --request span_1 2>&1 >/dev/null)
-assert_exit 1 "malformed request dump" -- "$TRACE" "$RID" --request span_1
+assert_fails 1 "error: $SHAI_HOME/runs/$RID/span_1-request.json is not valid JSON" "malformed request dump" -- "$TRACE" "$RID" --request span_1
 assert_contains "$ERR" "not valid JSON" "clean error message for malformed request dump"
 
 desc "--response: dumps response metadata"
@@ -156,7 +156,7 @@ make_run_with_dumps "$RID" \
   "$(fixture_event "message" "user" '{"text":"hi"}' "$RID" "sess_test" "span_1")"
 printf '{"message_id": invalid' >"$SHAI_HOME/runs/$RID/span_1-response.json"
 ERR=$("$TRACE" "$RID" --response span_1 2>&1 >/dev/null)
-assert_exit 1 "malformed response dump" -- "$TRACE" "$RID" --response span_1
+assert_fails 1 "error: $SHAI_HOME/runs/$RID/span_1-response.json is not valid JSON" "malformed response dump" -- "$TRACE" "$RID" --response span_1
 assert_contains "$ERR" "not valid JSON" "clean error message for malformed response dump"
 
 desc "prefix matching: unambiguous prefix works"
@@ -169,7 +169,7 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "prefix resolves"
 
 desc "prefix matching: no match exits 1"
 setup_trace
-assert_exit 1 "no match" -- "$TRACE" "run_nonexistent"
+assert_fails 1 "error: no events found for run \"run_nonexistent\"" "no match" -- "$TRACE" "run_nonexistent"
 
 desc "prefix matching: ambiguous run directory prefix exits 1 (not a silent fallback)"
 setup_trace
@@ -179,7 +179,7 @@ fixture_event "message" "user" '{"text":"a"}' "run_20260811T090000_ambA" "sess_t
 fixture_event "message" "user" '{"text":"b"}' "run_20260811T090000_ambB" "sess_test" "span_1" \
   >"$SHAI_HOME/runs/run_20260811T090000_ambB/events.jsonl"
 ERR=$("$TRACE" "run_20260811T090000_amb" 2>&1 >/dev/null)
-assert_exit 1 "ambiguous run prefix" -- "$TRACE" "run_20260811T090000_amb"
+assert_fails 1 "error: ambiguous prefix \"run_20260811T090000_amb\"" "ambiguous run prefix" -- "$TRACE" "run_20260811T090000_amb"
 assert_contains "$ERR" "ambiguous" "ambiguous run prefix reports the conflict instead of silently falling back"
 
 desc "session fallback: warns and finds events"
@@ -231,7 +231,7 @@ assert_contains "$ERR" "warning" "warning printed for the malformed events file"
 
 desc "no events found: error"
 setup_trace
-assert_exit 1 "no events" -- "$TRACE" "run_20260811T090000_gone"
+assert_fails 1 "error: no events found for run \"run_20260811T090000_gone\"" "no events" -- "$TRACE" "run_20260811T090000_gone"
 
 desc "cache tokens: per-span and total show cached count when present"
 setup_trace
@@ -262,6 +262,6 @@ CACHED_IN_OUTPUT=no
 assert_eq "$CACHED_IN_OUTPUT" "no" "no cache line when cache fields absent"
 
 desc "invalid args: exit 1"
-assert_exit 1 "no args" -- "$TRACE"
+assert_fails 1 "usage: shai-trace <run_id>" "no args" -- "$TRACE"
 
 finish
