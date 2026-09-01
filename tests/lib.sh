@@ -33,6 +33,17 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  if [[ "$1" != *"$2"* ]]; then
+    echo -e "  ${GREEN}✓${NC} $3"
+  else
+    echo -e "  ${RED}✗${NC} $3"
+    echo "    unexpected substring: $2"
+    echo "    got: $1"
+    FAILED=1
+  fi
+}
+
 # assert_exit <expected_code> <description> -- <command...>
 assert_exit() {
   local expected="$1" desc="$2"

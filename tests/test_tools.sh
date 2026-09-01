@@ -115,12 +115,8 @@ chmod +x "$ODIR/tools/badorder/run.sh"
 OUT=$("$DIR/shai-tools" "$ODIR/tools" 2>&1) && rc=0 || rc=$?
 assert_eq "$rc" "1" "tools: invalid JSON + missing fields exits 1"
 assert_contains "$OUT" "badorder/tool.json is not valid JSON" "tools: invalid JSON + missing fields reports parse error"
-if [[ "$OUT" == *"missing required field"* ]]; then
-  echo -e "  ${RED}✗${NC} tools: parse error precedes field validation (field error emitted)"
-  FAILED=1
-else
-  echo -e "  ${GREEN}✓${NC} tools: parse error precedes field validation"
-fi
+assert_not_contains "$OUT" "missing required field" \
+  "tools: parse error precedes field validation"
 
 # --- missing run.sh ---
 RDIR=$(mktemp -d)
