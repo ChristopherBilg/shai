@@ -54,7 +54,8 @@ assert_exit() {
 }
 
 # assert_fails <expected_code> <stderr_fragment> <description> -- <command...>: assert the
-# exit code AND that stderr contains the fragment (stderr captured, stdout dropped).
+# exit code AND that stderr contains the fragment as a literal string, not a glob pattern
+# (stderr captured, stdout dropped).
 assert_fails() {
   local expected="$1" frag="$2" desc="$3"
   shift 3
