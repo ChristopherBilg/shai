@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_prune.sh — tests for shai-prune
-# Covers: shai-prune — session/run/ledger/failure pruning, --dry-run, --before, confirmation, edge cases
+# Covers: shai-prune — session/run/ledger/failure pruning, --dry-run, --before, argument validation, confirmation, edge cases
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -99,8 +99,53 @@ SHAI_HOME="$PHOME" "$DIR/shai-prune" --sessions </dev/null >/dev/null 2>&1
 assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "0" \
   "prune: non-interactive removes without prompting"
 
-# unknown option exits 1
-assert_exit 1 "prune: unknown option exits 1" -- "$DIR/shai-prune" --bogus
+# unknown option is rejected with a message naming it
+assert_fails 1 "error: unknown option: --bogus" "prune: unknown option" -- "$DIR/shai-prune" --bogus
+
+# --before with no value is rejected before anything is deleted (mutation-checked:
+# deleting the arg-loop guard lets an empty --before fall through to an unfiltered
+# prune that wipes the fixture, turning every assertion below red)
+new_home
+SHAI_HOME="$PHOME" assert_fails 1 "error: --before requires a YYYY-MM-DD argument" "prune: --before without a value" -- \
+  "$DIR/shai-prune" --before </dev/null
+assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "4" \
+  "prune: --before without a value deletes no sessions"
+assert_eq "$(find "$PHOME/runs/" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "2" \
+  "prune: --before without a value deletes no runs"
+
+# --before with a malformed value is rejected before anything is deleted, in two
+# shapes: a slashed date and a run-together date — the second proves the check is a
+# format check, not merely a length check (mutation-checked: deleting the post-parse
+# validation block lets both fall through to an unfiltered prune that wipes the
+# fixture, turning every assertion below red)
+new_home
+SHAI_HOME="$PHOME" assert_fails 1 'error: --before requires YYYY-MM-DD format (got "2026/08/10")' "prune: --before rejects slashed date" -- \
+  "$DIR/shai-prune" --before 2026/08/10 </dev/null
+assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "4" \
+  "prune: slashed --before deletes no sessions"
+assert_eq "$(find "$PHOME/runs/" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "2" \
+  "prune: slashed --before deletes no runs"
+
+new_home
+SHAI_HOME="$PHOME" assert_fails 1 'error: --before requires YYYY-MM-DD format (got "20260810")' "prune: --before rejects unseparated date" -- \
+  "$DIR/shai-prune" --before 20260810 </dev/null
+assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "4" \
+  "prune: unseparated --before deletes no sessions"
+assert_eq "$(find "$PHOME/runs/" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" "2" \
+  "prune: unseparated --before deletes no runs"
+
+# positive control adjacent to the "deletes nothing" assertions: the same fixture
+# shape with a valid --before does prune, so a fixture that was never prunable cannot
+# masquerade as a passing rejection test
+new_home
+touch -t 202501010000 "$PHOME/sessions/sess_a.jsonl"
+touch -t 202501010000 "$PHOME/sessions/sess_a.latest.json"
+touch -t 202501010000 "$PHOME/runs/run_001"
+SHAI_HOME="$PHOME" "$DIR/shai-prune" --before 2026-01-01 </dev/null >/dev/null 2>&1
+assert_eq "$(find "$PHOME/sessions/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "2" \
+  "prune: valid --before (control) removes old session files"
+assert_eq "$(find "$PHOME/runs/" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')" "1" \
+  "prune: valid --before (control) removes old run dir"
 
 # --ledgers prunes only ledger files
 new_home_with_ledgers
