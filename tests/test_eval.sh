@@ -7,13 +7,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-eval"
 
-DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' "$DIR/shai-eval")
 DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="${SHAI_MAX_TOKENS:-\(.*\)}"/\1/p' "$DIR/shai-eval")
 DEFAULT_EVAL_TIMEOUT=$(sed -n 's/^EVAL_TIMEOUT="${SHAI_EVAL_TIMEOUT:-\(.*\)}"/\1/p' "$DIR/shai-eval")
-[ -n "$DEFAULT_MODEL" ] || {
-  echo "FATAL: could not extract DEFAULT_MODEL from shai-eval" >&2
-  exit 1
-}
 [ -n "$DEFAULT_MAX_TOKENS" ] || {
   echo "FATAL: could not extract DEFAULT_MAX_TOKENS from shai-eval" >&2
   exit 1
@@ -32,8 +27,7 @@ export SHAI_HOME="$SHAI_HOME_TMP"
 TOOLS_TMP=$(mktemp)
 _CLEANUP_DIRS+=("$TOOLS_TMP")
 "$DIR/shai-tools" >"$TOOLS_TMP"
-DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | env -u SHAI_MODEL "$DIR/shai-eval" --dry-run --tools-file "$TOOLS_TMP")
-assert_contains "$DRY" "\"model\":\"$DEFAULT_MODEL\"" "eval: default model"
+DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools-file "$TOOLS_TMP")
 assert_contains "$DRY" "\"max_tokens\":$DEFAULT_MAX_TOKENS" "eval: default max_tokens"
 assert_contains "$DRY" '"gh"' "eval: tools included with --tools-file"
 assert_contains "$DRY" '"thinking":{"type":"enabled"}' "eval: thinking enabled in payload"
@@ -58,7 +52,7 @@ assert_contains "$EV" 'stub reply' "eval: content passed through"
 # so a newline-only stderr emission would falsely compare equal to "".
 assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" "eval: first-attempt success emits no retry progress on stderr"
 
-env -u DEEPSEEK_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
+env -u SHAI_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
 assert_eq "$?" "1" "eval: health-check fails without key"
 
 "$DIR/shai-eval" --health-check
@@ -536,5 +530,91 @@ assert_eq "$RC" "2" "eval: SHAI_EVAL_TIMEOUT=0 exits 2"
 TOERR=$(SHAI_EVAL_TIMEOUT=0120 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
 RC=$?
 assert_eq "$RC" "2" "eval: SHAI_EVAL_TIMEOUT with leading zero exits 2"
+
+desc "required provider configuration"
+
+# Each of the three missing individually: one error event, exit 0. Never a crash — the
+# never-crash-the-loop invariant is what this whole suite exists to protect.
+for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+  OUT=$(printf '{"messages":[]}' | env -u "$var" "$DIR/shai-eval")
+  RC=$?
+  assert_eq "$RC" "0" "missing $var: exit 0 (never crashes the loop)"
+  assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "missing $var: error event"
+  assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "system" "missing $var: source system"
+  assert_eq "$(printf '%s' "$OUT" | jq -r '.payload.text')" "$var is not set" \
+    "missing $var: singular message names only $var"
+done
+
+# Two missing: ONE event, both names in declaration order, plural agreement.
+OUT=$(printf '{"messages":[]}' | env -u SHAI_API_KEY -u SHAI_MODEL "$DIR/shai-eval")
+assert_eq "$(printf '%s\n' "$OUT" | wc -l)" "1" "two missing: exactly one event emitted"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.payload.text')" \
+  "SHAI_API_KEY, SHAI_MODEL are not set" "two missing: one plural message, declaration order"
+
+OUT=$(printf '{"messages":[]}' |
+  env -u SHAI_API_KEY -u SHAI_API_URL -u SHAI_MODEL "$DIR/shai-eval")
+assert_eq "$(printf '%s' "$OUT" | jq -r '.payload.text')" \
+  "SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL are not set" "all three missing: declaration order"
+
+desc "--dry-run needs only the model"
+
+# NEGATIVE ASSERTION WITH ADJACENT POSITIVE CONTROL.
+# --dry-run must keep working with no credentials: inspecting a payload offline is its whole
+# purpose. The payload embeds `model`, so the model IS still required. Mutation-checked in
+# Step 11 — dropping the --dry-run guard inside missing_config turns this pair red.
+OUT=$(printf '{"messages":[]}' |
+  env -u SHAI_API_KEY -u SHAI_API_URL "$DIR/shai-eval" --dry-run)
+RC=$?
+assert_eq "$RC" "0" "--dry-run without credentials: exit 0"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.model')" "test-model" \
+  "--dry-run without credentials: payload still printed"
+
+# Positive control, adjacent by design: the same input WITH credentials reaches the stubbed
+# curl and yields a real assistant event. Without this, the exemption above could be passing
+# against a path that no longer works at all.
+write_curl_stub 200 <<'STUB'
+{"id":"msg_pc","choices":[{"message":{"role":"assistant","content":"live"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+STUB
+OUT=$(printf '{"messages":[]}' | "$DIR/shai-eval")
+assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "message" \
+  "positive control: with credentials the same input makes a (stubbed) real call"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" \
+  "positive control: assistant event, so the dry-run exemption is not masking a dead path"
+
+OUT=$(printf '{"messages":[]}' | env -u SHAI_MODEL "$DIR/shai-eval" --dry-run)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.payload.text')" "SHAI_MODEL is not set" \
+  "--dry-run without a model: error event"
+
+desc "--model satisfies an unset SHAI_MODEL"
+
+OUT=$(printf '{"messages":[]}' |
+  env -u SHAI_MODEL "$DIR/shai-eval" --dry-run --model cli-model)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.model')" "cli-model" \
+  "--model resolves the requirement (the check runs after arg parsing)"
+
+desc "usage errors keep precedence over missing config"
+
+# A bad SHAI_MAX_TOKENS is exit 2 today, and the new config check must not demote it to an
+# error event. Not using assert_fails here: shai-eval reads stdin before the MAX_TOKENS
+# validation, and assert_fails cannot feed stdin. Mutation-checked in Step 11 — moving the
+# config check above the MAX_TOKENS case makes this report 0 instead of 2.
+ERR=$(printf '{"messages":[]}' |
+  env -u SHAI_API_KEY SHAI_MAX_TOKENS=abc "$DIR/shai-eval" 2>&1 >/dev/null)
+RC=$?
+assert_eq "$RC" "2" "bad SHAI_MAX_TOKENS with missing config: still exit 2"
+assert_contains "$ERR" "SHAI_MAX_TOKENS must be a positive integer" \
+  "bad SHAI_MAX_TOKENS with missing config: names the usage error, not the config error"
+
+desc "--health-check covers all three"
+
+# --health-check runs before stdin is read, so assert_fails (exit code + stderr fragment)
+# applies cleanly here.
+for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+  assert_fails 1 "$var is not set" "--health-check without $var" \
+    -- env -u "$var" "$DIR/shai-eval" --health-check
+done
+
+"$DIR/shai-eval" --health-check >/dev/null 2>&1
+assert_eq "$?" "0" "--health-check with all three set: exit 0"
 
 finish

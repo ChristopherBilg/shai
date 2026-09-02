@@ -1,8 +1,9 @@
 #!/bin/bash
-# shai-eval — the only network hop: call the Deepseek API
+# shai-eval — the only network hop: call the OpenAI-compatible chat-completions API
 # Usage: cat request.json | shai-eval [--tools-file <path>|--model M|--max-tokens N|--dry-run|--health-check]
-# Reads: a {messages} request JSON on stdin; SHAI_RUN_ID / SHAI_SPAN_ID from the
-#        environment to locate the per-span request/response dumps;
+# Reads: a {messages} request JSON on stdin; SHAI_API_KEY, SHAI_API_URL (full endpoint URL)
+#        and SHAI_MODEL (all required; --model overrides SHAI_MODEL); SHAI_RUN_ID /
+#        SHAI_SPAN_ID from the environment to locate the per-span request/response dumps;
 #        SHAI_MAX_TOKENS (default 384000) for the output token budget;
 #        SHAI_EVAL_TIMEOUT (default 7200) for the curl --max-time ceiling in seconds;
 #        SHAI_EVAL_RETRIES (default 2, max 10) for retry count on transient failures
@@ -10,18 +11,40 @@
 #         usage, latency_ms); on a real call, also dumps the request, and on success the response
 #         metadata, to $SHAI_HOME/runs/<run_id>/<span_id>-{request,response}.json (best-effort);
 #         --dry-run prints payload; retry progress to stderr
-# Exit: 0 always; --health-check exits 1 if DEEPSEEK_API_KEY missing; 2 on bad CLI args or
-#        a non-integer SHAI_MAX_TOKENS / SHAI_EVAL_TIMEOUT / SHAI_EVAL_RETRIES
-#        (or SHAI_EVAL_RETRIES above 10)
+# Exit: 0 always; --health-check exits 1 if any of SHAI_API_KEY / SHAI_API_URL / SHAI_MODEL
+#        is missing; 2 on bad CLI args or a non-integer SHAI_MAX_TOKENS / SHAI_EVAL_TIMEOUT /
+#        SHAI_EVAL_RETRIES (or SHAI_EVAL_RETRIES above 10)
 set -euo pipefail
 
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
-MODEL="${SHAI_MODEL:-deepseek-v4-pro}"
+MODEL="${SHAI_MODEL:-}"
 MAX_TOKENS="${SHAI_MAX_TOKENS:-384000}"
 DRY_RUN=false
 HEALTH_CHECK=false
-API_URL="https://api.deepseek.com/v1/chat/completions"
+API_URL="${SHAI_API_URL:-}"
 TOOLS_FILE=""
+
+# missing_config [--dry-run]: names of the required provider variables that are unset, joined
+# with a message. --dry-run omits the credentials: shai-eval --dry-run prints the payload
+# without calling out, so it needs only the model (which the payload embeds), and requiring a
+# key would break offline payload inspection.
+missing_config() {
+  local for_dry_run="${1:-}" missing=()
+  [ -n "${SHAI_API_KEY:-}" ] || [ "$for_dry_run" = "--dry-run" ] || missing+=(SHAI_API_KEY)
+  [ -n "${SHAI_API_URL:-}" ] || [ "$for_dry_run" = "--dry-run" ] || missing+=(SHAI_API_URL)
+  [ -n "$MODEL" ] || missing+=(SHAI_MODEL)
+  [ "${#missing[@]}" -eq 0 ] && return 1
+  local names verb
+  # "${missing[*]}" with IFS=', ' would join on only the first IFS char (a comma with no
+  # space) -- $IFS multi-char join only applies to word-splitting, not array-to-string
+  # joining. Build ", "-joined text explicitly instead: repeat ", %s" per element, then
+  # strip the one leading ", ".
+  names=$(printf ', %s' "${missing[@]}")
+  names="${names#, }"
+  if [ "${#missing[@]}" -eq 1 ]; then verb="is"; else verb="are"; fi
+  printf '%s %s not set' "$names" "$verb"
+  return 0
+}
 
 EVAL_TIMEOUT="${SHAI_EVAL_TIMEOUT:-7200}"
 case "$EVAL_TIMEOUT" in
@@ -94,8 +117,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$HEALTH_CHECK" = true ]; then
-  if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
-    echo "error: DEEPSEEK_API_KEY is not set" >&2
+  if MSG=$(missing_config); then
+    printf 'error: %s\n' "$MSG" >&2
     exit 1
   fi
   exit 0
@@ -118,6 +141,18 @@ case "$MAX_TOKENS" in
     ;;
 esac
 
+# Required provider configuration. Placed here deliberately: after the empty-stdin guard (so
+# empty input stays a silent no-op), after the MAX_TOKENS validation (so a usage error still
+# exits 2 and takes precedence), after arg parsing (so --model can satisfy SHAI_MODEL), and
+# before the payload build (so `model` is never empty in a request). Missing config is an
+# error event with exit 0 — this script must never crash the loop.
+DRY_FLAG=""
+[ "$DRY_RUN" = true ] && DRY_FLAG="--dry-run"
+if MSG=$(missing_config "$DRY_FLAG"); then
+  jq -nc --arg text "$MSG" '{type:"error", source:"system", payload:{text:$text}}'
+  exit 0
+fi
+
 TOOLS_JSON="[]"
 if [ -n "$TOOLS_FILE" ]; then
   TOOLS_JSON=$(cat "$TOOLS_FILE" 2>/dev/null) || TOOLS_JSON="[]"
@@ -134,11 +169,6 @@ PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
 
 if [ "$DRY_RUN" = true ]; then
   printf '%s\n' "$PAYLOAD"
-  exit 0
-fi
-
-if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
-  jq -nc '{type:"error", source:"system", payload:{text:"DEEPSEEK_API_KEY is not set"}}'
   exit 0
 fi
 
@@ -166,7 +196,7 @@ while true; do
   # long generation, which is exactly what the raised timeout exists to allow.
   RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --connect-timeout 30 --max-time "$EVAL_TIMEOUT" -w '\n%{http_code}' -X POST "$API_URL" \
     -H "content-type: application/json" \
-    -H "Authorization: Bearer $DEEPSEEK_API_KEY" \
+    -H "Authorization: Bearer $SHAI_API_KEY" \
     -d @-) || CURL_FAILED=true
 
   if [ "$CURL_FAILED" = true ]; then

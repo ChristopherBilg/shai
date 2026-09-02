@@ -10,10 +10,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-ask (one-shot)"
 
-# Default-model assertions below are env-independent: pin the documented defaults off so a
-# leaked SHAI_MODEL/SHAI_MAX_TOKENS cannot skew the contrast cases for --model/--max-tokens.
-unset SHAI_MODEL SHAI_MAX_TOKENS
-DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' "$DIR/shai-eval")
+# Default-max-tokens assertions below are env-independent: pin the documented default off so a
+# leaked SHAI_MAX_TOKENS cannot skew the contrast case for --max-tokens. The contrast for
+# --model is now ambient-vs-override (SHAI_MODEL is required, so it stays set from tests/lib.sh).
+unset SHAI_MAX_TOKENS
 DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="${SHAI_MAX_TOKENS:-\([0-9]*\)}"/\1/p' "$DIR/shai-eval")
 
 make_stub_bin
@@ -82,11 +82,11 @@ assert_exit 2 "shai-ask: --external with an empty SOURCE exits 2" -- bash -c 'pr
 # --- an invalid inherited session id is rejected (path traversal guard) ---
 assert_exit 1 "shai-ask: invalid SHAI_SESSION_ID exits 1" -- bash -c 'SHAI_HOME="$1" SHAI_SESSION_ID="a/b" "$2/shai-ask" "hi"' _ "$A5" "$DIR"
 
-# --- missing DEEPSEEK_API_KEY aborts at the health check (exit 1), no session dir ---
+# --- missing SHAI_API_KEY aborts at the health check (exit 1), no session dir ---
 A6="$(mktemp -d)"
 _CLEANUP_DIRS+=("$A6")
-HEALTHERR=$(env -u DEEPSEEK_API_KEY SHAI_HOME="$A6" SHAI_SESSION_ID=ask6 "$DIR/shai-ask" "hello" 2>&1 >/dev/null)
-assert_exit 1 "shai-ask: missing key aborts at health-check (exit 1)" -- bash -c 'env -u DEEPSEEK_API_KEY SHAI_HOME="$1" SHAI_SESSION_ID=ask6 "$2/shai-ask" "hello"' _ "$A6" "$DIR"
+HEALTHERR=$(env -u SHAI_API_KEY SHAI_HOME="$A6" SHAI_SESSION_ID=ask6 "$DIR/shai-ask" "hello" 2>&1 >/dev/null)
+assert_exit 1 "shai-ask: missing key aborts at health-check (exit 1)" -- bash -c 'env -u SHAI_API_KEY SHAI_HOME="$1" SHAI_SESSION_ID=ask6 "$2/shai-ask" "hello"' _ "$A6" "$DIR"
 assert_contains "$HEALTHERR" "hint: run" "shai-ask: health-check failure prints a hint on stderr"
 assert_eq "$(test -d "$A6/sessions" && echo exists || echo absent)" "absent" "shai-ask: no session dir when health-check fails"
 
@@ -169,7 +169,7 @@ T_REQ="$A12/runs/$T_RUN/span_1-request.json"
 assert_eq "$T_OUT" "stub reply" "shai-ask: default turn completes"
 assert_eq "$(jq 'has("tools")' "$T_REQ")" "true" "shai-ask: tools enabled by default — request payload has tools"
 assert_contains "$(cat "$T_REQ")" '"name":"list_directory"' "shai-ask: default tool array includes the repo's tools"
-assert_eq "$(jq -r '.model' "$T_REQ")" "$DEFAULT_MODEL" "shai-ask: default model when --model is absent"
+assert_eq "$(jq -r '.model' "$T_REQ")" "test-model" "shai-ask: ambient SHAI_MODEL used when --model is absent"
 assert_eq "$(jq -r '.max_tokens' "$T_REQ")" "$DEFAULT_MAX_TOKENS" "shai-ask: default max_tokens when --max-tokens is absent"
 
 # --- --model and --max-tokens forwarded to shai-eval (visible in the request dump) ---

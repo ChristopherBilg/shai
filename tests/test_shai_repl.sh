@@ -85,17 +85,27 @@ assert_eq "$(test -e "$SHAI_TMP_NB/history" && echo exists || echo absent)" "abs
 
 # new: the startup banner DOES print when stdout is a TTY — positive test for the
 # `[ -t 1 ]` gate via script(1)'s pty, covering the version/session line and the
-# SHAI_MODEL segment (absent when unset, appended when set)
+# SHAI_MODEL segment. SHAI_MODEL is now a required variable: shai-repl's unconditional
+# startup health check (shai-eval --health-check) rejects an unset SHAI_MODEL before the
+# REPL ever reaches the banner, so "banner with SHAI_MODEL unset" is no longer a reachable
+# state to test (unlike SHAI_API_KEY/SHAI_API_URL, whose own health-check enforcement was
+# already in place and is exercised separately below). The ambient-vs-explicit contrast
+# below plays the same falsifiable-pair role the old omit/append pair did: distinct model
+# strings, so neither assertion can pass if the other behavior is broken.
 SHAI_TMP_B="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP_B")
 make_stub_bin
 write_gh_stub
 printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
-BANNEROUT=$(printf 'exit\n' | script -qec "env -u SHAI_MODEL SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess '$DIR/shai-repl'" /dev/null)
+BANNEROUT=$(printf 'exit\n' | script -qec "SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess '$DIR/shai-repl'" /dev/null)
 assert_eq "$(grep -cE '^shai ' <<<"$BANNEROUT" || true)" "1" "shai-repl: banner prints once when stdout is a TTY"
-assert_contains "$BANNEROUT" " — session banner_sess — type 'exit' to quit" "shai-repl: banner shows version, session id, and exit hint"
-assert_eq "$(grep -c '— model' <<<"$BANNEROUT" || true)" "0" "shai-repl: banner omits model segment when SHAI_MODEL is unset"
+# Split into two checks (rather than one combined "session ... type" substring): SHAI_MODEL
+# is now ambient (tests/lib.sh) and mandatory, so its segment always sits between session and
+# the exit hint, and a single substring spanning both sides of it would never match.
+assert_contains "$BANNEROUT" " — session banner_sess" "shai-repl: banner shows the session id"
+assert_contains "$BANNEROUT" " — type 'exit' to quit" "shai-repl: banner shows the exit hint"
+assert_contains "$BANNEROUT" " — model test-model" "shai-repl: banner shows the ambient SHAI_MODEL"
 BANNEROUT_M=$(printf 'exit\n' | script -qec "SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess SHAI_MODEL=override-model '$DIR/shai-repl'" /dev/null)
 assert_contains "$BANNEROUT_M" " — model override-model" "shai-repl: banner appends — model segment when SHAI_MODEL is set"
 
@@ -162,8 +172,8 @@ assert_eq "$(printf '%s\n' "$BLANKHIST" | jq -sr '[.[] | select(.source=="assist
 # new: a failed startup health-check aborts before the loop (no session dir created)
 SHAI_TMP3="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP3")
-HEALTHERR=$(printf 'hello\nexit\n' | env -u DEEPSEEK_API_KEY SHAI_HOME="$SHAI_TMP3" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1 >/dev/null)
-assert_exit 1 "shai-repl: missing key aborts at health-check (exit 1)" -- bash -c 'printf "" | env -u DEEPSEEK_API_KEY SHAI_HOME="$1" SHAI_SESSION_ID=test "$2/shai-repl"' _ "$SHAI_TMP3" "$DIR"
+HEALTHERR=$(printf 'hello\nexit\n' | env -u SHAI_API_KEY SHAI_HOME="$SHAI_TMP3" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1 >/dev/null)
+assert_exit 1 "shai-repl: missing key aborts at health-check (exit 1)" -- bash -c 'printf "" | env -u SHAI_API_KEY SHAI_HOME="$1" SHAI_SESSION_ID=test "$2/shai-repl"' _ "$SHAI_TMP3" "$DIR"
 assert_contains "$HEALTHERR" "hint: run" "shai-repl: health-check failure prints a hint on stderr"
 assert_contains "$HEALTHERR" "shai-doctor" "shai-repl: hint points at shai-doctor"
 assert_eq "$(test -d "$SHAI_TMP3/sessions" && echo exists || echo absent)" "absent" "shai-repl: no session dir when health-check fails"

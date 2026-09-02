@@ -96,7 +96,7 @@ cat >"$SHIST" <<'JSON'
 {"type":"message","source":"user","payload":{"text":"hello"}}
 {"type":"message","source":"assistant","payload":{"content":"hi","finish_reason":"stop"}}
 JSON
-OUT=$(env -u DEEPSEEK_API_KEY SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-retry" 2>&1)
+OUT=$(env -u SHAI_API_KEY SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-retry" 2>&1)
 RC=$?
 assert_contains "$OUT" "nothing to resume" "retry: complete turn + no key → nothing to resume"
 assert_eq "$RC" "0" "retry: complete turn + no key → exit 0 (health-check not gating no-op)"
@@ -108,7 +108,7 @@ cat >"$SHIST" <<'JSON'
 {"type":"message","source":"user","payload":{"text":"do the thing"}}
 {"type":"error","source":"system","payload":{"text":"boom"}}
 JSON
-assert_exit 1 "retry: work pending + no key → exit 1" -- env -u DEEPSEEK_API_KEY SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-retry"
+assert_exit 1 "retry: work pending + no key → exit 1" -- env -u SHAI_API_KEY SHAI_HOME="$SHOME" SHAI_SESSION_ID=test "$DIR/shai-retry"
 
 # --- envelope + trace propagation on resume ----------------------------------
 RTH="$(mktemp -d)"
@@ -174,7 +174,7 @@ mkdir -p "$NOKEYH/sessions"
   printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}'
   printf '%s\n' '{"type":"error","source":"system","payload":{"text":"boom"}}'
 } >"$NOKEYH/sessions/test.jsonl"
-env -u DEEPSEEK_API_KEY SHAI_HOME="$NOKEYH" SHAI_SESSION_ID=test "$DIR/shai-retry" >/dev/null 2>&1
+env -u SHAI_API_KEY SHAI_HOME="$NOKEYH" SHAI_SESSION_ID=test "$DIR/shai-retry" >/dev/null 2>&1
 assert_eq "$(find "$NOKEYH/runs" -mindepth 1 -type d 2>/dev/null | wc -l)" "0" "retry: missing key creates no run dir"
 
 finish
