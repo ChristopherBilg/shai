@@ -267,19 +267,39 @@ assert_exit 1 "validate: start rejects .. in script name" -- "$DIR/shai-supervis
 desc "generated units carry every required provider variable"
 
 # A systemd unit inherits nothing from the installing shell, so any variable not embedded here
-# is missing at tick time — the workflow would fail on every timer firing.
+# is missing at tick time — the workflow would fail on every timer firing. Values are quoted
+# (see the "quoted so embedded whitespace" block below for why), so the expected substrings
+# include the surrounding double quotes.
 SHAI_API_KEY="k" SHAI_API_URL="https://example.invalid/v1/chat/completions" SHAI_MODEL="m" \
   "$DIR/shai-supervise" install workflows/heartbeat/run.sh >/dev/null 2>&1
 SERVICE="$TMP/shai-heartbeat.service"
-assert_contains "$(cat "$SERVICE")" "Environment=SHAI_API_KEY=k" "unit embeds SHAI_API_KEY"
+assert_contains "$(cat "$SERVICE")" 'Environment=SHAI_API_KEY="k"' "unit embeds SHAI_API_KEY"
 assert_contains "$(cat "$SERVICE")" \
-  "Environment=SHAI_API_URL=https://example.invalid/v1/chat/completions" \
+  'Environment=SHAI_API_URL="https://example.invalid/v1/chat/completions"' \
   "unit embeds SHAI_API_URL"
-assert_contains "$(cat "$SERVICE")" "Environment=SHAI_MODEL=m" "unit embeds SHAI_MODEL"
+assert_contains "$(cat "$SERVICE")" 'Environment=SHAI_MODEL="m"' "unit embeds SHAI_MODEL"
 assert_contains "$(cat "$SERVICE")" "Environment=SHAI_HOME=" "unit still embeds SHAI_HOME"
 
 # The .service holds a plaintext key, so the mode must stay restrictive.
 assert_eq "$(stat -c '%a' "$SERVICE")" "600" "unit stays mode 600 with the added lines"
+
+desc "Environment= values are quoted so embedded whitespace is not silently truncated"
+
+# Per systemd.exec(5), Environment= is space-delimited; an unquoted value containing a space is
+# parsed as two tokens, and systemd drops everything from the first space onward with no error
+# at install time and none at tick time (confirmed with `systemd-analyze verify`: "Invalid
+# environment assignment, ignoring: <word>") — the workflow then silently runs against a
+# truncated value instead of failing loudly. SHAI_MODEL="my model" exercises one of the three
+# variables this task added; SHAI_HOME with a space in the path exercises the pre-existing line,
+# since a home directory is the most plausible real-world case of an unescaped space. Both
+# assertions check for the *complete* value between quotes, not just presence of the prefix, so
+# a truncating regression is caught.
+SHAI_API_KEY="k" SHAI_API_URL="https://example.invalid/v1/chat/completions" SHAI_MODEL="my model" \
+  SHAI_HOME="$TMP/my home" "$DIR/shai-supervise" install workflows/heartbeat/run.sh >/dev/null 2>&1
+assert_contains "$(cat "$SERVICE")" 'Environment=SHAI_MODEL="my model"' \
+  "install: a value containing a space is quoted whole, not truncated"
+assert_contains "$(cat "$SERVICE")" "Environment=SHAI_HOME=\"$TMP/my home\"" \
+  "install: SHAI_HOME containing a space is quoted whole, not truncated"
 
 desc "install refuses when any required variable is unset"
 
@@ -287,6 +307,18 @@ desc "install refuses when any required variable is unset"
 for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
   assert_fails 1 "$var must be set" "install without $var" \
     -- env -u "$var" "$DIR/shai-supervise" install workflows/heartbeat/run.sh
+done
+
+desc "install refuses when any required variable is set but empty"
+
+# ${!v:-} treats unset and empty identically, which is what makes the loop above correct for the
+# empty case too; nothing until now pinned that specifically. Guards a future refactor to
+# `[ -v "$v" ]` (which DOES distinguish empty from unset) from silently reintroducing an
+# empty-string bypass. `env "$var="` sets that one variable to the empty string for the child
+# while leaving the other two at their ambient (non-empty) values, isolating which check fires.
+for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+  assert_fails 1 "$var must be set" "install with $var empty" \
+    -- env "$var=" "$DIR/shai-supervise" install workflows/heartbeat/run.sh
 done
 
 # --- install: generates correct unit files ---

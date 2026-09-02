@@ -64,10 +64,10 @@ Description=shai $name workflow
 [Service]
 Type=oneshot
 ExecStart=$script_path
-Environment=SHAI_API_KEY=$SHAI_API_KEY
-Environment=SHAI_API_URL=$SHAI_API_URL
-Environment=SHAI_MODEL=$SHAI_MODEL
-Environment=SHAI_HOME=$shai_home
+Environment=SHAI_API_KEY="$SHAI_API_KEY"
+Environment=SHAI_API_URL="$SHAI_API_URL"
+Environment=SHAI_MODEL="$SHAI_MODEL"
+Environment=SHAI_HOME="$shai_home"
 EOF
   chmod 600 "$UNIT_DIR/$name.service"
 
