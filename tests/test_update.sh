@@ -75,7 +75,7 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$INSTALL_DIR/v2026.01.01/shai-repl
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$FAKE_HOME/.shai
 EOF
 chmod 600 "$WORK/units/shai-heartbeat.service"
@@ -86,7 +86,7 @@ Description=shai shai-healthy workflow
 [Service]
 Type=oneshot
 ExecStart=$INSTALL_DIR/current/shai-repl
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$FAKE_HOME/.shai
 EOF
 chmod 600 "$WORK/units/shai-healthy.service"
@@ -264,7 +264,7 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$INSTALL_DIR/v2026.01.01/shai-repl
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$FAKE_HOME/.shai
 EOF
 chmod 600 "$WORK/units/shai-heartbeat.service"

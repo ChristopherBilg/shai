@@ -38,7 +38,7 @@ Description=shai $1 workflow
 [Service]
 Type=oneshot
 ExecStart=$2
-Environment=DEEPSEEK_API_KEY=x
+Environment=SHAI_API_KEY=x
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 }

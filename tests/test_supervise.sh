@@ -264,12 +264,30 @@ assert_contains "$ERR" "must not contain / or .." "validate: path traversal erro
 assert_exit 1 "validate: uninstall rejects / in script name" -- "$DIR/shai-supervise" uninstall "foo/bar"
 assert_exit 1 "validate: start rejects .. in script name" -- "$DIR/shai-supervise" start "foo..bar"
 
-# --- validation: install missing DEEPSEEK_API_KEY ---
-(
-  unset DEEPSEEK_API_KEY
-  assert_exit 1 "validate: install missing API key" -- "$DIR/shai-supervise" install shai-print
-  exit "$FAILED"
-) || FAILED=1
+desc "generated units carry every required provider variable"
+
+# A systemd unit inherits nothing from the installing shell, so any variable not embedded here
+# is missing at tick time — the workflow would fail on every timer firing.
+SHAI_API_KEY="k" SHAI_API_URL="https://example.invalid/v1/chat/completions" SHAI_MODEL="m" \
+  "$DIR/shai-supervise" install workflows/heartbeat/run.sh >/dev/null 2>&1
+SERVICE="$TMP/shai-heartbeat.service"
+assert_contains "$(cat "$SERVICE")" "Environment=SHAI_API_KEY=k" "unit embeds SHAI_API_KEY"
+assert_contains "$(cat "$SERVICE")" \
+  "Environment=SHAI_API_URL=https://example.invalid/v1/chat/completions" \
+  "unit embeds SHAI_API_URL"
+assert_contains "$(cat "$SERVICE")" "Environment=SHAI_MODEL=m" "unit embeds SHAI_MODEL"
+assert_contains "$(cat "$SERVICE")" "Environment=SHAI_HOME=" "unit still embeds SHAI_HOME"
+
+# The .service holds a plaintext key, so the mode must stay restrictive.
+assert_eq "$(stat -c '%a' "$SERVICE")" "600" "unit stays mode 600 with the added lines"
+
+desc "install refuses when any required variable is unset"
+
+# assert_fails applies cleanly here: shai-supervise install reads no stdin.
+for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+  assert_fails 1 "$var must be set" "install without $var" \
+    -- env -u "$var" "$DIR/shai-supervise" install workflows/heartbeat/run.sh
+done
 
 # --- install: generates correct unit files ---
 : >"$SYSTEMCTL_LOG"
@@ -286,7 +304,7 @@ assert_eq "$([ -f "$TIMER" ] && echo yes || echo no)" "yes" "install: .timer fil
 assert_contains "$(cat "$SERVICE")" "Type=oneshot" "install: service Type=oneshot"
 assert_contains "$(cat "$SERVICE")" "ExecStart=" "install: service has ExecStart"
 assert_contains "$(cat "$SERVICE")" "shai-print" "install: ExecStart references script"
-assert_contains "$(cat "$SERVICE")" "DEEPSEEK_API_KEY=" "install: service has API key"
+assert_contains "$(cat "$SERVICE")" "SHAI_API_KEY=" "install: service has API key"
 assert_contains "$(cat "$SERVICE")" "SHAI_HOME=" "install: service has SHAI_HOME"
 assert_eq "$(stat -c '%a' "$SERVICE")" "600" "install: service file is chmod 600 (contains secret)"
 
@@ -463,7 +481,7 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$TMP/oldinstall/workflows/heartbeat/run.sh
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 # healthy control: the direct-script ExecStart shape under the real checkout → ok
@@ -474,7 +492,7 @@ Description=shai shai-review-dispatcher workflow
 [Service]
 Type=oneshot
 ExecStart=$DIR/shai-print
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 
@@ -593,7 +611,7 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 chmod 600 "$TMP/shai-heartbeat.service"
@@ -619,7 +637,7 @@ assert_contains "$(cat "$TMP/shai-heartbeat.service")" \
   "repoint: ExecStart rewritten to resolve through /current/"
 assert_eq "$(grep -v '^ExecStart=' "$TMP/shai-heartbeat.service")" "$BEFORE" \
   "repoint: every line except ExecStart is byte-preserved"
-assert_contains "$(cat "$TMP/shai-heartbeat.service")" "Environment=DEEPSEEK_API_KEY=test-key" \
+assert_contains "$(cat "$TMP/shai-heartbeat.service")" "Environment=SHAI_API_KEY=test-key" \
   "repoint: the API key line is preserved"
 assert_eq "$(stat -c '%a' "$TMP/shai-heartbeat.service")" "600" \
   "repoint: the .service file is still mode 600"
@@ -640,7 +658,7 @@ Description=shai shai-issue-dispatcher workflow
 [Service]
 Type=oneshot
 ExecStart=$REPOINT_ROOT/v2026.07.01/shai-print
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 chmod 600 "$TMP/shai-issue-dispatcher.service"
@@ -677,7 +695,7 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 chmod 600 "$TMP/shai-heartbeat.service"
@@ -714,7 +732,7 @@ Description=shai shai-review-dispatcher workflow
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/something-else
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 chmod 600 "$TMP/shai-review-dispatcher.service"
@@ -726,7 +744,7 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/heartbeat/run.sh
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 chmod 600 "$TMP/shai-heartbeat.service"
@@ -746,7 +764,7 @@ Description=shai shai-nested-path workflow
 [Service]
 Type=oneshot
 ExecStart=$REPOINT_ROOT/v2026.07.01/workflows/a/b/run.sh
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 chmod 600 "$TMP/shai-nested-path.service"
@@ -771,13 +789,13 @@ ERR=$("$SUPERVISE" repoint heartbeat --all 2>&1)
 assert_contains "$ERR" "not both" "repoint: usage error message for both"
 assert_exit 2 "repoint: unknown option is a usage error" -- "$SUPERVISE" repoint --jsn
 
-# --- repoint: no API key required ---
+# --- repoint: no provider variables required ---
 (
-  unset DEEPSEEK_API_KEY
+  unset SHAI_API_KEY SHAI_API_URL SHAI_MODEL
   "$SUPERVISE" repoint shai-issue-dispatcher >/dev/null 2>&1
   exit $?
 ) && RC=0 || RC=$?
-assert_eq "$RC" "0" "repoint: runs without DEEPSEEK_API_KEY"
+assert_eq "$RC" "0" "repoint: runs without SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL"
 
 # --- repoint: refused from a versioned install directory ---
 # The rewrite is version-independent only when $DIR is the install's `current`
@@ -796,7 +814,7 @@ Description=shai shai-versioned-guard workflow
 [Service]
 Type=oneshot
 ExecStart=$REPOINT_ROOT/v2026.07.01/shai-print
-Environment=DEEPSEEK_API_KEY=test-key
+Environment=SHAI_API_KEY=test-key
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 chmod 600 "$TMP/shai-versioned-guard.service"

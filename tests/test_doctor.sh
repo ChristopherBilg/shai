@@ -84,7 +84,7 @@ printf '# bash completion fixture\n' >"$XDG_DATA_HOME/bash-completion/completion
 export SHAI_UNIT_DIR="$FIX/units"
 
 # --- Test 1: all checks pass ---
-export DEEPSEEK_API_KEY="test-key"
+# SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL are already exported by tests/lib.sh for every suite.
 export JIRA_API_TOKEN="test-token"
 
 OUT=$(run_doctor)
@@ -536,7 +536,7 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$FIX/oldinstall/workflows/heartbeat/run.sh
-Environment=DEEPSEEK_API_KEY=x
+Environment=SHAI_API_KEY=x
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 OUT=$(run_doctor)
@@ -560,7 +560,7 @@ printf '[Unit]\nDescription=shai shai-heartbeat workflow\n\n[Service]\nType=ones
 # shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
 #                           # subshell does not change it (shai-doctor resolves the same root)
 printf 'ExecStart=%s/shai-print\n' "$DIR" >>"$SHAI_UNIT_DIR/shai-heartbeat.service"
-printf 'Environment=DEEPSEEK_API_KEY=x\nEnvironment=SHAI_HOME=$HOME/.shai\n' \
+printf 'Environment=SHAI_API_KEY=x\nEnvironment=SHAI_HOME=$HOME/.shai\n' \
   >>"$SHAI_UNIT_DIR/shai-heartbeat.service"
 OUT=$(run_doctor)
 RC=$?
@@ -584,7 +584,7 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$FIX/pruned-install/workflows/heartbeat/run.sh
-Environment=DEEPSEEK_API_KEY=x
+Environment=SHAI_API_KEY=x
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 OUT=$(run_doctor)

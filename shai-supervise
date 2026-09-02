@@ -3,7 +3,7 @@
 # Usage: shai-supervise install|uninstall|start|stop|logs <script> [--interval <timespan>]
 #        shai-supervise status [script] [--json]
 #        shai-supervise repoint [<script> | --all] [--dry-run]
-# Reads: DEEPSEEK_API_KEY, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows;
+# Reads: SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows;
 #        installed unit files from $SHAI_UNIT_DIR (status, repoint)
 # Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall);
 #        rewrites only the ExecStart= line of installed .service files (repoint)
@@ -43,10 +43,13 @@ cmd_install() {
     exit 1
   fi
 
-  if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
-    printf 'error: DEEPSEEK_API_KEY must be set\n' >&2
-    exit 1
-  fi
+  local v
+  for v in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+    if [ -z "${!v:-}" ]; then
+      printf 'error: %s must be set\n' "$v" >&2
+      exit 1
+    fi
+  done
 
   local name shai_home
   name="$(unit_name "$script")"
@@ -61,7 +64,9 @@ Description=shai $name workflow
 [Service]
 Type=oneshot
 ExecStart=$script_path
-Environment=DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
+Environment=SHAI_API_KEY=$SHAI_API_KEY
+Environment=SHAI_API_URL=$SHAI_API_URL
+Environment=SHAI_MODEL=$SHAI_MODEL
 Environment=SHAI_HOME=$shai_home
 EOF
   chmod 600 "$UNIT_DIR/$name.service"
@@ -221,7 +226,7 @@ repoint_unit() {
 # Invocation from a versioned install directory is refused outright: it would rewrite
 # ExecStart to another versioned path and re-bake the bug class repoint removes.
 # Unlike re-running `install`, this preserves a customized OnUnitActiveSec and the
-# Environment=DEEPSEEK_API_KEY= line, and needs no exported API key.
+# Environment=SHAI_API_KEY= line, and needs no exported API key.
 cmd_repoint() {
   case "$DIR" in
     */shai/v[0-9]*)
