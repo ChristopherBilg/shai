@@ -32,11 +32,23 @@ check_tool() {
   fi
 }
 
+# check_env <name> <level> [show_value]
+# show_value non-empty prints the resolved value on a second line, the way check_config does.
+# Deliberately opt-in: SHAI_API_URL and SHAI_MODEL pass it so the effective endpoint and model
+# are visible, and SHAI_API_KEY never does — a doctor report must not echo a secret.
 check_env() {
-  local name="$1" level="$2"
+  local name="$1" level="$2" show_value="${3:-}"
   local val="${!name:-}"
   if [ -n "$val" ]; then
     printf '  [OK]   %s\n' "$name" >&2
+    # An `if`, not `[ -n ] && printf`: this is the last statement in the branch when
+    # show_value is empty (the SHAI_API_KEY call), and an AND-list's own false result would
+    # become check_env's return status and trip `set -e` at the bare call site — a real
+    # crash observed while implementing this, not a hypothetical. `if` without `else`
+    # returns 0 when the condition is false, so this form is immune to that.
+    if [ -n "$show_value" ]; then
+      printf '         %s\n' "$val" >&2
+    fi
   elif [ "$level" = "core" ]; then
     printf '  [FAIL] %s\n' "$name" >&2
     ERRORS=$((ERRORS + 1))
@@ -129,11 +141,12 @@ printf '\nConditional tools:\n' >&2
 for t in "${COND_TOOLS[@]}"; do check_tool "$t" conditional; done
 
 printf '\nEnvironment:\n' >&2
-check_env DEEPSEEK_API_KEY core
+check_env SHAI_API_KEY core
+check_env SHAI_API_URL core show
+check_env SHAI_MODEL core show
 
 printf '\nConfiguration:\n' >&2
 check_config SHAI_HOME "$HOME/.shai"
-check_config SHAI_MODEL "deepseek-v4-pro"
 check_config SHAI_MAX_CONTEXT_BYTES "1300000"
 check_config SHAI_UNIT_DIR "$HOME/.config/systemd/user"
 check_config SHAI_SUGGEST "1"
@@ -217,7 +230,7 @@ done
 # Derive additional deps from tool plugins
 if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
   SEEN_TOOLS=("${CORE_TOOLS[@]}" "${COND_TOOLS[@]}")
-  SEEN_ENVS=(DEEPSEEK_API_KEY)
+  SEEN_ENVS=(SHAI_API_KEY SHAI_API_URL SHAI_MODEL)
   is_seen() {
     local item="$1" s
     for s in "${SEEN_TOOLS[@]+"${SEEN_TOOLS[@]}"}"; do
@@ -278,9 +291,9 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
       fi
     done < <(jq -r '.capabilities.requires.tools // [] | .[]' "$tj" 2>/dev/null)
   done
-  # Report each unique env var once, at its strictest declared level. DEEPSEEK_API_KEY is
-  # skipped here — the unconditional check above already reported it, and SEEN_ENVS is seeded
-  # with it for exactly that.
+  # Report each unique env var once, at its strictest declared level. The three required
+  # provider variables are skipped here — the unconditional checks above already reported
+  # them, and SEEN_ENVS is seeded with them for exactly that.
   i=0
   while [ "$i" -lt "$ENV_COUNT" ]; do
     if ! is_env_seen "${ENV_NAMES[$i]}"; then

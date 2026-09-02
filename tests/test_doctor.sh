@@ -112,14 +112,14 @@ RC=$?
 assert_eq "$RC" "0" "doctor: missing conditional tool → exit 0"
 assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
 
-# --- Test 4: core env var missing (DEEPSEEK_API_KEY) → exit 1 + FAIL ---
+# --- Test 4: core env var missing (SHAI_API_KEY) → exit 1 + FAIL ---
 (
-  unset DEEPSEEK_API_KEY
+  unset SHAI_API_KEY
   OUT=$(run_doctor)
   RC=$?
-  assert_eq "$RC" "1" "doctor: missing DEEPSEEK_API_KEY → exit 1"
+  assert_eq "$RC" "1" "doctor: missing SHAI_API_KEY → exit 1"
   assert_contains "$OUT" "[FAIL]" "doctor: missing API key shows FAIL"
-  assert_contains "$OUT" "DEEPSEEK_API_KEY" "doctor: FAIL line names the var"
+  assert_contains "$OUT" "SHAI_API_KEY" "doctor: FAIL line names the var"
   exit "$FAILED"
 ) || FAILED=1
 
@@ -133,6 +133,48 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   assert_contains "$OUT" "JIRA_API_TOKEN" "doctor: WARN line names the var"
   exit "$FAILED"
 ) || FAILED=1
+
+desc "required provider configuration"
+
+# All three set: three OK rows, and the key's value is never echoed.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+OUT=$(SHAI_API_KEY="secret-key-value" SHAI_API_URL="https://example.invalid/v1/chat/completions" \
+  SHAI_MODEL="some-model" "$DIR/shai-doctor" 2>&1 || true)
+assert_contains "$OUT" "[OK]   SHAI_API_KEY" "doctor: SHAI_API_KEY reported"
+assert_contains "$OUT" "[OK]   SHAI_API_URL" "doctor: SHAI_API_URL reported"
+assert_contains "$OUT" "[OK]   SHAI_MODEL" "doctor: SHAI_MODEL reported"
+assert_contains "$OUT" "https://example.invalid/v1/chat/completions" \
+  "doctor: shows the resolved endpoint so it is visible which one is in use"
+assert_contains "$OUT" "some-model" "doctor: shows the resolved model"
+
+# The key's VALUE must never be printed. Mutation-checked when written: passing the show-value
+# argument for SHAI_API_KEY turns this red.
+if printf '%s' "$OUT" | grep -q "secret-key-value"; then
+  assert_eq "leaked" "not-leaked" "doctor: never prints the API key value"
+else
+  assert_eq "not-leaked" "not-leaked" "doctor: never prints the API key value"
+fi
+
+# Each unset variable is a core FAIL, not a warning.
+for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+  # shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+  OUT=$(
+    unset "$var"
+    "$DIR/shai-doctor" 2>&1 || true
+  )
+  assert_contains "$OUT" "[FAIL] $var" "doctor: unset $var is a core failure"
+done
+
+# The defaulted Configuration row is gone: SHAI_MODEL is required now, so reporting it as a
+# defaulted config value would be a lie. Asserted on our own distinctive output shape.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+OUT=$(SHAI_MODEL="some-model" "$DIR/shai-doctor" 2>&1 || true)
+CONFIG_BLOCK=$(printf '%s' "$OUT" | sed -n '/^Configuration:/,/^$/p')
+if printf '%s' "$CONFIG_BLOCK" | grep -q "SHAI_MODEL"; then
+  assert_eq "present" "absent" "doctor: no SHAI_MODEL row under Configuration"
+else
+  assert_eq "absent" "absent" "doctor: no SHAI_MODEL row under Configuration"
+fi
 
 # --- Test 6: summary line accuracy ---
 (
@@ -247,11 +289,9 @@ chmod +x "$STUB/git"
 
 # --- Test 13: Configuration section shows defaults when vars are unset ---
 (
-  unset SHAI_MODEL SHAI_MAX_CONTEXT_BYTES SHAI_UNIT_DIR SHAI_SUGGEST SHAI_SUGGEST_REPO 2>/dev/null || true
+  unset SHAI_MAX_CONTEXT_BYTES SHAI_UNIT_DIR SHAI_SUGGEST SHAI_SUGGEST_REPO 2>/dev/null || true
   OUT=$(run_doctor)
   assert_contains "$OUT" "Configuration:" "doctor: prints the Configuration section"
-  assert_contains "$OUT" "[OK]   SHAI_MODEL" "doctor: SHAI_MODEL listed"
-  assert_contains "$OUT" "deepseek-v4-pro (default)" "doctor: SHAI_MODEL shows default value"
   assert_contains "$OUT" "1300000 (default)" "doctor: SHAI_MAX_CONTEXT_BYTES shows default value"
   assert_contains "$OUT" "1 (default)" "doctor: SHAI_SUGGEST shows default value"
   assert_contains "$OUT" "(unset — auto-detected: Owner/Custom-Repo)" "doctor: SHAI_SUGGEST_REPO shows the auto-detected repo"
@@ -290,7 +330,7 @@ fi
 
 # --- Test 16: Configuration section never affects error/warning counts ---
 (
-  unset SHAI_MODEL SHAI_SUGGEST_REPO 2>/dev/null || true
+  unset SHAI_SUGGEST_REPO 2>/dev/null || true
   OUT=$(run_doctor)
   SUMMARY=$(printf '%s' "$OUT" | tail -n1)
   assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: config section adds no errors or warnings"
