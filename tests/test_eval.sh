@@ -32,7 +32,7 @@ export SHAI_HOME="$SHAI_HOME_TMP"
 TOOLS_TMP=$(mktemp)
 _CLEANUP_DIRS+=("$TOOLS_TMP")
 "$DIR/shai-tools" >"$TOOLS_TMP"
-DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools-file "$TOOLS_TMP")
+DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | env -u SHAI_MODEL "$DIR/shai-eval" --dry-run --tools-file "$TOOLS_TMP")
 assert_contains "$DRY" "\"model\":\"$DEFAULT_MODEL\"" "eval: default model"
 assert_contains "$DRY" "\"max_tokens\":$DEFAULT_MAX_TOKENS" "eval: default max_tokens"
 assert_contains "$DRY" '"gh"' "eval: tools included with --tools-file"
@@ -46,7 +46,7 @@ assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tool
 make_stub_bin
 
 write_curl_stub 200 <<'STUB'
-{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
+{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"test-model-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
 STUB
 EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
@@ -178,7 +178,7 @@ assert_eq "$(find "$HCHOME/runs" -name '*-request.json' 2>/dev/null | wc -l | tr
 
 # an unwritable SHAI_HOME must not break the call (best-effort dump)
 make_stub_bin
-printf '%s' '{"id":"msg_uw","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}' | write_curl_stub 200
+printf '%s' '{"id":"msg_uw","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}' | write_curl_stub 200
 UNWRITABLE="$(mktemp)" # a regular file — mkdir -p over it fails
 _CLEANUP_DIRS+=("$UNWRITABLE")
 EVUW=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_HOME="$UNWRITABLE" "$DIR/shai-eval")
@@ -190,7 +190,7 @@ assert_eq "$RC" "0" "eval: unwritable SHAI_HOME still exits 0"
 EVH="$(mktemp -d)"
 _CLEANUP_DIRS+=("$EVH")
 write_curl_stub 200 <<'JSON'
-{"id":"msg_dump","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_dump","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 
 echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
@@ -229,11 +229,11 @@ assert_eq "$(printf '%s' "$OUT4" | jq -r '.source')" "assistant" \
 # --- response metadata: api key + response dump ------------------------------
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"model":"deepseek-v4-pro-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
+{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"model":"test-model-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.api.message_id')" "msg_test123" "api.message_id"
-assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "deepseek-v4-pro-20260801" "api.model"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "test-model-20260801" "api.model"
 assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.prompt_tokens')" "100" "api.usage.prompt_tokens"
 assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.completion_tokens')" "50" "api.usage.completion_tokens"
 # Presence must be asserted on the JSON type, not with assert_contains ... "" — the empty
@@ -268,7 +268,7 @@ EVR1=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR1")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_resp","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+{"id":"msg_resp","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR1" SHAI_RUN_ID=run_resp_test SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
@@ -312,7 +312,7 @@ _CLEANUP_DIRS+=("$EVR3")
 touch "$EVR3/runs"
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_x","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_x","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR3" SHAI_RUN_ID=run_unwrite SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
@@ -326,7 +326,7 @@ EVR4=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR4")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_ns","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_ns","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 STUB
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
   env -u SHAI_SPAN_ID SHAI_HOME="$EVR4" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
@@ -362,7 +362,7 @@ STUBEOF
 
 # retry succeeds after transient 503
 make_stub_bin
-write_retry_curl_stub 2 503 '{"id":"msg_retry","choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 2 503 '{"id":"msg_retry","choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 RETRY_ERR=$(cat "$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: recovers after transient 503"
@@ -382,7 +382,7 @@ assert_eq "$(printf '%s' "$RETRY_ERR" | sed -n '2p')" \
 
 # retry succeeds after transient 429
 make_stub_bin
-write_retry_curl_stub 1 429 '{"id":"msg_429","choices":[{"message":{"role":"assistant","content":"ok429"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 1 429 '{"id":"msg_429","choices":[{"message":{"role":"assistant","content":"ok429"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 RETRY_ERR=$(cat "$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: recovers after 429"
@@ -394,7 +394,7 @@ assert_eq "$(printf '%s' "$RETRY_ERR" | sed -n '1p')" \
 
 # retry exhausted → error event (not crash)
 make_stub_bin
-write_retry_curl_stub 5 500 '{"id":"never","choices":[{"message":{"role":"assistant","content":"never"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 5 500 '{"id":"never","choices":[{"message":{"role":"assistant","content":"never"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
 RC=$?
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: exhausted retries → error event"
@@ -402,7 +402,7 @@ assert_eq "$RC" "0" "retry: exhausted retries still exits 0"
 
 # SHAI_EVAL_RETRIES=0 disables retry — first failure is final
 make_stub_bin
-write_retry_curl_stub 1 503 '{"id":"msg_no","choices":[{"message":{"role":"assistant","content":"nope"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 1 503 '{"id":"msg_no","choices":[{"message":{"role":"assistant","content":"nope"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: SHAI_EVAL_RETRIES=0 disables retry"
 CALL_COUNT=$(cat "$STUB/.retry_count")
@@ -412,7 +412,7 @@ assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" \
 
 # 4xx (not 429) is never retried
 make_stub_bin
-write_retry_curl_stub 1 401 '{"id":"msg_auth","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 1 401 '{"id":"msg_auth","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: 401 is not retried"
 CALL_COUNT=$(cat "$STUB/.retry_count")
@@ -433,7 +433,7 @@ if [ "$n" -lt 1 ]; then
   exit 7
 fi
 cat <<'JSON'
-{"id":"msg_curl_retry","choices":[{"message":{"role":"assistant","content":"curl recovered"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_curl_retry","choices":[{"message":{"role":"assistant","content":"curl recovered"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 echo "200"
 STUBEOF
@@ -466,7 +466,7 @@ assert_eq "$RC" "0" "retry: SHAI_EVAL_RETRIES=10 at the cap is accepted"
 
 # default retries (no env var) — a 503 should still be retried
 make_stub_bin
-write_retry_curl_stub 1 503 '{"id":"msg_default","choices":[{"message":{"role":"assistant","content":"default ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 1 503 '{"id":"msg_default","choices":[{"message":{"role":"assistant","content":"default ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | env -u SHAI_EVAL_RETRIES "$DIR/shai-eval" 2>/dev/null)
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: default retries recovers from transient 503"
 
@@ -487,7 +487,7 @@ for arg; do
 done
 cat > /dev/null
 cat <<'JSON'
-{"id":"msg_to","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_to","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 echo "200"
 STUBEOF
@@ -511,7 +511,7 @@ for arg; do
 done
 cat > /dev/null
 cat <<'JSON'
-{"id":"msg_tod","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_tod","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 echo "200"
 STUBEOF

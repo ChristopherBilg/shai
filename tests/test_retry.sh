@@ -24,7 +24,7 @@ assert_eq "$RC" "0" "retry: empty history → exit 0"
 # DONE: a completed assistant turn is not resumed and appends nothing
 new_home
 make_stub_bin
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"UNCALLED"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"UNCALLED"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 cat >"$SHIST" <<'JSON'
 {"type":"message","source":"system","payload":{"text":"sys"}}
 {"type":"message","source":"user","payload":{"text":"hello"}}
@@ -53,7 +53,7 @@ assert_eq "$(wc -l <"$BLANKH/sessions/test.jsonl")" "$BLANKBEFORE" "retry: blank
 # EVAL: an error tail re-evaluates to a fresh assistant turn
 new_home
 make_stub_bin
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"recovered answer"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"recovered answer"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 cat >"$SHIST" <<'JSON'
 {"type":"message","source":"system","payload":{"text":"sys"}}
 {"type":"message","source":"user","payload":{"text":"do the thing"}}
@@ -65,7 +65,7 @@ assert_contains "$(cat "$SHIST")" "recovered answer" "retry: error tail re-evalu
 # EVAL: a tool_result tail re-evaluates (model owes a reply)
 new_home
 make_stub_bin
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"final summary"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"final summary"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 cat >"$SHIST" <<'JSON'
 {"type":"message","source":"system","payload":{"text":"sys"}}
 {"type":"message","source":"user","payload":{"text":"summarize"}}
@@ -78,7 +78,7 @@ assert_contains "$(cat "$SHIST")" "final summary" "retry: tool_result tail re-ev
 # DISPATCH: a dangling tool_use tail runs the tool, then re-evaluates
 new_home
 make_stub_bin
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"after tool"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"after tool"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' | write_curl_stub 200
 cat >"$SHIST" <<'JSON'
 {"type":"message","source":"system","payload":{"text":"sys"}}
 {"type":"message","source":"user","payload":{"text":"list the dir"}}

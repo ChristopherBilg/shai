@@ -18,7 +18,7 @@ DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="${SHAI_MAX_TOKENS:-\([0-9]*\)}"/\1/p
 
 make_stub_bin
 write_gh_stub
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # --- prompt as positional args: answer on stdout, session log gets system+user+assistant ---
@@ -99,7 +99,7 @@ ERRRC=$?
 assert_eq "$ERRRC" "1" "shai-ask: turn ending in an error event exits 1"
 assert_contains "$ERROUT" "Error: boom" "shai-ask: error text still rendered on stdout"
 
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # --- a hard failure inside shai-loop exits 1 (never 2: that is the usage-error code) and
@@ -175,12 +175,12 @@ assert_eq "$(jq -r '.max_tokens' "$T_REQ")" "$DEFAULT_MAX_TOKENS" "shai-ask: def
 # --- --model and --max-tokens forwarded to shai-eval (visible in the request dump) ---
 A13="$(mktemp -d)"
 _CLEANUP_DIRS+=("$A13")
-M_OUT=$(SHAI_HOME="$A13" SHAI_SESSION_ID=ask13 "$DIR/shai-ask" --model deepseek-chat --max-tokens 1234 "model test" 2>/dev/null)
+M_OUT=$(SHAI_HOME="$A13" SHAI_SESSION_ID=ask13 "$DIR/shai-ask" --model override-model --max-tokens 1234 "model test" 2>/dev/null)
 M_HIST=$(cat "$A13/sessions/ask13.jsonl")
 M_RUN=$(printf '%s\n' "$M_HIST" | jq -r 'select(.source=="user") | .meta.run_id')
 M_REQ="$A13/runs/$M_RUN/span_1-request.json"
 assert_eq "$M_OUT" "stub reply" "shai-ask: turn completes with --model/--max-tokens"
-assert_eq "$(jq -r '.model' "$M_REQ")" "deepseek-chat" "shai-ask: --model overrides the model in the request"
+assert_eq "$(jq -r '.model' "$M_REQ")" "override-model" "shai-ask: --model overrides the model in the request"
 assert_eq "$(jq -r '.max_tokens' "$M_REQ")" "1234" "shai-ask: --max-tokens overrides the token budget in the request"
 
 # --- --external: stdin is fenced as external data and seeded before the prompt ---

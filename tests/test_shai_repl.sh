@@ -12,7 +12,7 @@ echo "shai-repl (integration)"
 #     round-trip drives the dispatch loop to completion, final line w/o newline) ---
 make_stub_bin
 write_gh_stub
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 SHAI_TMP="$(mktemp -d)"
@@ -32,7 +32,7 @@ CSTUB="$(mktemp -d)"
 _CLEANUP_DIRS+=("$CSTUB")
 export SHAI_ROUND_COUNT="$CSTUB/count"
 echo 0 >"$SHAI_ROUND_COUNT"
-printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tu1","type":"function","function":{"name":"list_directory","arguments":"{\\\\\"path\\\\\":\\\\\".\\\\\"}"}  }]},"finish_reason":"tool_calls"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\nelse\n  cat <<JSON\n{"id":"chatcmpl-test2","choices":[{"message":{"role":"assistant","content":"done summarizing"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\nfi\necho "200"\n' >"$CSTUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\nn=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"\nif [ "$n" = "0" ]; then\n  cat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tu1","type":"function","function":{"name":"list_directory","arguments":"{\\\\\"path\\\\\":\\\\\".\\\\\"}"}  }]},"finish_reason":"tool_calls"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\nelse\n  cat <<JSON\n{"id":"chatcmpl-test2","choices":[{"message":{"role":"assistant","content":"done summarizing"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\nfi\necho "200"\n' >"$CSTUB/curl"
 chmod +x "$CSTUB/curl"
 printf 'list the dir\nexit\n' | PATH="$CSTUB:$PATH" SHAI_HOME="$SHAI_TMP2" SHAI_SESSION_ID=test "$DIR/shai-repl" >/dev/null 2>&1
 H2=$(cat "$SHAI_TMP2/sessions/test.jsonl" 2>/dev/null || echo "")
@@ -54,7 +54,7 @@ SHAI_TMP_EOF="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP_EOF")
 make_stub_bin
 write_gh_stub
-printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
 EOFGOODBYE=$(printf 'hi there' | SHAI_HOME="$SHAI_TMP_EOF" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1)
 assert_contains "$EOFGOODBYE" "Goodbye." "shai-repl: EOF after final turn prints goodbye"
@@ -62,7 +62,7 @@ assert_contains "$EOFGOODBYE" "Goodbye." "shai-repl: EOF after final turn prints
 # new: `exit` ends the loop cleanly with a goodbye and without erroring
 make_stub_bin
 write_gh_stub
-printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
 
 SHAI_TMP="$(mktemp -d)"
@@ -90,14 +90,14 @@ SHAI_TMP_B="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP_B")
 make_stub_bin
 write_gh_stub
-printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
-BANNEROUT=$(printf 'exit\n' | script -qec "SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess '$DIR/shai-repl'" /dev/null)
+BANNEROUT=$(printf 'exit\n' | script -qec "env -u SHAI_MODEL SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess '$DIR/shai-repl'" /dev/null)
 assert_eq "$(grep -cE '^shai ' <<<"$BANNEROUT" || true)" "1" "shai-repl: banner prints once when stdout is a TTY"
 assert_contains "$BANNEROUT" " — session banner_sess — type 'exit' to quit" "shai-repl: banner shows version, session id, and exit hint"
 assert_eq "$(grep -c '— model' <<<"$BANNEROUT" || true)" "0" "shai-repl: banner omits model segment when SHAI_MODEL is unset"
-BANNEROUT_M=$(printf 'exit\n' | script -qec "SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess SHAI_MODEL=deepseek-chat '$DIR/shai-repl'" /dev/null)
-assert_contains "$BANNEROUT_M" " — model deepseek-chat" "shai-repl: banner appends — model segment when SHAI_MODEL is set"
+BANNEROUT_M=$(printf 'exit\n' | script -qec "SHAI_HOME='$SHAI_TMP_B' SHAI_SESSION_ID=banner_sess SHAI_MODEL=override-model '$DIR/shai-repl'" /dev/null)
+assert_contains "$BANNEROUT_M" " — model override-model" "shai-repl: banner appends — model segment when SHAI_MODEL is set"
 
 # new: under a TTY (script(1)'s pty, like the banner tests), each accepted prompt is
 # appended to $SHAI_HOME/history — one per line, plain text — and reloaded by the next
@@ -107,7 +107,7 @@ SHAI_TMP_H="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP_H")
 make_stub_bin
 write_gh_stub
-printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
 HOUT1=$(printf 'first prompt\n\nexit\n' | script -qec "SHAI_HOME='$SHAI_TMP_H' SHAI_SESSION_ID=hist '$DIR/shai-repl'" /dev/null)
 assert_contains "$HOUT1" "hi there" "shai-repl: turn still completes under a TTY with history enabled"
@@ -143,7 +143,7 @@ SHAI_TMP_W="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP_W")
 make_stub_bin
 write_gh_stub
-printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi there"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
 printf 'seed1\nseed2\nseed3\n' >"$SHAI_TMP_W/history"
 printf 'w1\nw2\nw3\nw4\nw5\nw6\nw7\nw8\nexit\n' | script -qec "HISTSIZE=5 SHAI_HOME='$SHAI_TMP_W' SHAI_SESSION_ID=wrap '$DIR/shai-repl'" /dev/null >/dev/null 2>&1
@@ -209,7 +209,7 @@ SHAI_TMP_SEP="$(mktemp -d)"
 _CLEANUP_DIRS+=("$SHAI_TMP_SEP")
 make_stub_bin
 write_gh_stub
-printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
+printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$STUB/curl"
 chmod +x "$STUB/curl"
 SEPOUT=$(printf 'first question\nsecond question\n' | SHAI_HOME="$SHAI_TMP_SEP" SHAI_SESSION_ID=test "$DIR/shai-repl" 2>&1)
 assert_contains "$SEPOUT" $'stub reply\n\nstub reply' "shai-repl: blank line separates a turn's reply from the next prompt"
@@ -362,7 +362,7 @@ cat > /dev/null
 n=$(cat "$SIG_STUB_COUNT"); echo $((n + 1)) > "$SIG_STUB_COUNT"
 if [ "$n" = "0" ]; then sleep 30; fi
 cat <<'JSON'
-{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"sig reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"sig reply"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
 JSON
 echo "200"
 SIGSTUB
@@ -421,7 +421,7 @@ SIGSTUB
   : >"$SIGB_HOME/out"
   SIGB_STUB="$(mktemp -d)"
   _CLEANUP_DIRS+=("$SIGB_STUB")
-  printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"idle reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$SIGB_STUB/curl"
+  printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"idle reply"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$SIGB_STUB/curl"
   chmod +x "$SIGB_STUB/curl"
 
   setsid env --default-signal=INT PATH="$SIGB_STUB:$PATH" SHAI_HOME="$SIGB_HOME" SHAI_SESSION_ID=sigb \
@@ -464,7 +464,7 @@ SIGSTUB
   : >"$TCC_HOME/out"
   TCC_STUB="$(mktemp -d)"
   _CLEANUP_DIRS+=("$TCC_STUB")
-  printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"tty alive"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$TCC_STUB/curl"
+  printf '#!/bin/bash\ncat > /dev/null\ncat <<JSON\n{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"tty alive"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}\nJSON\necho "200"\n' >"$TCC_STUB/curl"
   chmod +x "$TCC_STUB/curl"
 
   env --default-signal=INT PATH="$TCC_STUB:$PATH" script -qec "SHAI_HOME='$TCC_HOME' SHAI_SESSION_ID=ttycc '$DIR/shai-repl'" /dev/null \
