@@ -23,8 +23,9 @@ assert_eq "$(echo "$TOOL_RES" | "$DIR/shai-print")" "" "print: default hides too
 TRDEBUG=$(echo "$TOOL_RES" | "$DIR/shai-print" --debug)
 assert_contains "$TRDEBUG" '[tool_result:' "print: --debug shows tool_result"
 
-# new: content is a single string now — Deepseek has no multi-text-block concept, so there is
-# nothing analogous to the old "multiple text blocks in one message" case to port.
+# new: content is a single string now — the OpenAI-compatible schema has no multi-text-block
+# concept, so there is nothing analogous to the old "multiple text blocks in one message" case
+# to port.
 SINGLETXT='{"type":"message","source":"assistant","payload":{"content":"first","finish_reason":"stop"}}'
 STOUT=$(echo "$SINGLETXT" | "$DIR/shai-print")
 assert_eq "$STOUT" "first" "print: single string content printed"

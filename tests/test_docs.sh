@@ -295,7 +295,7 @@ cat >"$FIX/workflows/good-wf/run.sh" <<'EOF'
 #!/bin/bash
 # run.sh — a compliant workflow script
 # Usage: run.sh <TICKET_ID>
-# Reads: DEEPSEEK_API_KEY from environment
+# Reads: SHAI_API_KEY from environment
 # Writes: draft PR on GitHub
 # Exit: 0 on success; 1 on failure
 set -euo pipefail

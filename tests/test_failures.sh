@@ -32,7 +32,7 @@ _CLEANUP_DIRS+=("$TMP_BASIC")
   WF_NAME="pr_reviewer"
   unset SHAI_FAILURE_WORKFLOW
   source "$DIR/lib/failure.sh"
-  fail_record "api_error" "HTTP 503 from Deepseek API" \
+  fail_record "api_error" "HTTP 503 from the API" \
     '{"script":"shai-eval","stage":"chat_completions","detail":"curl exit 0, HTTP 503 Service Unavailable"}'
   exit "$FAILED"
 ) || FAILED=1
@@ -54,7 +54,7 @@ assert_eq "$(printf '%s' "$LINE" | jq -r '.session_id')" "sess_1724512200_def456
   "fail_record: session_id field"
 assert_eq "$(printf '%s' "$LINE" | jq -r '.category')" "api_error" \
   "fail_record: category field"
-assert_eq "$(printf '%s' "$LINE" | jq -r '.summary')" "HTTP 503 from Deepseek API" \
+assert_eq "$(printf '%s' "$LINE" | jq -r '.summary')" "HTTP 503 from the API" \
   "fail_record: summary field"
 assert_eq "$(printf '%s' "$LINE" | jq -r '.context | type')" "object" \
   "fail_record: context is an object"

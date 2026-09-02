@@ -4,11 +4,11 @@
 # Reads: $1 (JSON with .action, optional .check, .cwd and .tool_dir), $SHAI_HOME/ci.json, git remote
 # Writes: check output or check listing to stdout
 # Exit: 0 on success (including failed checks), 1 on tool-level error
-# The check runs in an environment scrubbed of every exported SHAI_* variable and the API keys
-# (PATH/HOME/LANG/TERM survive), so the repository-under-test cannot observe the agent that
-# dispatched the tool; a per-check "env" map in ci.json re-injects variables explicitly. The
-# scrub is a prefix sweep over exported SHAI_* names (which covers SHAI_API_KEY) — any other credential
-# the agent exports (e.g. GITHUB_TOKEN) still reaches the check.
+# The check runs in an environment scrubbed of every exported SHAI_* variable, which includes
+# the API key SHAI_API_KEY (PATH/HOME/LANG/TERM survive), so the repository-under-test cannot
+# observe the agent that dispatched the tool; a per-check "env" map in ci.json re-injects
+# variables explicitly. The scrub is a prefix sweep over exported SHAI_* names — any other
+# credential the agent exports (e.g. GITHUB_TOKEN) still reaches the check.
 set -euo pipefail
 input="$1"
 

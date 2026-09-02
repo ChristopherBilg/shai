@@ -2,12 +2,14 @@
 
 [![CI](https://github.com/ChristopherBilg/shai/actions/workflows/ci.yml/badge.svg)](https://github.com/ChristopherBilg/shai/actions/workflows/ci.yml)
 
-Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl`, `jq`) over an append-only JSONL history, calling the Deepseek API. A fresh build in the spirit of [llayer](https://github.com/ChristopherBilg/llayer).
+Framework-free, terminal-native AI assistant: small shell scripts (`bash`, `curl`, `jq`) over an append-only JSONL history, calling an OpenAI-compatible chat-completions API. A fresh build in the spirit of [llayer](https://github.com/ChristopherBilg/llayer).
 
 ## Requirements
 - `bash`, `curl`, `jq`
 - `gh` CLI, authenticated: `gh auth login`
-- `export DEEPSEEK_API_KEY=sk-...`
+- `export SHAI_API_KEY=sk-...`
+- `export SHAI_API_URL=https://api.example.com/v1/chat/completions`
+- `export SHAI_MODEL=<model-name>`
 
 ## Install
 
@@ -21,7 +23,9 @@ Check your version: `shai-version`
 
 ## Quick start
 ```shell
-export DEEPSEEK_API_KEY=sk-...
+export SHAI_API_KEY=sk-...
+export SHAI_API_URL=https://api.example.com/v1/chat/completions
+export SHAI_MODEL=<model-name>
 ./shai-repl
 > summarize PR 123 in owner/repo
 > what's in ./README.md

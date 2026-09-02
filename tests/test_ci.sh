@@ -319,7 +319,8 @@ assert_exit 1 "tool_dir: exit 1 when ci/run.sh missing" -- \
 
 # ===== environment isolation =====
 # The agent's own environment must not leak into the check: a workflow run exports SHAI_*
-# variables and the API keys, and shai's own test suite reads those same variables (issue #87).
+# variables, which includes the API key SHAI_API_KEY, and shai's own test suite reads those
+# same variables (issue #87).
 # A check must observe the checkout under test, not the agent that dispatched the tool.
 desc "environment isolation — agent SHAI_* vars and API keys are scrubbed"
 write_ci_config <<'JSON'

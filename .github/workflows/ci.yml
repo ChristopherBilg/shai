@@ -100,5 +100,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate tools.json against Deepseek tool schema
+      - name: Validate tools.json against the OpenAI-compatible tool schema
         run: ./tests/validate-tool-schema.sh

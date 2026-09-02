@@ -12,12 +12,12 @@
 #         markers ("⏺ name(args)" lines) to stderr unless -q/--quiet (other pipeline
 #         stderr is dropped on success, re-emitted on a hard failure); the system prompt,
 #         the turn, and (with --external) a fenced user message to the session log; the final event JSON is never emitted
-# Exit: 0 on success (answer printed); 1 if DEEPSEEK_API_KEY is missing (health check),
-#       the turn ended in an error event, or the pipeline crashed (shai-loop exited
-#       non-zero — its stderr is re-emitted, never its raw code, which would collide with
-#       the usage-error meaning of 2); 2 on usage error (no prompt, unknown option,
-#       --external without a prompt argument or with an empty SOURCE); 3 if the system
-#       prompt is missing or empty
+# Exit: 0 on success (answer printed); 1 if SHAI_API_KEY, SHAI_API_URL, or SHAI_MODEL is
+#       missing (health check), the turn ended in an error event, or the pipeline crashed
+#       (shai-loop exited non-zero — its stderr is re-emitted, never its raw code, which
+#       would collide with the usage-error meaning of 2); 2 on usage error (no prompt,
+#       unknown option, --external without a prompt argument or with an empty SOURCE);
+#       3 if the system prompt is missing or empty
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"

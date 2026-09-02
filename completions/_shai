@@ -162,7 +162,7 @@ _shai-eval() {
     '--model[Override the model name]:MODEL:' \
     '--max-tokens[Output token budget]:N:' \
     '--dry-run[Print the request payload without calling the API]' \
-    '--health-check[Verify DEEPSEEK_API_KEY is set and exit]'
+    '--health-check[Verify the required provider configuration is set and exit]'
 }
 _shai-events() {
   _arguments -S \
