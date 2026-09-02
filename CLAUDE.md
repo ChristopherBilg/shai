@@ -40,7 +40,7 @@ export SHAI_VERSION=v2026.08.10 && gh api .../install.sh --jq '.content' | base6
 # Run the pipeline by hand (every stage is a filter):
 gh pr view 123 | ./shai-read | ./shai-context | ./shai-eval | ./shai-print
 
-# Tests — fully offline (curl + gh are stubbed; SHAI_API_KEY faked):
+# Tests — fully offline (curl + gh are stubbed; SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL faked):
 ./tests/run.sh                         # all suites, aggregated
 bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is standalone)
 ./tests/conventions.sh                 # project hygiene checks (shebang, strict mode, etc.)
@@ -167,7 +167,8 @@ Unstamped events from before the envelope still parse, so old session logs keep 
 
 The scripts:
 
-- **`shai-repl`** — the REPL. Health-checks the API key (on failure it prints a hint pointing at
+- **`shai-repl`** — the REPL. Health-checks the required provider configuration
+  (`SHAI_API_KEY`/`SHAI_API_URL`/`SHAI_MODEL`) (on failure it prints a hint pointing at
   `shai-doctor` to stderr and exits 1), loads the system prompt via `shai-prompt system`, seeds
   it into a new session (an inherited `SHAI_SESSION_ID` always wins — an
   nvim/tmux/cron wrapper owns the session), and loads tool plugins via `shai-tools` into a temp
@@ -218,8 +219,8 @@ The scripts:
   always fail closed as "headless" even when a human runs `shai-ask` at a terminal —
   intended: `shai-ask` is the non-interactive entry point, and interactive grants belong to
   `shai-repl`. `--model MODEL` / `--max-tokens N` forward to `shai-loop`
-  (and on to `shai-eval`). Exit 0 on success; 1 if `SHAI_API_KEY` is missing
-  (`shai-eval --health-check`), the turn ended in an error event — `shai-loop` exits 0
+  (and on to `shai-eval`). Exit 0 on success; 1 if `SHAI_API_KEY`, `SHAI_API_URL`, or
+  `SHAI_MODEL` is missing (`shai-eval --health-check`), the turn ended in an error event — `shai-loop` exits 0
   even for error events (errors are events, not crashes), so `shai-ask` inspects the final
   event to turn that into a non-zero exit — or the pipeline crashed (`shai-loop` exited
   non-zero, e.g. `shai-eval` rejecting a forwarded `--max-tokens` value; the dropped loop
@@ -234,7 +235,8 @@ The scripts:
 - **`shai-version`** (`shai-version:1`) — prints the installed version to stdout as a bare string,
   resolved in order: the `VERSION` file next to the script (written by release tarballs), then
   `git describe --tags` in the install directory (dev clones), then the literal `dev`. Single
-  purpose and pipeable: it has no REPL dependency and needs no `SHAI_API_KEY`. Exit 0 always.
+  purpose and pipeable: it has no REPL dependency and needs no `SHAI_API_KEY`, `SHAI_API_URL`,
+  or `SHAI_MODEL`. Exit 0 always.
 - **`shai-update [--check|--list|--rollback [VERSION]|--version V|--prune --keep N [--dry-run]] [-y|--yes]`**
   (`shai-update:1`) — the in-place updater on top of the `$INSTALL_DIR/current` layout:
   `install.sh` bootstraps, `shai-update` upgrades. A bare run resolves the latest release via
@@ -942,8 +944,8 @@ are automatically queued for resolution. Install via
 
 ## Testing model
 
-Tests are hermetic and offline (`curl`/`gh` stubbed, `SHAI_API_KEY` faked). Do not add
-tests that hit the network.
+Tests are hermetic and offline (`curl`/`gh` stubbed, `SHAI_API_KEY`/`SHAI_API_URL`/`SHAI_MODEL`
+faked). Do not add tests that hit the network.
 
 Lint tools are pinned (shellcheck `v0.10.0`, shfmt `v3.10.0`), downloaded by
 `tests/install-lint-tools.sh` and checksum-verified against `tests/lint-tools.sha256`
