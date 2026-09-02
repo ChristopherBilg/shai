@@ -329,14 +329,14 @@ write_ci_config <<'JSON'
     "github.com/owner/repo": {
       "checks": {
         "envprobe": {
-          "command": "echo span=${SHAI_SPAN_ID:-unset} run=${SHAI_RUN_ID:-unset} session=${SHAI_SESSION_ID:-unset} key=${DEEPSEEK_API_KEY:-unset} anthro=${ANTHROPIC_API_KEY:-unset}"
+          "command": "echo span=${SHAI_SPAN_ID:-unset} run=${SHAI_RUN_ID:-unset} session=${SHAI_SESSION_ID:-unset} key=${SHAI_API_KEY:-unset}"
         },
         "envhome": {
           "command": "echo home=${HOME:-unset} path=${PATH:-unset} lang=${LANG:-unset}"
         },
         "envmap": {
-          "command": "echo key=${DEEPSEEK_API_KEY:-unset} span=${SHAI_SPAN_ID:-unset} injected=${MY_CHECK_VAR:-unset}",
-          "env": { "DEEPSEEK_API_KEY": "injected-key", "MY_CHECK_VAR": "present" }
+          "command": "echo key=${SHAI_API_KEY:-unset} span=${SHAI_SPAN_ID:-unset} injected=${MY_CHECK_VAR:-unset}",
+          "env": { "SHAI_API_KEY": "injected-key", "MY_CHECK_VAR": "present" }
         }
       }
     }
@@ -346,17 +346,16 @@ JSON
 write_remote_stub "https://github.com/owner/repo.git"
 
 OUT=$(SHAI_SPAN_ID=span_9 SHAI_RUN_ID=run_9 SHAI_SESSION_ID=sess_9 \
-  DEEPSEEK_API_KEY=agent-secret ANTHROPIC_API_KEY=agent-anthropic \
+  SHAI_API_KEY=agent-secret \
   "$TOOL" '{"action":"run","check":"envprobe"}' 2>&1)
 RC=$?
 assert_eq "$RC" "0" "env isolation: exit 0"
 assert_contains "$OUT" "span=unset" "env isolation: SHAI_SPAN_ID scrubbed"
 assert_contains "$OUT" "run=unset" "env isolation: SHAI_RUN_ID scrubbed"
 assert_contains "$OUT" "session=unset" "env isolation: SHAI_SESSION_ID scrubbed"
-assert_contains "$OUT" "key=unset" "env isolation: DEEPSEEK_API_KEY scrubbed"
-assert_contains "$OUT" "anthro=unset" "env isolation: ANTHROPIC_API_KEY scrubbed"
+assert_contains "$OUT" "key=unset" "env isolation: SHAI_API_KEY scrubbed"
 if [[ "$OUT" == *"span_9"* || "$OUT" == *"run_9"* || "$OUT" == *"sess_9"* ||
-  "$OUT" == *"agent-secret"* || "$OUT" == *"agent-anthropic"* ]]; then
+  "$OUT" == *"agent-secret"* ]]; then
   echo -e "  ${RED}✗${NC} env isolation: agent values leaked into the check output"
   FAILED=1
 else
@@ -377,11 +376,11 @@ else
 fi
 
 # a per-check "env" map re-injects a scrubbed variable and adds a new one
-OUT=$(DEEPSEEK_API_KEY=agent-secret SHAI_SPAN_ID=span_9 \
+OUT=$(SHAI_API_KEY=agent-secret SHAI_SPAN_ID=span_9 \
   "$TOOL" '{"action":"run","check":"envmap"}' 2>&1)
 RC=$?
 assert_eq "$RC" "0" "env isolation: env map — exit 0"
-assert_contains "$OUT" "key=injected-key" "env isolation: env map re-injects DEEPSEEK_API_KEY"
+assert_contains "$OUT" "key=injected-key" "env isolation: env map re-injects SHAI_API_KEY"
 assert_contains "$OUT" "span=unset" "env isolation: env map does not un-scrub SHAI_*"
 assert_contains "$OUT" "injected=present" "env isolation: env map adds a new variable"
 
