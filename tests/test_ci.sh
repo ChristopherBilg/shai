@@ -322,7 +322,7 @@ assert_exit 1 "tool_dir: exit 1 when ci/run.sh missing" -- \
 # variables, which includes the API key SHAI_API_KEY, and shai's own test suite reads those
 # same variables (issue #87).
 # A check must observe the checkout under test, not the agent that dispatched the tool.
-desc "environment isolation — agent SHAI_* vars and API keys are scrubbed"
+desc "environment isolation — agent SHAI_* vars, including the API key, are scrubbed"
 write_ci_config <<'JSON'
 {
   "version": "1.0",

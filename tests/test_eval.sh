@@ -531,6 +531,33 @@ TOERR=$(SHAI_EVAL_TIMEOUT=0120 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2
 RC=$?
 assert_eq "$RC" "2" "eval: SHAI_EVAL_TIMEOUT with leading zero exits 2"
 
+# --- SHAI_API_URL reaches curl verbatim ------------------------------------------------------
+desc "SHAI_API_URL reaches curl"
+
+# Mutation-verified (M2): nothing else in this suite pins the URL curl actually receives to
+# $SHAI_API_URL -- hardcoding a URL literal into shai-eval's curl invocation left the rest of
+# this file fully green. Capture the value that follows --url the same way the --max-time /
+# --connect-timeout tests above capture theirs, and assert it against the ambient SHAI_API_URL
+# (exported by tests/lib.sh), so a regression back to a positional/hardcoded URL goes red here.
+make_stub_bin
+cat >"$STUB/curl" <<'STUBEOF'
+#!/bin/bash
+for arg; do
+  if [ "$prev" = "--url" ]; then
+    printf '%s' "$arg" > "$(dirname "$0")/.captured_url"
+  fi
+  prev="$arg"
+done
+cat > /dev/null
+cat <<'JSON'
+{"id":"msg_url","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+JSON
+echo "200"
+STUBEOF
+chmod +x "$STUB/curl"
+echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" >/dev/null
+assert_eq "$(cat "$STUB/.captured_url")" "$SHAI_API_URL" "eval: curl receives SHAI_API_URL via --url"
+
 desc "required provider configuration"
 
 # Each of the three missing individually: one error event, exit 0. Never a crash — the

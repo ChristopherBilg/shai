@@ -219,12 +219,27 @@ for f in "$unit_scan_dir"/shai-*.service; do
       fi
       printf '         ExecStart=%s\n' "$(unit_exec_start "$unit_scan_dir" "$unit")" >&2
       # `repoint` migrates the ExecStart in place through the current symlink, so a
-      # customized interval and the embedded API key survive — unlike re-running
-      # `install`, which resets the interval and needs the key re-exported.
-      printf '         fix: shai-supervise repoint --all (preserves customized intervals and API keys)\n' >&2
+      # customized interval survives — unlike re-running `install`, which resets it. But
+      # repoint only ever rewrites the ExecStart= line: a unit installed before
+      # SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL existed still carries its old Environment=
+      # lines untouched, so repoint cannot migrate that unit — uninstall + install is the
+      # only fix for it (see the missing-Environment= WARN below, which names this case).
+      printf '         fix: shai-supervise repoint --all (preserves customized intervals; rewrites ExecStart= only — uninstall + install instead if this unit predates SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL)\n' >&2
       WARNINGS=$((WARNINGS + 1))
       ;;
   esac
+  # A unit installed by pre-branch shai (or hand-edited) can have a perfectly current
+  # ExecStart= (state "ok" above) while still carrying only the old Environment= lines —
+  # `shai-supervise repoint --all` never touches Environment=, so that case is invisible to
+  # the ExecStart-based classification above and would otherwise print a bare [OK]. Checked
+  # independently of $state (ok/stale/broken alike) so it fires alongside either report
+  # instead of being masked by it. WARN, not FAIL: the unit still exists, it just fails on
+  # every tick — the same degraded-but-usable treatment as the rest of this section.
+  if ! grep -q '^Environment=SHAI_API_KEY=' "$f"; then
+    printf '  [WARN] %s missing Environment=SHAI_API_KEY= (unit predates the required provider vars)\n' "$unit" >&2
+    printf '         fix: reinstall this unit — shai-supervise uninstall <script> && shai-supervise install <script> [--interval ...] (repoint only rewrites ExecStart=)\n' >&2
+    WARNINGS=$((WARNINGS + 1))
+  fi
 done
 
 # Derive additional deps from tool plugins

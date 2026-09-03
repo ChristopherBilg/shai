@@ -598,7 +598,40 @@ assert_contains "$OUT" "fix: shai-supervise repoint --all" "doctor: broken WARN 
 SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: broken unit is exactly one warning"
 
-# --- Test 34: no shai units → the section is entirely silent ---
+# --- Test 34: legacy unit (current ExecStart, pre-branch Environment=) → its own WARN (I1) ---
+# Reproduces the exact reported gap: unit_install_state classifies purely on ExecStart, so a
+# unit whose ExecStart already resolves to the current install ("ok") but whose Environment=
+# lines predate SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL (here: a bare pre-branch-style
+# OLD_PROVIDER_KEY line instead) used to be reported as a plain [OK] and nothing else — even though the
+# workflow fails on every tick (worse for issue_dispatcher: it removes the queue label before
+# running). Positive control is Test 32 above: the identical fixture shape but with
+# Environment=SHAI_API_KEY= instead produces no such WARN, so this WARN is attributable to the
+# missing variable, not to the fixture shape itself.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
+#                           # subshell does not change it (shai-doctor resolves the same root)
+cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$DIR/shai-print
+Environment=OLD_PROVIDER_KEY=x
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: legacy-env unit → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" "[OK]   shai-heartbeat" "doctor: legacy-env unit still reports OK for its (current) ExecStart"
+assert_contains "$OUT" "[WARN] shai-heartbeat missing Environment=SHAI_API_KEY=" \
+  "doctor: legacy-env unit gets its own WARN despite the OK ExecStart state"
+assert_contains "$OUT" "predates the required provider vars" \
+  "doctor: legacy-env WARN explains why (predates the required provider vars)"
+assert_contains "$OUT" "shai-supervise uninstall" "doctor: legacy-env WARN's fix hint recommends reinstalling"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: legacy-env unit is exactly one warning"
+
+# --- Test 35: no shai units → the section is entirely silent ---
 # Absence-shaped, paired with the positive control in Tests 31-33: the section and its WARNs
 # appear the moment a unit exists, so silence here means "none present", not "never scanned".
 rm -f "$SHAI_UNIT_DIR"/shai-*.service

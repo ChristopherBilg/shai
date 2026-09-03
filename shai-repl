@@ -77,7 +77,7 @@ export SHAI_SPAN_ID=""
 export SHAI_PARENT_SPAN_ID=""
 
 if ! "$DIR/shai-eval" --health-check; then
-  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl, config, and this API key)\n" "$DIR" >&2
+  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl and the required provider configuration)\n" "$DIR" >&2
   exit 1
 fi
 

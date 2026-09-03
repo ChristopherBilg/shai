@@ -31,7 +31,7 @@ TOOLS_FILE=""
 missing_config() {
   local for_dry_run="${1:-}" missing=()
   [ -n "${SHAI_API_KEY:-}" ] || [ "$for_dry_run" = "--dry-run" ] || missing+=(SHAI_API_KEY)
-  [ -n "${SHAI_API_URL:-}" ] || [ "$for_dry_run" = "--dry-run" ] || missing+=(SHAI_API_URL)
+  [ -n "$API_URL" ] || [ "$for_dry_run" = "--dry-run" ] || missing+=(SHAI_API_URL)
   [ -n "$MODEL" ] || missing+=(SHAI_MODEL)
   [ "${#missing[@]}" -eq 0 ] && return 1
   local names verb
@@ -194,7 +194,7 @@ while true; do
   # Deliberately no --speed-limit/--speed-time: this is a non-streaming request, so curl receives
   # no body bytes while the model generates — a speed-based bound would abort every legitimate
   # long generation, which is exactly what the raised timeout exists to allow.
-  RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --connect-timeout 30 --max-time "$EVAL_TIMEOUT" -w '\n%{http_code}' -X POST "$API_URL" \
+  RESPONSE=$(printf '%s' "$PAYLOAD" | curl -sS --connect-timeout 30 --max-time "$EVAL_TIMEOUT" -w '\n%{http_code}' -X POST --url "$API_URL" \
     -H "content-type: application/json" \
     -H "Authorization: Bearer $SHAI_API_KEY" \
     -d @-) || CURL_FAILED=true

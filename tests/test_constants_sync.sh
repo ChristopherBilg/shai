@@ -56,7 +56,6 @@ SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, budget 777, head 666, ta
 EOF
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from CLAUDE.md → exit 1"
-assert_contains "$OUT" "CLAUDE.md" "missing from CLAUDE.md → names file"
 # Full label+value+file phrase, not just "shfmt version": that label is checked against exactly
 # one file today, but the bare label alone doesn't pin down which file failed, so a check
 # mistakenly redirected to the wrong file would still print a "missing" line containing "shfmt
@@ -72,7 +71,6 @@ no constants here
 EOF
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from README.md → exit 1"
-assert_contains "$OUT" "README.md" "missing from README.md → names file"
 # Full label+value+file phrase: "truncation limit" is also checked against CLAUDE.md, which
 # still passes here and prints "truncation limit (888) in CLAUDE.md" — a passing sibling line
 # containing the bare label. The bare-label assertion would be satisfied by that sibling alone
@@ -94,7 +92,6 @@ check_config SHAI_MAX_CONTEXT_BYTES "777"
 SCRIPT
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from shai-doctor → exit 1"
-assert_contains "$OUT" "shai-doctor" "missing from shai-doctor → names file"
 # Full label+value+file phrase, not just "required var SHAI_API_URL": that label is also checked
 # against CLAUDE.md and README.md, both of which still pass here and print "... in CLAUDE.md" /
 # "... in README.md" — passing siblings containing the bare label. The bare-label assertion was
@@ -103,5 +100,32 @@ assert_contains "$OUT" "shai-doctor" "missing from shai-doctor → names file"
 # assertion green). Anchoring on "missing from shai-doctor" ties the assertion to the one line
 # only the targeted check can produce.
 assert_contains "$OUT" "required var SHAI_API_URL (SHAI_API_URL) missing from shai-doctor" "missing from shai-doctor → names constant"
+
+# --- partial refactor drops a var from missing+=( ) silently (M9 self-maintaining guard) ---
+# Reproduces the exact defect: rewriting one missing+=(NAME) call to reference a variable
+# instead of a literal (missing+=("$url_var")) makes the capture-group sed no longer match that
+# call, so REQUIRED_VARS silently drops SHAI_API_URL while staying non-empty (SHAI_API_KEY and
+# SHAI_MODEL still extract fine from their own untouched calls) -- without a call-count guard,
+# constants-sync.sh would print CONSTANTS SYNC OK despite no longer checking SHAI_API_URL
+# against the docs at all. Restore shai-doctor to the fully-synced fixture first (it was left
+# broken by the block above) so this block's only variable is the mutation itself.
+cat >"$FIX/shai-doctor" <<'SCRIPT'
+check_config SHAI_API_KEY
+check_config SHAI_API_URL
+check_config SHAI_MODEL
+check_config SHAI_MAX_CONTEXT_BYTES "777"
+SCRIPT
+cat >"$FIX/shai-eval" <<'SCRIPT'
+missing_config() {
+  [ -n "${SHAI_API_KEY:-}" ] || missing+=(SHAI_API_KEY)
+  local url_var="SHAI_API_URL"
+  [ -n "${SHAI_API_URL:-}" ] || missing+=("$url_var")
+  [ -n "${SHAI_MODEL:-}" ] || missing+=(SHAI_MODEL)
+}
+MAX_TOKENS="999"
+SCRIPT
+OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
+assert_eq "$?" "1" "partial-refactor missing+=(\"\$var\") → exit 1 (self-maintaining guard fires)"
+assert_contains "$OUT" "did not match every call" "partial-refactor → guard names the sed/call-count mismatch"
 
 finish

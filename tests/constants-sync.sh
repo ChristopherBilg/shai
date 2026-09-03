@@ -51,8 +51,22 @@ check() {
 # the name is the only part that must stay in sync with the docs, and anchoring on the guard's
 # shape would break the next time that condition is reworded.
 REQUIRED_VARS=$(sed -n 's/.*missing+=(\([A-Z_]*\)).*/\1/p' shai-eval)
+# Self-maintaining guard: the capture group above only matches a literal ALL_CAPS name inside
+# missing+=(...). A refactor that swaps in a variable instead of a literal (e.g.
+# missing+=("$url_var")) makes that one call stop matching the pattern -- REQUIRED_VARS then
+# silently loses that name while staying non-empty (the sibling calls still extract fine), so
+# the "could not extract" guard above never fires and the dropped variable's docs just stop
+# being checked, with no failure anywhere. Comparing the extracted count against the number of
+# missing+=( call sites in the file closes that gap without hardcoding how many there are today.
+MISSING_CALLS=$(grep -c 'missing+=(' shai-eval || true)
+EXTRACTED_COUNT=0
+if [ -n "$REQUIRED_VARS" ]; then
+  EXTRACTED_COUNT=$(printf '%s\n' "$REQUIRED_VARS" | wc -l)
+fi
 if [ -z "$REQUIRED_VARS" ]; then
   note "could not extract the required provider variables from shai-eval — check the sed pattern"
+elif [ "$EXTRACTED_COUNT" -ne "$MISSING_CALLS" ]; then
+  note "extracted $EXTRACTED_COUNT required-var name(s) from shai-eval but found $MISSING_CALLS 'missing+=(' call site(s) — the sed pattern did not match every call (e.g. a variable instead of a literal name); fix the pattern or the call so every required provider variable stays covered"
 else
   for v in $REQUIRED_VARS; do
     check "$v" shai-doctor "required var $v"

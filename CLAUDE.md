@@ -14,6 +14,8 @@ the GitHub tools) `gh`.
 
 ```shell
 export SHAI_API_KEY=sk-...        # required at runtime
+export SHAI_API_URL=https://api.example.com/v1/chat/completions  # required at runtime
+export SHAI_MODEL=<model-name>    # required at runtime
 ./shai-repl                            # interactive REPL
 ./shai-doctor                          # check environment prerequisites
 ./shai-version                         # print installed version

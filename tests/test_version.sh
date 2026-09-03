@@ -23,11 +23,11 @@ assert_eq "$out" "dev" "shai-version: prints dev when no VERSION and git fails"
 # Case 3: exit 0 even when every resolution source fails (git still stubbed to fail)
 assert_exit 0 "shai-version: exits 0 on the dev fallback" -- "$DIR/shai-version"
 
-# Case 4: does not require SHAI_API_KEY
+# Case 4: does not require SHAI_API_KEY, SHAI_API_URL, or SHAI_MODEL
 echo "v1.0.0" >"$DIR/VERSION"
-out=$(SHAI_API_KEY="" "$DIR/shai-version" 2>/dev/null)
+out=$(env -u SHAI_API_KEY -u SHAI_API_URL -u SHAI_MODEL "$DIR/shai-version" 2>/dev/null)
 rm -f "$DIR/VERSION"
-assert_eq "$out" "v1.0.0" "shai-version: works without SHAI_API_KEY"
+assert_eq "$out" "v1.0.0" "shai-version: works without SHAI_API_KEY, SHAI_API_URL, or SHAI_MODEL"
 
 # Case 5: empty VERSION file falls through to the dev fallback
 make_stub_bin

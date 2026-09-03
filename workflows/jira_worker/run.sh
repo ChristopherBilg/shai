@@ -1,7 +1,7 @@
 #!/bin/bash
 # jira_worker/run.sh — implement a Jira ticket and open a draft pull request
 # Usage: workflows/jira_worker/run.sh <repo> <issue_key>
-# Reads: SHAI_API_KEY from environment; prompts/jira_worker.txt for LLM instructions
+# Reads: SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL from environment; prompts/jira_worker.txt for LLM instructions
 # Requires: jira-cli (github.com/ankitpokhrel/jira-cli) for `jira issue view <key> --plain`
 # Writes: draft GitHub pull request; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error

@@ -1,7 +1,7 @@
 #!/bin/bash
 # release_notes/run.sh — generate categorized release notes from merged PRs between two refs
 # Usage: workflows/release_notes/run.sh <repo> <base> [head]
-# Reads: SHAI_API_KEY from environment; prompts/release_notes.txt for LLM instructions
+# Reads: SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL from environment; prompts/release_notes.txt for LLM instructions
 # Writes: markdown changelog to stdout; ephemeral session log (prunable)
 # Exit: 0 on success (including no-change early exits); 1 on failure; 2 on usage error
 set -euo pipefail

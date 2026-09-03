@@ -47,6 +47,7 @@ EOF
 QUIET=false
 NO_TOOLS=false
 EXT_SOURCE=""
+CLI_MODEL=""
 LOOP_OPTS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -66,7 +67,10 @@ while [ "$#" -gt 0 ]; do
         exit 2
       }
       case "$flag" in
-        --model) LOOP_OPTS+=(--model "$2") ;;
+        --model)
+          CLI_MODEL="$2"
+          LOOP_OPTS+=(--model "$2")
+          ;;
         --max-tokens) LOOP_OPTS+=(--max-tokens "$2") ;;
         --external)
           # an empty SOURCE would silently disable the fencing and flip stdin's meaning back
@@ -167,8 +171,16 @@ export SHAI_RUN_ID=""
 export SHAI_SPAN_ID=""
 export SHAI_PARENT_SPAN_ID=""
 
-if ! "$DIR/shai-eval" --health-check; then
-  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl, config, and this API key)\n" "$DIR" >&2
+# --model must be able to satisfy an otherwise-unset SHAI_MODEL here too: shai-eval parses its
+# own args before checking, so only forwarding the resolved CLI_MODEL (never all of LOOP_OPTS —
+# that would relocate a bad --max-tokens value's rejection into this health check) keeps this
+# pre-flight in sync with shai-ask:38's documented --model behavior.
+HEALTH_CHECK_OPTS=()
+if [ -n "$CLI_MODEL" ]; then
+  HEALTH_CHECK_OPTS+=(--model "$CLI_MODEL")
+fi
+if ! "$DIR/shai-eval" --health-check "${HEALTH_CHECK_OPTS[@]}"; then
+  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl and the required provider configuration)\n" "$DIR" >&2
   exit 1
 fi
 

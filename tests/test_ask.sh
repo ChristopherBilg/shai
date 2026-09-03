@@ -183,6 +183,22 @@ assert_eq "$M_OUT" "stub reply" "shai-ask: turn completes with --model/--max-tok
 assert_eq "$(jq -r '.model' "$M_REQ")" "override-model" "shai-ask: --model overrides the model in the request"
 assert_eq "$(jq -r '.max_tokens' "$M_REQ")" "1234" "shai-ask: --max-tokens overrides the token budget in the request"
 
+# --- --model satisfies an unset SHAI_MODEL at the pre-flight health check too (I2) ---
+# Reproduced defect: shai-eval's own --health-check parses --model before checking SHAI_MODEL,
+# but shai-ask's pre-flight health check forwarded nothing, so `shai-ask --model X` with
+# SHAI_MODEL unset failed at the health check (exit 1) even though the turn itself would have
+# used X just fine — contradicting shai-ask's own --model help text (shai-ask:38).
+A13B="$(mktemp -d)"
+_CLEANUP_DIRS+=("$A13B")
+MB_OUT=$(env -u SHAI_MODEL SHAI_HOME="$A13B" SHAI_SESSION_ID=ask13b "$DIR/shai-ask" --model cli-model "hi" 2>/dev/null)
+MB_RC=$?
+MB_HIST=$(cat "$A13B/sessions/ask13b.jsonl" 2>/dev/null)
+MB_RUN=$(printf '%s\n' "$MB_HIST" | jq -r 'select(.source=="user") | .meta.run_id' 2>/dev/null)
+MB_REQ="$A13B/runs/$MB_RUN/span_1-request.json"
+assert_eq "$MB_RC" "0" "shai-ask: --model satisfies an unset SHAI_MODEL at the health check (exit 0)"
+assert_eq "$MB_OUT" "stub reply" "shai-ask: --model with SHAI_MODEL unset still completes the turn"
+assert_eq "$(jq -r '.model' "$MB_REQ")" "cli-model" "shai-ask: the request still uses the --model value with SHAI_MODEL unset"
+
 # --- --external: stdin is fenced as external data and seeded before the prompt ---
 A14="$(mktemp -d)"
 _CLEANUP_DIRS+=("$A14")
