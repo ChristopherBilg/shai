@@ -49,16 +49,30 @@ wf_fail() {
 }
 
 # wf_suggest_repo: print the OWNER/REPO that suggestion issues should be filed on.
-# SHAI_SUGGEST_REPO wins when set. Otherwise the `origin` remote of the shai install
-# directory is used, but only when $DIR is itself the top of that work tree: release
-# installs under ~/.local/share/shai/<version>/ have no .git, and git's parent-directory
-# discovery would happily resolve an unrelated ancestor repo (e.g. a dotfiles repo at
-# $HOME), which would file issues on the wrong repo. The result must look like
-# OWNER/REPO. Exit 1 (printing nothing) when no trustworthy repo can be determined.
+# Three sources, in order:
+#
+#   1. SHAI_SUGGEST_REPO — an explicit override always wins.
+#   2. $DIR/REPO — baked into the release tarball next to VERSION by release.yml, from
+#      the ${{ github.repository }} of the repo that built it. This is the only source a
+#      release install can have, and being derived at build time it cannot drift from
+#      reality or send a fork's suggestions upstream.
+#   3. The `origin` remote of $DIR — dev clones, where no REPO file exists.
+#
+# Source 3 applies only when $DIR is itself the top of that work tree: release installs
+# under ~/.local/share/shai/<version>/ have no .git, and git's parent-directory discovery
+# would happily resolve an unrelated ancestor repo (e.g. a dotfiles repo at $HOME), which
+# would file issues on the wrong repo. Before source 2 existed that guard left a release
+# install with no derivable repo at all, silently skipping suggestions on every run.
+#
+# The result must look like OWNER/REPO, so a corrupt or truncated REPO file is refused
+# rather than falling through to the ancestor-repo guess source 3 would produce. Exit 1
+# (printing nothing) when no trustworthy repo can be determined.
 wf_suggest_repo() {
   local repo="" top
   if [ -n "${SHAI_SUGGEST_REPO:-}" ]; then
     repo="$SHAI_SUGGEST_REPO"
+  elif [ -f "$DIR/REPO" ]; then
+    repo=$(cat "$DIR/REPO" 2>/dev/null) || return 1
   else
     top=$(git -C "$DIR" rev-parse --show-toplevel 2>/dev/null) || return 1
     [ "$top" = "$DIR" ] || return 1
