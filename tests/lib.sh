@@ -88,8 +88,9 @@ make_stub_bin() {
 
 # build_fake_tarball <work_dir> <version>: a fake release tarball at
 # <work_dir>/shai-<version>.tar.gz containing a minimal executable shai tree —
-# shai-repl, shai-doctor, shai-version, shai-supervise + lib/units.sh, and the real
-# shai-completions with a per-version marker flag injected into completions.json.
+# shai-repl, shai-doctor, shai-version, shai-supervise + lib/units.sh, a REPO file next
+# to VERSION (as release.yml bakes it), and the real shai-completions with a per-version
+# marker flag injected into completions.json.
 # Shared by tests/test_install.sh and tests/test_update.sh so the installer and the
 # updater are driven from one fixture (which is also what makes the layout-equivalence
 # test practical). The marker flag makes the generated completion content
@@ -105,6 +106,10 @@ build_fake_tarball() {
   printf '#!/bin/bash\necho doctor\n' >"$staging/shai-doctor"
   chmod +x "$staging/shai-doctor"
   echo "$version" >"$staging/VERSION"
+  # REPO is what wf_suggest_repo reads on a release install; release.yml bakes it next to
+  # VERSION from github.repository. The fixture models that layout so the install/update
+  # suites exercise extraction of the file real releases carry, not a pre-PR layout.
+  echo "Fixture/ReleaseRepo" >"$staging/REPO"
   echo "not executable" >"$staging/README.md"
   printf '{"_comment":"example ci config","version":"1.0","repos":{}}\n' >"$staging/ci.json.example"
   cp "$DIR/shai-version" "$staging/shai-version"
@@ -120,6 +125,17 @@ build_fake_tarball() {
        "flags": {("--marker-" + $v): {"description": ("fixture release " + $v)}}
      }' "$DIR/completions.json" >"$staging/completions.json"
   (cd "$work" && tar czf "shai-${version}.tar.gz" "shai-${version}")
+}
+
+# suggest_repo_of <install_dir>: the OWNER/REPO wf_suggest_repo resolves for an install
+# tree. Uses a function-local DIR — bash's dynamic scoping hands it to wf_suggest_repo —
+# so the suite's own DIR (the repo root) is untouched. Requires lib/workflow.sh to have
+# been sourced first.
+suggest_repo_of() {
+  # shellcheck disable=SC2034  # DIR is read by wf_suggest_repo through dynamic scoping
+  local DIR="$1"
+  unset SHAI_SUGGEST_REPO
+  wf_suggest_repo
 }
 
 # make_install_gh_stub <work_dir> <version>: gh stub handling auth, release download

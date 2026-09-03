@@ -12,6 +12,10 @@
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# wf_suggest_repo, for the REPO-file resolution assertion in the upgrade test below
+# (suggest_repo_of from lib.sh wraps the call with a function-local DIR).
+# shellcheck source=lib/workflow.sh
+source "$DIR/lib/workflow.sh"
 
 echo "shai-update"
 
@@ -104,6 +108,14 @@ assert_eq "$(readlink "$INSTALL_DIR/current")" "v2026.04.01" \
   "upgrade: current re-points to the new version"
 assert_eq "$([ -x "$INSTALL_DIR/v2026.04.01/shai-repl" ] && echo y)" "y" \
   "upgrade: the new version tree is extracted and executable"
+assert_eq "$(cat "$INSTALL_DIR/v2026.04.01/REPO")" "Fixture/ReleaseRepo" \
+  "upgrade: REPO extracted into the new version tree (baked next to VERSION by the release)"
+
+# Workflows resolve $DIR through /current/, so wf_suggest_repo must find the baked-in REPO
+# file there too — end-to-end coverage for release.yml baking the file and shai-update
+# preserving it through an upgrade. The REPO branch fires before any git discovery.
+assert_eq "$(suggest_repo_of "$INSTALL_DIR/current")" "Fixture/ReleaseRepo" \
+  "upgrade: wf_suggest_repo resolves from current's REPO file after an upgrade"
 if [[ "$OUT" == *"[y/N]"* ]]; then
   echo -e "  ${RED}✗${NC} upgrade: -y skips the confirmation prompt (prompt still printed)"
   FAILED=1
