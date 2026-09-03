@@ -77,6 +77,11 @@ make_run "run_20260811T091000_fail" \
 OUT=$("$RUNS" --failed --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "failed filter count"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].run_id')" "run_20260811T091000_fail" "failed filter id"
+OUT=$("$RUNS" --failed)
+assert_contains "$OUT" "RUN" "table header present"
+assert_row_count "$OUT" 1 "failed table row count"
+assert_contains "$OUT" "run_20260811T091000_fail" "failed run id in table"
+assert_not_contains "$OUT" "run_20260811T090000_ok01" "complete run id absent from table"
 
 desc "--recent 1: only last run"
 setup_runs
@@ -189,10 +194,13 @@ setup_runs
 make_run "run_20260811T090000_aabb" \
   "$(fixture_event "message" "assistant" '{"content":"hi","finish_reason":"stop"}' \
     "run_20260811T090000_aabb" "sess_test" "span_1")"
+make_run "run_20260811T091000_ccdd" \
+  "$(fixture_event "error" "system" '{"text":"fail"}' "run_20260811T091000_ccdd" "sess_test" "span_1")"
 OUT=$("$RUNS")
 assert_contains "$OUT" "RUN" "header present"
 assert_contains "$OUT" "run_20260811T090000_aabb" "run id in output"
-assert_row_count "$OUT" 1 "one data row per run"
+assert_contains "$OUT" "run_20260811T091000_ccdd" "error run id in output"
+assert_row_count "$OUT" 2 "one row per run"
 
 desc "human output: zero tokens shows -- placeholder"
 setup_runs
