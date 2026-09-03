@@ -992,11 +992,11 @@ distinct, so this is a set of rules, not one fix:
   is pinned with counts (`jq 'length'` at `tests/test_events.sh:49`, per-field counts at
   `tests/test_sessions.sh:39-42`, `tests/test_runs.sh:45-48`). The table shape is asserted with
   `assert_contains` on a header or a single field (`tests/test_sessions.sh:127-135`,
-  `tests/test_runs.sh:192-201`, `tests/test_events.sh:301-305`), which passes whether the table
+  `tests/test_runs.sh:192-203`, `tests/test_events.sh:301-305`), which passes whether the table
   has one row or fifty. A renderer that duplicates a row, drops one, or repeats the header is
   invisible to a `contains` assertion. Assert the row count alongside the content, and prefer a
   distinctive header or field over an incidental substring for the content half — the
-  `assert_contains "$OUT" "--"` at `tests/test_sessions.sh:135` and `tests/test_runs.sh:201`
+  `assert_contains "$OUT" "--"` at `tests/test_sessions.sh:135` and `tests/test_runs.sh:211`
   also matches flag names. Blank output is a legitimate 0-row assertion, so the existing
   empty-state tests (`tests/test_events.sh:37`, `tests/test_sessions.sh:22`,
   `tests/test_runs.sh:30`) already conform.
