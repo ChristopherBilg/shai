@@ -72,6 +72,16 @@ else
     check "$v" shai-doctor "required var $v"
     check "$v" CLAUDE.md "required var $v"
     check "$v" README.md "required var $v"
+    # `check` greps for the value anywhere in the file, which for a variable NAME is a weak
+    # guarantee: SHAI_API_URL is mentioned 11 times in CLAUDE.md, so the name check passes
+    # even if the one line a reader actually copies is deleted. That is not hypothetical — a
+    # quick-start block exporting only SHAI_API_KEY, so that the `./shai-repl` beneath it
+    # exits 1, shipped on this branch and was invisible to this gate. Checking the runnable
+    # `export VAR=` form instead of the bare name is what closes it: it is still a plain
+    # substring check (no brittle anchoring on prose or section headings), but the only thing
+    # that satisfies it is a line someone can paste.
+    check "export $v=" CLAUDE.md "quick-start exports $v"
+    check "export $v=" README.md "quick-start exports $v"
   done
 fi
 check "$MAX_BYTES" CLAUDE.md "truncation limit"

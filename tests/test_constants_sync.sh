@@ -10,6 +10,15 @@ echo "constants-sync"
 FIX="$(mktemp -d)"
 _CLEANUP_DIRS+=("$FIX")
 
+# fake_exports: the runnable `export VAR=` lines the required-var quick-start checks look for.
+# Those checks grep for the export form rather than the bare variable name, so every fixture
+# meant to be fully synced needs them. Kept separate from each block's constants line so a
+# block that deliberately omits one constant still exports all three, preserving its single
+# cause.
+fake_exports() {
+  printf 'export SHAI_API_KEY=sk-x\nexport SHAI_API_URL=https://example.invalid/v1/chat/completions\nexport SHAI_MODEL=m\n'
+}
+
 # --- fixture source scripts with extractable constants ---
 mkdir -p "$FIX/tests"
 cat >"$FIX/shai-eval" <<'SCRIPT'
@@ -42,9 +51,11 @@ SCRIPT
 cat >"$FIX/CLAUDE.md" <<'EOF'
 SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3, shfmt v4.5.6
 EOF
+fake_exports >>"$FIX/CLAUDE.md"
 cat >"$FIX/README.md" <<'EOF'
 SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, head 666, tail 222
 EOF
+fake_exports >>"$FIX/README.md"
 
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "0" "all constants present → exit 0"
@@ -54,6 +65,7 @@ assert_contains "$OUT" "CONSTANTS SYNC OK" "all constants present → OK banner"
 cat >"$FIX/CLAUDE.md" <<'EOF'
 SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3
 EOF
+fake_exports >>"$FIX/CLAUDE.md"
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from CLAUDE.md → exit 1"
 # Full label+value+file phrase, not just "shfmt version": that label is checked against exactly
@@ -66,6 +78,7 @@ assert_contains "$OUT" "shfmt version (v4.5.6) missing from CLAUDE.md" "missing 
 cat >"$FIX/CLAUDE.md" <<'EOF'
 SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3, shfmt v4.5.6
 EOF
+fake_exports >>"$FIX/CLAUDE.md"
 cat >"$FIX/README.md" <<'EOF'
 no constants here
 EOF
@@ -81,6 +94,7 @@ assert_contains "$OUT" "truncation limit (888) missing from README.md" "missing 
 cat >"$FIX/README.md" <<'EOF'
 SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, head 666, tail 222
 EOF
+fake_exports >>"$FIX/README.md"
 # Keep the pre-existing SHAI_MAX_CONTEXT_BYTES check_config line intact (only SHAI_API_URL is
 # omitted) so this block has a single cause: dropping it too would incidentally also fail the
 # unrelated "doctor context budget" check, which would keep exit 1 and keep "shai-doctor" in the
@@ -127,5 +141,39 @@ SCRIPT
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "partial-refactor missing+=(\"\$var\") → exit 1 (self-maintaining guard fires)"
 assert_contains "$OUT" "did not match every call" "partial-refactor → guard names the sed/call-count mismatch"
+
+# --- var named in prose but no runnable export line → fail (the M5 shape) ---
+# Reproduces the defect the export-form check exists for: a doc can mention a required
+# variable many times in prose and still ship a quick-start block that omits it, so the
+# copy-pasteable example exits 1. Here CLAUDE.md names all three variables (satisfying the
+# bare-name check) and exports only two, which is exactly what shipped on this branch and was
+# invisible to the gate. Restore shai-eval first — the block above left it holding the
+# partial-refactor mutation, so without this the failure could come from the call-count guard
+# instead of the export check.
+cat >"$FIX/shai-eval" <<'SCRIPT'
+missing_config() {
+  [ -n "${SHAI_API_KEY:-}" ] || missing+=(SHAI_API_KEY)
+  [ -n "${SHAI_API_URL:-}" ] || missing+=(SHAI_API_URL)
+  [ -n "${SHAI_MODEL:-}" ] || missing+=(SHAI_MODEL)
+}
+MAX_TOKENS="999"
+SCRIPT
+cat >"$FIX/CLAUDE.md" <<'EOF'
+SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3, shfmt v4.5.6
+export SHAI_API_KEY=sk-x
+export SHAI_MODEL=m
+EOF
+OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
+assert_eq "$?" "1" "named in prose but not exported → exit 1"
+# Full label+value+file phrase: "quick-start exports SHAI_API_URL" is checked against README.md
+# too, which still passes here and prints "... in README.md" — a passing sibling carrying the
+# bare label. Anchoring on "missing from CLAUDE.md" ties this to the one line only the
+# CLAUDE.md-targeted export check can produce.
+assert_contains "$OUT" "quick-start exports SHAI_API_URL (export SHAI_API_URL=) missing from CLAUDE.md" \
+  "named in prose but not exported → names the variable and the file"
+# The bare-name check still passes for that same variable, which is the whole point: the two
+# checks are not redundant, and only the export-form one catches this.
+assert_contains "$OUT" "required var SHAI_API_URL (SHAI_API_URL) in CLAUDE.md" \
+  "named in prose but not exported → the bare-name check still passes (so it could not catch this)"
 
 finish

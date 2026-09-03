@@ -29,8 +29,28 @@ done
 printf '#!/bin/bash\nexit 0\n' >"$FIX/devclone/shai-print"
 chmod +x "$FIX/devclone/shai-print"
 
-# unit_file <unit> <execstart>: write a minimal cmd_install-shaped service file
+# unit_file <unit> <execstart>: write a minimal cmd_install-shaped service file.
+# The Environment= values are quoted because that is what cmd_install actually emits (it
+# routes every value through unit_env_value); an unquoted fixture here would make this
+# helper's "cmd_install-shaped" claim false. legacy_unit_file below covers the other shape.
 unit_file() {
+  cat >"$FIX/units/$1.service" <<EOF
+[Unit]
+Description=shai $1 workflow
+
+[Service]
+Type=oneshot
+ExecStart=$2
+Environment=SHAI_API_KEY="x"
+Environment=SHAI_HOME="$HOME/.shai"
+EOF
+}
+
+# legacy_unit_file <unit> <execstart>: the same unit with UNQUOTED Environment= values, the
+# shape cmd_install emitted before values were escaped. A user upgrading across that change
+# still has units of this shape on disk, so the inspection helpers must classify them
+# identically — they parse ExecStart= only, and this is what pins that.
+legacy_unit_file() {
   cat >"$FIX/units/$1.service" <<EOF
 [Unit]
 Description=shai $1 workflow
@@ -83,6 +103,27 @@ assert_eq "$STATE" "broken" "staleness: deleted script → broken"
 unit_file shai-direct "$FIX/devclone/shai-print"
 STATE=$(unit_install_state "$FIX/units" "$FIX/devclone" shai-direct)
 assert_eq "$STATE" "ok" "staleness: direct script ExecStart shape → ok"
+
+# --- Environment= quoting is irrelevant to classification (both shapes agree) ---
+# Paired positive/negative on the same ExecStart: the quoted shape is what cmd_install writes
+# now, the unquoted shape is what it wrote before values were escaped, and a user upgrading
+# across that change has the latter on disk. Both must classify the same, because these
+# helpers read ExecStart= and nothing else. Not vacuous: the same pair on a stale ExecStart
+# below yields stale for both, so a reader that keyed on Environment= at all would split them.
+unit_file shai-quoted-env "$FIX/current/workflows/heartbeat/run.sh"
+QUOTED_STATE=$(unit_install_state "$FIX/units" "$FIX/current" shai-quoted-env)
+legacy_unit_file shai-legacy-env "$FIX/current/workflows/heartbeat/run.sh"
+LEGACY_STATE=$(unit_install_state "$FIX/units" "$FIX/current" shai-legacy-env)
+assert_eq "$QUOTED_STATE" "ok" "staleness: quoted Environment= values (current install shape) → ok"
+assert_eq "$LEGACY_STATE" "$QUOTED_STATE" \
+  "staleness: unquoted legacy Environment= values classify identically to quoted"
+
+unit_file shai-quoted-stale "$FIX/v2026.08.10/workflows/heartbeat/run.sh"
+legacy_unit_file shai-legacy-stale "$FIX/v2026.08.10/workflows/heartbeat/run.sh"
+assert_eq "$(unit_install_state "$FIX/units" "$FIX/current" shai-quoted-stale)" "stale" \
+  "staleness: quoted values on a stale ExecStart → stale (the pair's negative control)"
+assert_eq "$(unit_install_state "$FIX/units" "$FIX/current" shai-legacy-stale)" "stale" \
+  "staleness: unquoted values on a stale ExecStart → stale"
 
 # --- no ExecStart line → --, and absent service file → -- ---
 # Absence-shaped: paired with the positive controls above — the same-shaped fixtures that

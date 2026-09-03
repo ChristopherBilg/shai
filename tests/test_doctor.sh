@@ -631,6 +631,40 @@ assert_contains "$OUT" "shai-supervise uninstall" "doctor: legacy-env WARN's fix
 SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: legacy-env unit is exactly one warning"
 
+# --- Test 35: quoted Environment= values (the shape cmd_install now writes) → no WARN ---
+# The scan greps for '^Environment=SHAI_API_KEY=' and cmd_install now emits the value quoted
+# (Environment=SHAI_API_KEY="k"), so this pins that the check keys on the prefix and is not
+# accidentally coupled to the unquoted form Test 32 happens to use. Without this, every fixture
+# feeding the unit scan used the pre-quoting shape and a grep tightened to
+# '^Environment=SHAI_API_KEY=[^"]' would warn on every freshly installed unit while the suite
+# stayed green. Negative-shaped, and Test 34 immediately above is its positive control: the
+# same fixture minus the SHAI_API_KEY line does produce the WARN.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
+#                           # subshell does not change it (shai-doctor resolves the same root)
+cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$DIR/shai-print
+Environment=SHAI_API_KEY="k"
+Environment=SHAI_API_URL="https://example.invalid/v1/chat/completions"
+Environment=SHAI_MODEL="m"
+Environment=SHAI_HOME="$HOME/.shai"
+EOF
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: quoted-env unit → exit 0"
+assert_contains "$OUT" "[OK]   shai-heartbeat" "doctor: quoted-env unit reports OK"
+if printf '%s' "$OUT" | grep -q 'missing Environment=SHAI_API_KEY='; then
+  assert_eq "warned" "not-warned" "doctor: quoted-env unit must NOT get the missing-key WARN"
+else
+  assert_eq "not-warned" "not-warned" "doctor: quoted-env unit must NOT get the missing-key WARN"
+fi
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: a fully current unit is zero warnings"
+
 # --- Test 35: no shai units → the section is entirely silent ---
 # Absence-shaped, paired with the positive control in Tests 31-33: the section and its WARNs
 # appear the moment a unit exists, so silence here means "none present", not "never scanned".

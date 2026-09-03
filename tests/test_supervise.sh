@@ -301,6 +301,24 @@ assert_contains "$(cat "$SERVICE")" 'Environment=SHAI_MODEL="my model"' \
 assert_contains "$(cat "$SERVICE")" "Environment=SHAI_HOME=\"$TMP/my home\"" \
   "install: SHAI_HOME containing a space is quoted whole, not truncated"
 
+desc "Environment= values escape a literal quote or backslash"
+
+# The surrounding quotes fix whitespace, but inside them systemd applies C-style escapes, so an
+# unescaped " or \ in the value corrupts it — and unlike the whitespace case, `systemd-analyze
+# verify` reports nothing at all. Verified against real systemd with
+# `systemd-run --user -p 'Environment=SHAI_MODEL=…'`: the unescaped form "say "hi"" sets
+# `say hi` (both quotes swallowed) while the escaped form "say \"hi\"" sets `say "hi"`.
+# Asserting the escaped bytes is the hermetic stand-in for that round trip.
+SHAI_API_KEY='k"ey' SHAI_API_URL="https://example.invalid/v1/chat/completions" \
+  SHAI_MODEL='say "hi"' SHAI_HOME="$TMP/back\\slash" \
+  "$DIR/shai-supervise" install workflows/heartbeat/run.sh >/dev/null 2>&1
+assert_contains "$(cat "$SERVICE")" 'Environment=SHAI_MODEL="say \"hi\""' \
+  "install: a double quote in the value is escaped, not left to swallow the value"
+assert_contains "$(cat "$SERVICE")" 'Environment=SHAI_API_KEY="k\"ey"' \
+  "install: a double quote in the API key is escaped"
+assert_contains "$(cat "$SERVICE")" "Environment=SHAI_HOME=\"$TMP/back\\\\slash\"" \
+  "install: a backslash in the value is doubled so systemd yields one"
+
 desc "install refuses when any required variable is unset"
 
 # assert_fails applies cleanly here: shai-supervise install reads no stdin.

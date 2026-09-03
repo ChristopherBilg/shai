@@ -55,6 +55,15 @@ cmd_install() {
   name="$(unit_name "$script")"
   shai_home="${SHAI_HOME:-$HOME/.shai}"
 
+  # Escaped once here rather than inline in the heredoc: unit_env_value handles both quoting
+  # hazards (whitespace needs the surrounding quotes, and a literal " or \ inside them needs
+  # escaping), and systemd corrupts the value silently for either — see lib/units.sh.
+  local esc_key esc_url esc_model esc_home
+  esc_key="$(unit_env_value "$SHAI_API_KEY")"
+  esc_url="$(unit_env_value "$SHAI_API_URL")"
+  esc_model="$(unit_env_value "$SHAI_MODEL")"
+  esc_home="$(unit_env_value "$shai_home")"
+
   mkdir -p "$UNIT_DIR"
 
   cat >"$UNIT_DIR/$name.service" <<EOF
@@ -64,10 +73,10 @@ Description=shai $name workflow
 [Service]
 Type=oneshot
 ExecStart=$script_path
-Environment=SHAI_API_KEY="$SHAI_API_KEY"
-Environment=SHAI_API_URL="$SHAI_API_URL"
-Environment=SHAI_MODEL="$SHAI_MODEL"
-Environment=SHAI_HOME="$shai_home"
+Environment=SHAI_API_KEY="$esc_key"
+Environment=SHAI_API_URL="$esc_url"
+Environment=SHAI_MODEL="$esc_model"
+Environment=SHAI_HOME="$esc_home"
 EOF
   chmod 600 "$UNIT_DIR/$name.service"
 
