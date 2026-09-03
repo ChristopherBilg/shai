@@ -41,6 +41,12 @@ jobs:
           mkdir "$STAGING"
           git archive HEAD | tar x -C "$STAGING"
           echo "$VERSION" > "${STAGING}/VERSION"
+          # REPO is what wf_suggest_repo files post-workflow suggestions on. An installed
+          # tree has no .git, so it cannot derive this itself; taking it from
+          # github.repository means it is never typed by hand and a fork's releases carry
+          # the fork, not this repo. Untracked like VERSION, so a clone has neither and
+          # falls back to its own origin remote.
+          echo "${{ github.repository }}" > "${STAGING}/REPO"
           tar czf "${STAGING}.tar.gz" "$STAGING"
 
       - name: Create GitHub Release

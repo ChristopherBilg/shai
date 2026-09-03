@@ -686,11 +686,24 @@ primary tasks succeed. Deliberately **not** called by `release_notes`: its prima
 tool-less over a session containing untrusted external data, and its stdout is the generated
 markdown.
 
-The target repo comes from `SHAI_SUGGEST_REPO` when set, else from the `origin` remote of the
-install directory — but only when that directory is itself the top of the work tree, since
-release installs have no `.git` and git's parent-directory discovery would otherwise resolve
-an unrelated ancestor repo. Either way the value must match `OWNER/REPO`; anything else skips
-the step. `wf_suggest` **requires** an existing `SHAI_POLICY_OVERLAY` (the co-located
+The target repo (`wf_suggest_repo`) has three sources, in order: `SHAI_SUGGEST_REPO` when set;
+then `$DIR/REPO`, baked into the release tarball next to `VERSION` by `release.yml` from
+`${{ github.repository }}`; then the `origin` remote of the install directory — that last one
+only when the directory is itself the top of the work tree, since release installs have no
+`.git` and git's parent-directory discovery would otherwise resolve an unrelated ancestor repo
+(a dotfiles repo at `$HOME` is the common case). The `REPO` file exists because that guard
+otherwise leaves a release install — the documented primary install method — with nothing to
+derive from, silently skipping suggestions on every run. Being taken from
+`${{ github.repository }}` at build time, it is never typed by hand and a fork's releases carry
+the fork rather than filing issues upstream. Like `VERSION` it is untracked, so a clone has
+neither and falls through to its own `origin`; `tests/docs.sh` is fail-closed on unrecognized
+file types, so a `REPO` file committed by accident fails CI rather than silently redirecting
+every install's suggestions. The value must match `OWNER/REPO` in all three cases — a corrupt
+or truncated `REPO` file is refused rather than falling back to the ancestor-repo guess.
+Because the skip is otherwise silent until a workflow ends, `shai-doctor` reports an
+undetectable repo as a **`[WARN]`** naming the fix rather than a green `[OK]`; the warning is
+suppressed under `SHAI_SUGGEST=0`.
+`wf_suggest` **requires** an existing `SHAI_POLICY_OVERLAY` (the co-located
 `<name>/policy.json`) and never synthesizes one — overlay rules supersede base rules including
 `deny`, so a fabricated "allow gh" overlay would override an explicit user denial. Set
 `SHAI_SUGGEST=0` to disable the step (and its extra LLM call) everywhere. Non-fatal by design:
@@ -974,6 +987,19 @@ distinct, so this is a set of rules, not one fix:
   "not found"), the assertion is not discriminating. Prefer a prefix or message this project
   owns (`error:` markers, named section headers, a marker line) so a broken implementation
   cannot pass by matching someone else's output.
+- **A test that asserts table-mode content must also assert the row count.** The observability
+  filters render two shapes — `--json` and an aligned human table — and only the `--json` shape
+  is pinned with counts (`jq 'length'` at `tests/test_events.sh:49`, per-field counts at
+  `tests/test_sessions.sh:39-42`, `tests/test_runs.sh:45-48`). The table shape is asserted with
+  `assert_contains` on a header or a single field (`tests/test_sessions.sh:127-135`,
+  `tests/test_runs.sh:192-201`, `tests/test_events.sh:301-305`), which passes whether the table
+  has one row or fifty. A renderer that duplicates a row, drops one, or repeats the header is
+  invisible to a `contains` assertion. Assert the row count alongside the content, and prefer a
+  distinctive header or field over an incidental substring for the content half — the
+  `assert_contains "$OUT" "--"` at `tests/test_sessions.sh:135` and `tests/test_runs.sh:201`
+  also matches flag names. Blank output is a legitimate 0-row assertion, so the existing
+  empty-state tests (`tests/test_events.sh:37`, `tests/test_sessions.sh:22`,
+  `tests/test_runs.sh:30`) already conform.
 - **Guard branches get unit tests, not integration tests.** A defensive branch for a condition
   the platform cannot produce cannot be exercised end-to-end — bash resets caught traps in
   every subshell form, so an inherited `EXIT` trap never fires inside `$( )`, `( )`, `&`, or a

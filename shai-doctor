@@ -153,13 +153,33 @@ check_config SHAI_SUGGEST "1"
 # SHAI_SUGGEST_REPO has no default: when unset, wf_suggest_repo resolves it from the install
 # dir's origin remote. Report what the detection finds so the section always shows the
 # effective value, not just the mechanism.
+#
+# Detection legitimately fails on a release install: $DIR has no .git of its own, so git's
+# parent-directory discovery returns an unrelated ancestor work tree, which wf_suggest_repo
+# refuses rather than file issues on the wrong repo. That silently disables post-workflow
+# suggestions for every run, and until this warning existed the only signal was a
+# "cannot derive shai repo" line at the end of a real workflow. WARN, never FAIL: suggestions
+# are non-fatal by design (wf_suggest returns 0 on every failure path), so this gets the same
+# degraded-but-usable treatment as the completions warnings, and doctor exits on FAIL alone.
+# Silent under SHAI_SUGGEST=0 — the user opted out, so an undetectable repo changes nothing.
 suggest_repo_label="unset — auto-detected"
+suggest_repo_undetected=0
 if [ -z "${SHAI_SUGGEST_REPO:-}" ]; then
   if detected=$(wf_suggest_repo 2>/dev/null); then
     suggest_repo_label="unset — auto-detected: $detected"
+  else
+    suggest_repo_undetected=1
   fi
 fi
-check_config SHAI_SUGGEST_REPO "" "$suggest_repo_label"
+if [ "$suggest_repo_undetected" = "0" ]; then
+  check_config SHAI_SUGGEST_REPO "" "$suggest_repo_label"
+elif [ "${SHAI_SUGGEST:-1}" = "0" ]; then
+  check_config SHAI_SUGGEST_REPO "" "unset — not auto-detectable; suggestions off (SHAI_SUGGEST=0)"
+else
+  printf '  [WARN] SHAI_SUGGEST_REPO unset and not auto-detectable: suggestions will be skipped\n' >&2
+  printf '         (set SHAI_SUGGEST_REPO=OWNER/REPO — a release install has no .git of its own)\n' >&2
+  WARNINGS=$((WARNINGS + 1))
+fi
 
 # Completions are informational: a missing completion file degrades tab completion only,
 # so it is a warning, never an error. The paths match `shai-completions install`'s

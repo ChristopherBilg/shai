@@ -6,6 +6,10 @@
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# wf_suggest_repo, for the REPO-file resolution assertion in the install test below
+# (suggest_repo_of from lib.sh wraps the call with a function-local DIR).
+# shellcheck source=lib/workflow.sh
+source "$DIR/lib/workflow.sh"
 
 echo "install.sh"
 
@@ -56,6 +60,17 @@ assert_eq "$([ -f "$FAKE_HOME/.local/share/shai/v2026.01.01/shai-doctor" ] && ec
   "install: shai-doctor extracted"
 assert_eq "$([ -f "$FAKE_HOME/.local/share/shai/v2026.01.01/VERSION" ] && echo y)" "y" \
   "install: VERSION extracted"
+assert_eq "$(cat "$FAKE_HOME/.local/share/shai/v2026.01.01/REPO")" "Fixture/ReleaseRepo" \
+  "install: REPO extracted from the tarball (baked next to VERSION by the release)"
+
+# --- Test: the installed tree resolves wf_suggest_repo from its baked-in REPO file ---
+# End-to-end for the release.yml → tarball → install plumbing: the fixture bakes REPO next
+# to VERSION, install.sh extracts the tarball wholesale, and wf_suggest_repo must read the
+# file back — the release-install path a release tarball exists to make work. The REPO
+# branch fires before any git discovery, so the result does not depend on whether an
+# ancestor of the fake HOME happens to be a work tree.
+assert_eq "$(suggest_repo_of "$FAKE_HOME/.local/share/shai/v2026.01.01")" "Fixture/ReleaseRepo" \
+  "install: wf_suggest_repo resolves from the installed tree's REPO file"
 assert_eq "$([ -x "$FAKE_HOME/.local/bin/shai-repl" ] && echo y)" "y" \
   "install: shai-repl wrapper is executable"
 assert_eq "$([ -L "$FAKE_HOME/.local/bin/shai-repl" ] && echo y || echo n)" "n" \

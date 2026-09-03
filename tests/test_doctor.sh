@@ -299,6 +299,68 @@ chmod +x "$STUB/git"
 ) || FAILED=1
 rm -f "$STUB/git"
 
+# --- Test 13b: undetectable suggest repo is a WARN, never a green [OK] ---
+# The release-install case: $DIR has no .git of its own, so git's parent-directory discovery
+# hands back an unrelated ancestor work tree (e.g. a dotfiles repo at $HOME), which
+# wf_suggest_repo refuses rather than file issues on the wrong repo. Post-workflow suggestions
+# are then skipped for every run, and the only prior signal was a warning at the end of a real
+# workflow — so doctor must report it up front.
+# The stub differs from Test 13's above in exactly one respect: the toplevel it reports is not
+# the -C directory. That test asserts the "(unset — auto-detected: …)" OK label on success;
+# this one asserts the WARN on failure, so the two sit adjacent and the contrast is visible.
+cat >"$STUB/git" <<'STUBEOF'
+#!/bin/bash
+# stub git: report a toplevel that is NOT the -C dir, reproducing what a release install under
+# ~/.local/share/shai/<version>/ sees when an ancestor directory ($HOME) is itself a work tree
+cwd=""
+if [ "$1" = "-C" ]; then cwd="$2"; shift 2; fi
+case "$1" in
+  rev-parse) echo "/not/the/install/dir" ;;
+  remote) echo "https://github.com/Someone/dotfiles.git" ;;
+esac
+STUBEOF
+chmod +x "$STUB/git"
+
+(
+  unset SHAI_SUGGEST SHAI_SUGGEST_REPO 2>/dev/null || true
+  OUT=$(run_doctor)
+  RC=$?
+  # Discriminates WARN from FAIL: an implementation that counted this as an error would exit 1.
+  assert_eq "$RC" "0" "doctor: undetectable suggest repo → exit 0 (WARN, not fatal)"
+  assert_contains "$OUT" "[WARN] SHAI_SUGGEST_REPO" \
+    "doctor: undetectable suggest repo shows WARN"
+  assert_contains "$OUT" "suggestions will be skipped" \
+    "doctor: names the consequence, not just the unset var"
+  assert_contains "$OUT" "set SHAI_SUGGEST_REPO=OWNER/REPO" \
+    "doctor: names the fix, matching the completions warnings' (run: …) idiom"
+  # The defect this pins: the label was computed before detection ran and overwritten only on
+  # success, so a machine that structurally cannot detect the repo still printed a green
+  # "[OK]   SHAI_SUGGEST_REPO". Asserting on our own two-space-padded marker, not a bare
+  # "[OK]", so another section's OK line cannot satisfy it.
+  assert_not_contains "$OUT" "[OK]   SHAI_SUGGEST_REPO" \
+    "doctor: undetectable suggest repo must NOT also report [OK]"
+  SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+  assert_eq "$SUMMARY" "0 errors, 1 warning" \
+    "doctor: undetectable suggest repo is exactly one warning"
+  exit "$FAILED"
+) || FAILED=1
+
+# --- Test 13c: SHAI_SUGGEST=0 suppresses the warning (the repo is irrelevant when opted out) ---
+# Positive control for 13b: identical failing git stub, one variable different. Without this,
+# 13b's WARN could not be distinguished from a warning that fires unconditionally.
+(
+  unset SHAI_SUGGEST_REPO 2>/dev/null || true
+  export SHAI_SUGGEST=0
+  OUT=$(run_doctor)
+  assert_not_contains "$OUT" "[WARN] SHAI_SUGGEST_REPO" \
+    "doctor: SHAI_SUGGEST=0 suppresses the undetectable-repo WARN"
+  SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+  assert_eq "$SUMMARY" "0 errors, 0 warnings" \
+    "doctor: SHAI_SUGGEST=0 adds no warnings when the repo is undetectable"
+  exit "$FAILED"
+) || FAILED=1
+rm -f "$STUB/git"
+
 # --- Test 14: Configuration section shows explicit values (no "(default)" tag) ---
 (
   export SHAI_MODEL="custom-model"
