@@ -537,6 +537,8 @@ Description=shai shai-heartbeat workflow
 Type=oneshot
 ExecStart=$FIX/oldinstall/workflows/heartbeat/run.sh
 Environment=SHAI_API_KEY=x
+Environment=SHAI_API_URL=https://example.invalid/v1/chat/completions
+Environment=SHAI_MODEL=m
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 OUT=$(run_doctor)
@@ -560,7 +562,7 @@ printf '[Unit]\nDescription=shai shai-heartbeat workflow\n\n[Service]\nType=ones
 # shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
 #                           # subshell does not change it (shai-doctor resolves the same root)
 printf 'ExecStart=%s/shai-print\n' "$DIR" >>"$SHAI_UNIT_DIR/shai-heartbeat.service"
-printf 'Environment=SHAI_API_KEY=x\nEnvironment=SHAI_HOME=$HOME/.shai\n' \
+printf 'Environment=SHAI_API_KEY=x\nEnvironment=SHAI_API_URL=https://example.invalid/v1/chat/completions\nEnvironment=SHAI_MODEL=m\nEnvironment=SHAI_HOME=$HOME/.shai\n' \
   >>"$SHAI_UNIT_DIR/shai-heartbeat.service"
 OUT=$(run_doctor)
 RC=$?
@@ -585,6 +587,8 @@ Description=shai shai-heartbeat workflow
 Type=oneshot
 ExecStart=$FIX/pruned-install/workflows/heartbeat/run.sh
 Environment=SHAI_API_KEY=x
+Environment=SHAI_API_URL=https://example.invalid/v1/chat/completions
+Environment=SHAI_MODEL=m
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 OUT=$(run_doctor)
@@ -605,8 +609,8 @@ assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: broken unit is exactly one w
 # OLD_PROVIDER_KEY line instead) used to be reported as a plain [OK] and nothing else — even though the
 # workflow fails on every tick (worse for issue_dispatcher: it removes the queue label before
 # running). Positive control is Test 32 above: the identical fixture shape but with
-# Environment=SHAI_API_KEY= instead produces no such WARN, so this WARN is attributable to the
-# missing variable, not to the fixture shape itself.
+# all three Environment= provider lines instead produces no such WARN, so this WARN is
+# attributable to the missing variables, not to the fixture shape itself.
 # shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
 #                           # subshell does not change it (shai-doctor resolves the same root)
 cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
@@ -623,8 +627,8 @@ OUT=$(run_doctor)
 RC=$?
 assert_eq "$RC" "0" "doctor: legacy-env unit → exit 0 (WARN, not fatal)"
 assert_contains "$OUT" "[OK]   shai-heartbeat" "doctor: legacy-env unit still reports OK for its (current) ExecStart"
-assert_contains "$OUT" "[WARN] shai-heartbeat missing Environment=SHAI_API_KEY=" \
-  "doctor: legacy-env unit gets its own WARN despite the OK ExecStart state"
+assert_contains "$OUT" "[WARN] shai-heartbeat missing Environment= for SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL" \
+  "doctor: legacy-env unit gets its own WARN naming every missing provider var"
 assert_contains "$OUT" "predates the required provider vars" \
   "doctor: legacy-env WARN explains why (predates the required provider vars)"
 assert_contains "$OUT" "shai-supervise uninstall" "doctor: legacy-env WARN's fix hint recommends reinstalling"
@@ -657,7 +661,7 @@ OUT=$(run_doctor)
 RC=$?
 assert_eq "$RC" "0" "doctor: quoted-env unit → exit 0"
 assert_contains "$OUT" "[OK]   shai-heartbeat" "doctor: quoted-env unit reports OK"
-if printf '%s' "$OUT" | grep -q 'missing Environment=SHAI_API_KEY='; then
+if printf '%s' "$OUT" | grep -q 'missing Environment= for'; then
   assert_eq "warned" "not-warned" "doctor: quoted-env unit must NOT get the missing-key WARN"
 else
   assert_eq "not-warned" "not-warned" "doctor: quoted-env unit must NOT get the missing-key WARN"
@@ -665,7 +669,42 @@ fi
 SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: a fully current unit is zero warnings"
 
-# --- Test 35: no shai units → the section is entirely silent ---
+# --- Test 36: partially migrated unit (key renamed by hand, URL/model absent) → WARN (Copilot) ---
+# The gap a key-only check left: renaming the old provider-key line to SHAI_API_KEY in place
+# is the obvious manual migration, and it yields a unit carrying the key but neither the URL nor the
+# model. Every tick of it fails with "SHAI_API_URL, SHAI_MODEL are not set", yet a check that
+# looked only for the key printed a bare [OK] — indistinguishable from the fully current unit
+# in Test 35. The two negative assertions below are the load-bearing pair: the message must
+# name the two variables that are actually absent and must NOT name the one that is present,
+# so a check that simply warns whenever anything looks off cannot pass this.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
+#                           # subshell does not change it (shai-doctor resolves the same root)
+cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$DIR/shai-print
+Environment=SHAI_API_KEY="k"
+Environment=SHAI_HOME="$HOME/.shai"
+EOF
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: partially migrated unit → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" "[WARN] shai-heartbeat missing Environment= for SHAI_API_URL, SHAI_MODEL" \
+  "doctor: partial-migration WARN names exactly the absent vars, in declaration order"
+if printf '%s' "$OUT" | grep -q 'missing Environment= for SHAI_API_KEY'; then
+  assert_eq "named-present-var" "named-only-absent-vars" \
+    "doctor: partial-migration WARN must NOT name the variable the unit does carry"
+else
+  assert_eq "named-only-absent-vars" "named-only-absent-vars" \
+    "doctor: partial-migration WARN must NOT name the variable the unit does carry"
+fi
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: partially migrated unit is exactly one warning"
+
+# --- Test 37: no shai units → the section is entirely silent ---
 # Absence-shaped, paired with the positive control in Tests 31-33: the section and its WARNs
 # appear the moment a unit exists, so silence here means "none present", not "never scanned".
 rm -f "$SHAI_UNIT_DIR"/shai-*.service

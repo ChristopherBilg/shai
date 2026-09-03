@@ -229,14 +229,31 @@ for f in "$unit_scan_dir"/shai-*.service; do
       ;;
   esac
   # A unit installed by pre-branch shai (or hand-edited) can have a perfectly current
-  # ExecStart= (state "ok" above) while still carrying only the old Environment= lines —
-  # `shai-supervise repoint --all` never touches Environment=, so that case is invisible to
-  # the ExecStart-based classification above and would otherwise print a bare [OK]. Checked
-  # independently of $state (ok/stale/broken alike) so it fires alongside either report
-  # instead of being masked by it. WARN, not FAIL: the unit still exists, it just fails on
-  # every tick — the same degraded-but-usable treatment as the rest of this section.
-  if ! grep -q '^Environment=SHAI_API_KEY=' "$f"; then
-    printf '  [WARN] %s missing Environment=SHAI_API_KEY= (unit predates the required provider vars)\n' "$unit" >&2
+  # ExecStart= (state "ok" above) while its Environment= lines are missing some or all of the
+  # required provider variables — `shai-supervise repoint --all` never touches Environment=,
+  # so that case is invisible to the ExecStart-based classification above and would otherwise
+  # print a bare [OK]. Checked independently of $state (ok/stale/broken alike) so it fires
+  # alongside either report instead of being masked by it. WARN, not FAIL: the unit still
+  # exists, it just fails on every tick — the same degraded-but-usable treatment as the rest
+  # of this section.
+  #
+  # All three are checked, not just the key. A unit whose old provider-key line was renamed
+  # to SHAI_API_KEY by hand — the obvious manual migration, and the one a reader of the old
+  # README would attempt — carries the key but neither the URL nor the model, and a key-only
+  # check reported that as a bare [OK], indistinguishable from a fully current unit, while
+  # every tick failed with "SHAI_API_URL, SHAI_MODEL are not set". Naming the missing
+  # variables is what makes the warning actionable rather than merely alarming.
+  unit_missing=()
+  for required_var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+    grep -q "^Environment=$required_var=" "$f" || unit_missing+=("$required_var")
+  done
+  if [ "${#unit_missing[@]}" -gt 0 ]; then
+    # Same ", "-join idiom as shai-eval's missing_config, so a user who sees this warning and
+    # then sees the runtime error event reads one message shape, not two.
+    unit_missing_names=$(printf ', %s' "${unit_missing[@]}")
+    unit_missing_names="${unit_missing_names#, }"
+    printf '  [WARN] %s missing Environment= for %s (unit predates the required provider vars, or was hand-edited)\n' \
+      "$unit" "$unit_missing_names" >&2
     printf '         fix: reinstall this unit — shai-supervise uninstall <script> && shai-supervise install <script> [--interval ...] (repoint only rewrites ExecStart=)\n' >&2
     WARNINGS=$((WARNINGS + 1))
   fi
