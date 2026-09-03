@@ -35,6 +35,7 @@ desc "empty state: no output, exit 0"
 setup_events
 OUT=$("$EVENTS" 2>/dev/null)
 assert_eq "$OUT" "" "empty dir produces no output"
+assert_row_count "$OUT" 0 "empty dir produces 0 rows"
 
 desc "empty state: --json produces empty array"
 setup_events
@@ -303,6 +304,7 @@ assert_contains "$OUT" "TYPE" "TYPE header present"
 assert_contains "$OUT" "SOURCE" "SOURCE header present"
 assert_contains "$OUT" "SUMMARY" "SUMMARY header present"
 assert_contains "$OUT" "print_file(" "tool call rendered as name(...)"
+assert_row_count "$OUT" 2 "one data row per event"
 if [[ "$OUT" == *"TAILMARKER"* ]]; then
   echo -e "  ${RED}✗${NC} long content is truncated (~80 chars)"
   FAILED=1
@@ -346,6 +348,7 @@ SID="sess_20260811T090000_aabb"
 make_mixed_session "$SID"
 OUT=$("$EVENTS" --type error --source user)
 assert_eq "$OUT" "" "no matches -> no output"
+assert_row_count "$OUT" 0 "no matches -> 0 rows"
 
 desc "invalid args: exit 1"
 assert_fails 1 "error: unknown option: --bogus" "unknown flag" -- "$EVENTS" --bogus

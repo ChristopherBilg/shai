@@ -20,6 +20,7 @@ desc "empty state: no output"
 setup_sessions
 OUT=$("$SESSIONS" 2>/dev/null)
 assert_eq "$OUT" "" "empty dir produces no output"
+assert_row_count "$OUT" 0 "empty dir produces 0 rows"
 
 desc "empty state: --json produces empty array"
 setup_sessions
@@ -126,6 +127,7 @@ fixture_event "message" "user" '{"text":"hello"}' "run_1" "$SID" "span_1" >"$SHA
 OUT=$("$SESSIONS")
 assert_contains "$OUT" "SESSION" "header present"
 assert_contains "$OUT" "$SID" "session id in output"
+assert_row_count "$OUT" 1 "one data row per session"
 
 desc "human output: no api/meta shows -- placeholders"
 setup_sessions
@@ -133,6 +135,7 @@ SID="sess_20260810T140000_aabbccdd"
 printf '{"type":"message","source":"user","payload":{"text":"old"}}\n' >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$SESSIONS")
 assert_contains "$OUT" "--" "human output shows -- for missing runs/tokens"
+assert_row_count "$OUT" 1 "one data row"
 
 desc "invalid args: each error branch asserts its distinct message"
 assert_fails 1 "error: --recent requires a value" "--recent missing value" -- "$SESSIONS" --recent
