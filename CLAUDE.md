@@ -690,7 +690,11 @@ The target repo comes from `SHAI_SUGGEST_REPO` when set, else from the `origin` 
 install directory — but only when that directory is itself the top of the work tree, since
 release installs have no `.git` and git's parent-directory discovery would otherwise resolve
 an unrelated ancestor repo. Either way the value must match `OWNER/REPO`; anything else skips
-the step. `wf_suggest` **requires** an existing `SHAI_POLICY_OVERLAY` (the co-located
+the step. Because that skip is silent until a workflow ends, `shai-doctor` reports an
+undetectable repo as a **`[WARN]`** naming the fix rather than a green `[OK]` — a release
+install can never derive it, so on those hosts `SHAI_SUGGEST_REPO` is the only thing that
+enables suggestions. The warning is suppressed under `SHAI_SUGGEST=0`.
+`wf_suggest` **requires** an existing `SHAI_POLICY_OVERLAY` (the co-located
 `<name>/policy.json`) and never synthesizes one — overlay rules supersede base rules including
 `deny`, so a fabricated "allow gh" overlay would override an explicit user denial. Set
 `SHAI_SUGGEST=0` to disable the step (and its extra LLM call) everywhere. Non-fatal by design:
