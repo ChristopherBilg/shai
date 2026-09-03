@@ -240,10 +240,6 @@ fixture_event() {
      + (if $api == null then {} else {api:$api} end)'
 }
 
-# The three required provider variables. DEEPSEEK_API_KEY stays exported until the last task
-# of this migration: shai-supervise and tools/ci still read it, and dropping it early would
-# turn a staged rename into 30 simultaneously red suites.
-export DEEPSEEK_API_KEY="test-key"
 export SHAI_API_KEY="test-key"
 # .invalid is reserved by RFC 2606 and can never resolve, so a stub-bypass bug surfaces as a
 # DNS failure rather than a real request to somebody's endpoint.
