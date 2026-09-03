@@ -63,6 +63,8 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "recent 1 count"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].session_id')" "$S2" "recent 1 is latest"
 OUT=$("$SESSIONS" --recent 1)
 assert_contains "$OUT" "$S2" "recent 1 keeps the later session"
+# Absence assertion (mutation-checked: with the --recent slice removed — keeps
+# every session — this and the row-count assertion below both go red).
 assert_not_contains "$OUT" "$S1" "recent 1 drops the earlier session"
 assert_row_count "$OUT" 1 "recent 1 emits one data row"
 
@@ -142,11 +144,14 @@ SID="sess_20260810T140000_aabbccdd"
 printf '{"type":"message","source":"user","payload":{"text":"old"}}\n' >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$SESSIONS")
 assert_contains "$OUT" "SESSION" "header present"
-# The RUNS/TOKENS columns are the last two fields of the single data row (the
-# STARTED timestamp contains a space, so early field positions shift); a blanket
-# `contains "--"` would also match flag names, so pin the two columns directly.
-assert_eq "$(printf '%s\n' "$OUT" | awk 'NR==2 {print $(NF-1)}')" "--" "missing runs renders as --"
-assert_eq "$(printf '%s\n' "$OUT" | awk 'NR==2 {print $NF}')" "--" "missing tokens renders as --"
+# Assert the whole data row instead of the last two awk fields: RUNS/TOKENS are
+# the final columns today, but $(NF-1)/$NF silently re-target the wrong fields
+# if a column is ever appended after TOKENS, and the STARTED timestamp's space
+# (two awk fields) breaks header-position mapping. Whitespace is collapsed so
+# the assertion tracks the column sequence, not the renderer's padding; a
+# blanket `contains "--"` would also match flag names, so it is not used.
+assert_eq "$(printf '%s\n' "$OUT" | awk 'NR==2 {$1=$1; print}')" \
+  "$SID 2026-08-10 14:00 1 -- --" "missing runs/tokens render as --"
 assert_row_count "$OUT" 1 "one data row"
 
 desc "invalid args: each error branch asserts its distinct message"
