@@ -1,7 +1,8 @@
 #!/bin/bash
 # test_lib.sh — unit tests for the assertion helpers in tests/lib.sh
 # Covers: assert_fails — empty-fragment usage error, command skipped, literal fragment match;
-#         assert_row_count — blank output is 0 rows, header excluded, exact count enforced
+#         assert_row_count — blank/whitespace-only output is 0 rows, header excluded, exact
+#                            count enforced
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -62,6 +63,22 @@ desc "assert_row_count: blank output is red when a nonzero count is expected (in
   exit "$FAILED"
 )
 assert_eq "$?" "1" "blank output with expected 1 flips FAILED"
+
+desc "assert_row_count: whitespace-only output counts as 0 rows"
+(
+  FAILED=0
+  assert_row_count $'\n' 0 "whitespace-only output is 0 rows"
+  exit "$FAILED"
+)
+assert_eq "$?" "0" "whitespace-only output with expected 0 passes"
+
+desc "assert_row_count: whitespace-only output is red when a nonzero count is expected (inner ✗ expected)"
+(
+  FAILED=0
+  assert_row_count $'\n' 1 "whitespace-only output cannot be 1 row"
+  exit "$FAILED"
+)
+assert_eq "$?" "1" "whitespace-only output with expected 1 flips FAILED"
 
 desc "assert_row_count: header-only output counts as 0 rows"
 (
