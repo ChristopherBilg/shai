@@ -28,6 +28,7 @@ desc "empty state: no output"
 setup_runs
 OUT=$("$RUNS" 2>/dev/null)
 assert_eq "$OUT" "" "empty dir no output"
+assert_row_count "$OUT" 0 "empty dir produces 0 rows"
 
 desc "empty state: --json produces empty array"
 setup_runs
@@ -191,6 +192,7 @@ make_run "run_20260811T090000_aabb" \
 OUT=$("$RUNS")
 assert_contains "$OUT" "RUN" "header present"
 assert_contains "$OUT" "run_20260811T090000_aabb" "run id in output"
+assert_row_count "$OUT" 1 "one data row per run"
 
 desc "human output: zero tokens shows -- placeholder"
 setup_runs
@@ -199,6 +201,7 @@ make_run "run_20260811T090000_notoks" \
     "run_20260811T090000_notoks" "sess_test" "span_1")"
 OUT=$("$RUNS")
 assert_contains "$OUT" "--" "human output shows -- for zero tokens"
+assert_row_count "$OUT" 1 "one data row"
 
 desc "--after: filters out runs before the date"
 setup_runs

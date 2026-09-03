@@ -1,6 +1,7 @@
 #!/bin/bash
 # test_lib.sh — unit tests for the assertion helpers in tests/lib.sh
-# Covers: assert_fails — empty-fragment usage error, command skipped, literal fragment match
+# Covers: assert_fails — empty-fragment usage error, command skipped, literal fragment match;
+#         assert_row_count — blank output is 0 rows, header excluded, exact count enforced
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -41,5 +42,49 @@ desc "assert_fails: glob-style fragment cannot match unrelated stderr (inner ✗
   exit "$FAILED"
 )
 assert_eq "$?" "1" "a glob-interpreted fragment would false-pass; literal match fails"
+
+# --- assert_row_count: blank output is 0 rows, header excluded, count must be exact ---
+# This suite runs each failing-direction probe in a subshell so the inner ✗ (which flips
+# FAILED) is itself the assertion. A counting helper that cannot fail is the exact defect
+# this helper exists to prevent (CLAUDE.md, "no unfalsifiable assertions").
+desc "assert_row_count: blank output counts as 0 rows"
+(
+  FAILED=0
+  assert_row_count "" 0 "blank output is 0 rows"
+  exit "$FAILED"
+)
+assert_eq "$?" "0" "blank output with expected 0 passes"
+
+desc "assert_row_count: blank output is red when a nonzero count is expected (inner ✗ expected)"
+(
+  FAILED=0
+  assert_row_count "" 1 "blank output cannot be 1 row"
+  exit "$FAILED"
+)
+assert_eq "$?" "1" "blank output with expected 1 flips FAILED"
+
+desc "assert_row_count: header-only output counts as 0 rows"
+(
+  FAILED=0
+  assert_row_count "SESSION" 0 "header-only table has 0 data rows"
+  exit "$FAILED"
+)
+assert_eq "$?" "0" "header line alone counts as 0"
+
+desc "assert_row_count: header excluded, one data row"
+(
+  FAILED=0
+  assert_row_count $'SESSION\tSTARTED\nsess_1\t2026-08-11 12:00' 1 "one data row below the header"
+  exit "$FAILED"
+)
+assert_eq "$?" "0" "header + 1 data row counts as 1"
+
+desc "assert_row_count: count off by one goes red (inner ✗ expected)"
+(
+  FAILED=0
+  assert_row_count $'SESSION\tSTARTED\nsess_1\t2026-08-11 12:00' 2 "two rows when only one exists"
+  exit "$FAILED"
+)
+assert_eq "$?" "1" "an over-counted table flips FAILED"
 
 finish

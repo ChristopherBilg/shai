@@ -72,6 +72,18 @@ assert_fails() {
   assert_contains "$err" "$frag" "$desc (stderr)"
 }
 
+# assert_row_count <output> <expected> <description>: assert the table in <output> has exactly
+# <expected> data rows, excluding the header line. Blank output counts as 0 rows.
+assert_row_count() {
+  local out="$1" expected="$2" desc="$3"
+  local n=0
+  if [ -n "$out" ]; then
+    n=$(printf '%s\n' "$out" | grep -c .)
+    n=$((n - 1)) # drop the header line
+  fi
+  assert_eq "$n" "$expected" "$desc"
+}
+
 _CLEANUP_DIRS=()
 _cleanup() {
   local d
