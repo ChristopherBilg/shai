@@ -146,6 +146,48 @@ _CLEANUP_DIRS+=("$TMP4")
   exit "$FAILED"
 ) || FAILED=1
 
+# --- wf_suggest_repo: the REPO file a release tarball bakes in ---
+# A release install has no .git of its own, so git discovery resolves an unrelated ancestor
+# work tree and wf_suggest_repo refuses it — leaving no way to derive the repo at all. The
+# release tarball therefore bakes OWNER/REPO into $DIR/REPO next to VERSION (release.yml).
+# The git stub below reports a toplevel that is NOT the install dir, so discovery cannot
+# succeed here: reading the file is the only way these assertions can pass.
+INSTALL_FIXTURE="$(mktemp -d)"
+_CLEANUP_DIRS+=("$INSTALL_FIXTURE")
+
+# shellcheck disable=SC2030,SC2031
+(
+  source "$DIR/lib/workflow.sh"
+  export STUB_TOPLEVEL="/not/the/install/dir"
+  export STUB_REMOTE="https://github.com/Someone/dotfiles.git"
+  unset SHAI_SUGGEST_REPO
+  DIR="$INSTALL_FIXTURE"
+
+  printf 'Owner/FromReleaseFile\n' >"$DIR/REPO"
+  assert_eq "$(wf_suggest_repo)" "Owner/FromReleaseFile" \
+    "wf_suggest_repo: reads the install dir's REPO file when git discovery cannot resolve it"
+
+  # Precedence: an explicit override still beats the baked-in file.
+  assert_eq "$(SHAI_SUGGEST_REPO="Owner/Override" wf_suggest_repo)" "Owner/Override" \
+    "wf_suggest_repo: SHAI_SUGGEST_REPO takes precedence over the REPO file"
+
+  # Fail-closed on a corrupt artifact: a malformed REPO file must not fall through to git
+  # discovery, which would hand back the unrelated dotfiles repo the stub reports above.
+  # Positive control is the valid-file assertion at the top of this block — same fixture,
+  # same stub, differing only in the file's contents.
+  printf 'not a repo\n' >"$DIR/REPO"
+  OUT=$(wf_suggest_repo)
+  assert_eq "$?" "1" "wf_suggest_repo: rejects a malformed REPO file"
+  assert_eq "$OUT" "" "wf_suggest_repo: prints nothing for a malformed REPO file"
+
+  # And an empty file is not a repo either (a truncated download must not read as one).
+  : >"$DIR/REPO"
+  OUT=$(wf_suggest_repo)
+  assert_eq "$?" "1" "wf_suggest_repo: rejects an empty REPO file"
+
+  exit "$FAILED"
+) || FAILED=1
+
 # --- wf_suggest: skips when the prompt file is missing (non-fatal) ---
 TMP5="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP5")

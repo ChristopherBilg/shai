@@ -686,11 +686,24 @@ primary tasks succeed. Deliberately **not** called by `release_notes`: its prima
 tool-less over a session containing untrusted external data, and its stdout is the generated
 markdown.
 
-The target repo comes from `SHAI_SUGGEST_REPO` when set, else from the `origin` remote of the
-install directory — but only when that directory is itself the top of the work tree, since
-release installs have no `.git` and git's parent-directory discovery would otherwise resolve
-an unrelated ancestor repo. Either way the value must match `OWNER/REPO`; anything else skips
-the step. `wf_suggest` **requires** an existing `SHAI_POLICY_OVERLAY` (the co-located
+The target repo (`wf_suggest_repo`) has three sources, in order: `SHAI_SUGGEST_REPO` when set;
+then `$DIR/REPO`, baked into the release tarball next to `VERSION` by `release.yml` from
+`${{ github.repository }}`; then the `origin` remote of the install directory — that last one
+only when the directory is itself the top of the work tree, since release installs have no
+`.git` and git's parent-directory discovery would otherwise resolve an unrelated ancestor repo
+(a dotfiles repo at `$HOME` is the common case). The `REPO` file exists because that guard
+otherwise leaves a release install — the documented primary install method — with nothing to
+derive from, silently skipping suggestions on every run. Being taken from
+`${{ github.repository }}` at build time, it is never typed by hand and a fork's releases carry
+the fork rather than filing issues upstream. Like `VERSION` it is untracked, so a clone has
+neither and falls through to its own `origin`; `tests/docs.sh` is fail-closed on unrecognized
+file types, so a `REPO` file committed by accident fails CI rather than silently redirecting
+every install's suggestions. The value must match `OWNER/REPO` in all three cases — a corrupt
+or truncated `REPO` file is refused rather than falling back to the ancestor-repo guess.
+Because the skip is otherwise silent until a workflow ends, `shai-doctor` reports an
+undetectable repo as a **`[WARN]`** naming the fix rather than a green `[OK]`; the warning is
+suppressed under `SHAI_SUGGEST=0`.
+`wf_suggest` **requires** an existing `SHAI_POLICY_OVERLAY` (the co-located
 `<name>/policy.json`) and never synthesizes one — overlay rules supersede base rules including
 `deny`, so a fabricated "allow gh" overlay would override an explicit user denial. Set
 `SHAI_SUGGEST=0` to disable the step (and its extra LLM call) everywhere. Non-fatal by design:
