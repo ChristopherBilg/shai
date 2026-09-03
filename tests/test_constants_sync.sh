@@ -13,7 +13,11 @@ _CLEANUP_DIRS+=("$FIX")
 # --- fixture source scripts with extractable constants ---
 mkdir -p "$FIX/tests"
 cat >"$FIX/shai-eval" <<'SCRIPT'
-MODEL="${SHAI_MODEL:-testmodel}"
+missing_config() {
+  [ -n "${SHAI_API_KEY:-}" ] || missing+=(SHAI_API_KEY)
+  [ -n "${SHAI_API_URL:-}" ] || missing+=(SHAI_API_URL)
+  [ -n "${SHAI_MODEL:-}" ] || missing+=(SHAI_MODEL)
+}
 MAX_TOKENS="999"
 SCRIPT
 cat >"$FIX/shai-dispatch" <<'SCRIPT'
@@ -24,7 +28,9 @@ cat >"$FIX/shai-context" <<'SCRIPT'
 MAX_BYTES="${SHAI_MAX_CONTEXT_BYTES:-777}"
 SCRIPT
 cat >"$FIX/shai-doctor" <<'SCRIPT'
-check_config SHAI_MODEL "testmodel"
+check_config SHAI_API_KEY
+check_config SHAI_API_URL
+check_config SHAI_MODEL
 check_config SHAI_MAX_CONTEXT_BYTES "777"
 SCRIPT
 cat >"$FIX/tests/install-lint-tools.sh" <<'SCRIPT'
@@ -34,10 +40,10 @@ SCRIPT
 
 # --- all constants present → pass ---
 cat >"$FIX/CLAUDE.md" <<'EOF'
-model testmodel, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3, shfmt v4.5.6
+SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3, shfmt v4.5.6
 EOF
 cat >"$FIX/README.md" <<'EOF'
-truncation 888, head 666, tail 222
+SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, head 666, tail 222
 EOF
 
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
@@ -46,7 +52,7 @@ assert_contains "$OUT" "CONSTANTS SYNC OK" "all constants present → OK banner"
 
 # --- missing from CLAUDE.md → fail ---
 cat >"$FIX/CLAUDE.md" <<'EOF'
-model testmodel, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3
+SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3
 EOF
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from CLAUDE.md → exit 1"
@@ -55,7 +61,7 @@ assert_contains "$OUT" "shfmt version" "missing from CLAUDE.md → names constan
 
 # --- missing from README.md → fail ---
 cat >"$FIX/CLAUDE.md" <<'EOF'
-model testmodel, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3, shfmt v4.5.6
+SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, budget 777, head 666, tail 222, shellcheck v1.2.3, shfmt v4.5.6
 EOF
 cat >"$FIX/README.md" <<'EOF'
 no constants here
@@ -67,14 +73,15 @@ assert_contains "$OUT" "truncation limit" "missing from README.md → names cons
 
 # --- missing from shai-doctor → fail ---
 cat >"$FIX/README.md" <<'EOF'
-truncation 888, head 666, tail 222
+SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, head 666, tail 222
 EOF
 cat >"$FIX/shai-doctor" <<'SCRIPT'
-check_config SHAI_MODEL "other-model"
+check_config SHAI_API_KEY
+check_config SHAI_MODEL
 SCRIPT
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from shai-doctor → exit 1"
 assert_contains "$OUT" "shai-doctor" "missing from shai-doctor → names file"
-assert_contains "$OUT" "doctor default model" "missing from shai-doctor → names constant"
+assert_contains "$OUT" "required var SHAI_API_URL" "missing from shai-doctor → names constant"
 
 finish

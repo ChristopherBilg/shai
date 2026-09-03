@@ -15,7 +15,6 @@ note() {
 }
 ok() { echo -e "  ${GREEN}✓${NC} $1"; }
 
-DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' shai-eval)
 MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' shai-dispatch)
 HEAD_BYTES=$(sed -n 's/^HEAD_BYTES=\([0-9]*\)/\1/p' shai-dispatch)
 # TAIL_BYTES is derived in shai-dispatch (MAX_BYTES - HEAD_BYTES), so derive it here too instead
@@ -44,8 +43,23 @@ check() {
   fi
 }
 
-check "$DEFAULT_MODEL" CLAUDE.md "default model"
-check "$DEFAULT_MODEL" shai-doctor "doctor default model"
+# The required provider variables are a public interface documented in shai-doctor, CLAUDE.md
+# and README.md. Extract the names from shai-eval (the source of truth: it is what refuses to
+# run without them) and assert each is documented, so a rename cannot silently desync the docs
+# the way the old hardcoded default could.
+# Match the missing+=(NAME) lines in missing_config rather than the surrounding test syntax:
+# the name is the only part that must stay in sync with the docs, and anchoring on the guard's
+# shape would break the next time that condition is reworded.
+REQUIRED_VARS=$(sed -n 's/.*missing+=(\([A-Z_]*\)).*/\1/p' shai-eval)
+if [ -z "$REQUIRED_VARS" ]; then
+  note "could not extract the required provider variables from shai-eval — check the sed pattern"
+else
+  for v in $REQUIRED_VARS; do
+    check "$v" shai-doctor "required var $v"
+    check "$v" CLAUDE.md "required var $v"
+    check "$v" README.md "required var $v"
+  done
+fi
 check "$MAX_BYTES" CLAUDE.md "truncation limit"
 check "$MAX_BYTES" README.md "truncation limit"
 check "$HEAD_BYTES" CLAUDE.md "truncation head window"
