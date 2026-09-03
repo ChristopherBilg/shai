@@ -976,7 +976,7 @@ distinct, so this is a set of rules, not one fix:
   cannot pass by matching someone else's output.
 - **A test that asserts table-mode content must also assert the row count.** The observability
   filters render two shapes — `--json` and an aligned human table — and only the `--json` shape
-  is pinned with counts (`jq 'length'` at `tests/test_events.sh:49`,
+  is pinned with counts (`jq 'length'` at `tests/test_events.sh:49`, per-field counts at
   `tests/test_sessions.sh:39-42`, `tests/test_runs.sh:45-48`). The table shape is asserted with
   `assert_contains` on a header or a single field (`tests/test_sessions.sh:127-135`,
   `tests/test_runs.sh:192-201`, `tests/test_events.sh:301-305`), which passes whether the table
