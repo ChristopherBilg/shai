@@ -987,6 +987,19 @@ distinct, so this is a set of rules, not one fix:
   "not found"), the assertion is not discriminating. Prefer a prefix or message this project
   owns (`error:` markers, named section headers, a marker line) so a broken implementation
   cannot pass by matching someone else's output.
+- **A test that asserts table-mode content must also assert the row count.** The observability
+  filters render two shapes — `--json` and an aligned human table — and only the `--json` shape
+  is pinned with counts (`jq 'length'` at `tests/test_events.sh:49`, per-field counts at
+  `tests/test_sessions.sh:39-42`, `tests/test_runs.sh:45-48`). The table shape is asserted with
+  `assert_contains` on a header or a single field (`tests/test_sessions.sh:127-135`,
+  `tests/test_runs.sh:192-201`, `tests/test_events.sh:301-305`), which passes whether the table
+  has one row or fifty. A renderer that duplicates a row, drops one, or repeats the header is
+  invisible to a `contains` assertion. Assert the row count alongside the content, and prefer a
+  distinctive header or field over an incidental substring for the content half — the
+  `assert_contains "$OUT" "--"` at `tests/test_sessions.sh:135` and `tests/test_runs.sh:201`
+  also matches flag names. Blank output is a legitimate 0-row assertion, so the existing
+  empty-state tests (`tests/test_events.sh:37`, `tests/test_sessions.sh:22`,
+  `tests/test_runs.sh:30`) already conform.
 - **Guard branches get unit tests, not integration tests.** A defensive branch for a condition
   the platform cannot produce cannot be exercised end-to-end — bash resets caught traps in
   every subshell form, so an inherited `EXIT` trap never fires inside `$( )`, `( )`, `&`, or a
