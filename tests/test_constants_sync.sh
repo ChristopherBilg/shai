@@ -57,7 +57,11 @@ EOF
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from CLAUDE.md → exit 1"
 assert_contains "$OUT" "CLAUDE.md" "missing from CLAUDE.md → names file"
-assert_contains "$OUT" "shfmt version" "missing from CLAUDE.md → names constant"
+# Full label+value+file phrase, not just "shfmt version": that label is checked against exactly
+# one file today, but the bare label alone doesn't pin down which file failed, so a check
+# mistakenly redirected to the wrong file would still print a "missing" line containing "shfmt
+# version" and this assertion would not notice.
+assert_contains "$OUT" "shfmt version (v4.5.6) missing from CLAUDE.md" "missing from CLAUDE.md → names constant"
 
 # --- missing from README.md → fail ---
 cat >"$FIX/CLAUDE.md" <<'EOF'
@@ -69,19 +73,35 @@ EOF
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from README.md → exit 1"
 assert_contains "$OUT" "README.md" "missing from README.md → names file"
-assert_contains "$OUT" "truncation limit" "missing from README.md → names constant"
+# Full label+value+file phrase: "truncation limit" is also checked against CLAUDE.md, which
+# still passes here and prints "truncation limit (888) in CLAUDE.md" — a passing sibling line
+# containing the bare label. The bare-label assertion would be satisfied by that sibling alone
+# even if the README.md-targeted check never ran.
+assert_contains "$OUT" "truncation limit (888) missing from README.md" "missing from README.md → names constant"
 
 # --- missing from shai-doctor → fail ---
 cat >"$FIX/README.md" <<'EOF'
 SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, truncation 888, head 666, tail 222
 EOF
+# Keep the pre-existing SHAI_MAX_CONTEXT_BYTES check_config line intact (only SHAI_API_URL is
+# omitted) so this block has a single cause: dropping it too would incidentally also fail the
+# unrelated "doctor context budget" check, which would keep exit 1 and keep "shai-doctor" in the
+# output even if the required-vars-in-shai-doctor check were never run at all.
 cat >"$FIX/shai-doctor" <<'SCRIPT'
 check_config SHAI_API_KEY
 check_config SHAI_MODEL
+check_config SHAI_MAX_CONTEXT_BYTES "777"
 SCRIPT
 OUT="$(bash "$DIR/tests/constants-sync.sh" "$FIX" 2>&1)"
 assert_eq "$?" "1" "missing from shai-doctor → exit 1"
 assert_contains "$OUT" "shai-doctor" "missing from shai-doctor → names file"
-assert_contains "$OUT" "required var SHAI_API_URL" "missing from shai-doctor → names constant"
+# Full label+value+file phrase, not just "required var SHAI_API_URL": that label is also checked
+# against CLAUDE.md and README.md, both of which still pass here and print "... in CLAUDE.md" /
+# "... in README.md" — passing siblings containing the bare label. The bare-label assertion was
+# satisfied by those sibling lines alone, regardless of whether shai-doctor was ever checked for
+# this variable (confirmed: redirecting or deleting the shai-doctor-targeted check call left this
+# assertion green). Anchoring on "missing from shai-doctor" ties the assertion to the one line
+# only the targeted check can produce.
+assert_contains "$OUT" "required var SHAI_API_URL (SHAI_API_URL) missing from shai-doctor" "missing from shai-doctor → names constant"
 
 finish
