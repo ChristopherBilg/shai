@@ -518,7 +518,7 @@ cat >"$WF/workflows/heartbeat/run.sh" <<'EOF'
 #!/bin/bash
 # heartbeat/run.sh — pipeline liveness probe
 # Usage: workflows/heartbeat/run.sh
-# Reads: DEEPSEEK_API_KEY from environment
+# Reads: SHAI_API_KEY from environment
 # Writes: timestamped pass/fail line to stderr
 # Exit: 0 on pipeline success; 1 on pipeline failure
 set -euo pipefail

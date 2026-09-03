@@ -84,7 +84,7 @@ printf '# bash completion fixture\n' >"$XDG_DATA_HOME/bash-completion/completion
 export SHAI_UNIT_DIR="$FIX/units"
 
 # --- Test 1: all checks pass ---
-export DEEPSEEK_API_KEY="test-key"
+# SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL are already exported by tests/lib.sh for every suite.
 export JIRA_API_TOKEN="test-token"
 
 OUT=$(run_doctor)
@@ -112,14 +112,14 @@ RC=$?
 assert_eq "$RC" "0" "doctor: missing conditional tool → exit 0"
 assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
 
-# --- Test 4: core env var missing (DEEPSEEK_API_KEY) → exit 1 + FAIL ---
+# --- Test 4: core env var missing (SHAI_API_KEY) → exit 1 + FAIL ---
 (
-  unset DEEPSEEK_API_KEY
+  unset SHAI_API_KEY
   OUT=$(run_doctor)
   RC=$?
-  assert_eq "$RC" "1" "doctor: missing DEEPSEEK_API_KEY → exit 1"
+  assert_eq "$RC" "1" "doctor: missing SHAI_API_KEY → exit 1"
   assert_contains "$OUT" "[FAIL]" "doctor: missing API key shows FAIL"
-  assert_contains "$OUT" "DEEPSEEK_API_KEY" "doctor: FAIL line names the var"
+  assert_contains "$OUT" "SHAI_API_KEY" "doctor: FAIL line names the var"
   exit "$FAILED"
 ) || FAILED=1
 
@@ -133,6 +133,48 @@ assert_contains "$OUT" "[WARN]" "doctor: missing gh shows WARN"
   assert_contains "$OUT" "JIRA_API_TOKEN" "doctor: WARN line names the var"
   exit "$FAILED"
 ) || FAILED=1
+
+desc "required provider configuration"
+
+# All three set: three OK rows, and the key's value is never echoed.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+OUT=$(SHAI_API_KEY="secret-key-value" SHAI_API_URL="https://example.invalid/v1/chat/completions" \
+  SHAI_MODEL="some-model" "$DIR/shai-doctor" 2>&1 || true)
+assert_contains "$OUT" "[OK]   SHAI_API_KEY" "doctor: SHAI_API_KEY reported"
+assert_contains "$OUT" "[OK]   SHAI_API_URL" "doctor: SHAI_API_URL reported"
+assert_contains "$OUT" "[OK]   SHAI_MODEL" "doctor: SHAI_MODEL reported"
+assert_contains "$OUT" "https://example.invalid/v1/chat/completions" \
+  "doctor: shows the resolved endpoint so it is visible which one is in use"
+assert_contains "$OUT" "some-model" "doctor: shows the resolved model"
+
+# The key's VALUE must never be printed. Mutation-checked when written: passing the show-value
+# argument for SHAI_API_KEY turns this red.
+if printf '%s' "$OUT" | grep -q "secret-key-value"; then
+  assert_eq "leaked" "not-leaked" "doctor: never prints the API key value"
+else
+  assert_eq "not-leaked" "not-leaked" "doctor: never prints the API key value"
+fi
+
+# Each unset variable is a core FAIL, not a warning.
+for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+  # shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+  OUT=$(
+    unset "$var"
+    "$DIR/shai-doctor" 2>&1 || true
+  )
+  assert_contains "$OUT" "[FAIL] $var" "doctor: unset $var is a core failure"
+done
+
+# The defaulted Configuration row is gone: SHAI_MODEL is required now, so reporting it as a
+# defaulted config value would be a lie. Asserted on our own distinctive output shape.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope, not lost
+OUT=$(SHAI_MODEL="some-model" "$DIR/shai-doctor" 2>&1 || true)
+CONFIG_BLOCK=$(printf '%s' "$OUT" | sed -n '/^Configuration:/,/^$/p')
+if printf '%s' "$CONFIG_BLOCK" | grep -q "SHAI_MODEL"; then
+  assert_eq "present" "absent" "doctor: no SHAI_MODEL row under Configuration"
+else
+  assert_eq "absent" "absent" "doctor: no SHAI_MODEL row under Configuration"
+fi
 
 # --- Test 6: summary line accuracy ---
 (
@@ -247,11 +289,9 @@ chmod +x "$STUB/git"
 
 # --- Test 13: Configuration section shows defaults when vars are unset ---
 (
-  unset SHAI_MODEL SHAI_MAX_CONTEXT_BYTES SHAI_UNIT_DIR SHAI_SUGGEST SHAI_SUGGEST_REPO 2>/dev/null || true
+  unset SHAI_MAX_CONTEXT_BYTES SHAI_UNIT_DIR SHAI_SUGGEST SHAI_SUGGEST_REPO 2>/dev/null || true
   OUT=$(run_doctor)
   assert_contains "$OUT" "Configuration:" "doctor: prints the Configuration section"
-  assert_contains "$OUT" "[OK]   SHAI_MODEL" "doctor: SHAI_MODEL listed"
-  assert_contains "$OUT" "deepseek-v4-pro (default)" "doctor: SHAI_MODEL shows default value"
   assert_contains "$OUT" "1300000 (default)" "doctor: SHAI_MAX_CONTEXT_BYTES shows default value"
   assert_contains "$OUT" "1 (default)" "doctor: SHAI_SUGGEST shows default value"
   assert_contains "$OUT" "(unset — auto-detected: Owner/Custom-Repo)" "doctor: SHAI_SUGGEST_REPO shows the auto-detected repo"
@@ -290,7 +330,7 @@ fi
 
 # --- Test 16: Configuration section never affects error/warning counts ---
 (
-  unset SHAI_MODEL SHAI_SUGGEST_REPO 2>/dev/null || true
+  unset SHAI_SUGGEST_REPO 2>/dev/null || true
   OUT=$(run_doctor)
   SUMMARY=$(printf '%s' "$OUT" | tail -n1)
   assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: config section adds no errors or warnings"
@@ -496,7 +536,9 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$FIX/oldinstall/workflows/heartbeat/run.sh
-Environment=DEEPSEEK_API_KEY=x
+Environment=SHAI_API_KEY=x
+Environment=SHAI_API_URL=https://example.invalid/v1/chat/completions
+Environment=SHAI_MODEL=m
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 OUT=$(run_doctor)
@@ -520,7 +562,7 @@ printf '[Unit]\nDescription=shai shai-heartbeat workflow\n\n[Service]\nType=ones
 # shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
 #                           # subshell does not change it (shai-doctor resolves the same root)
 printf 'ExecStart=%s/shai-print\n' "$DIR" >>"$SHAI_UNIT_DIR/shai-heartbeat.service"
-printf 'Environment=DEEPSEEK_API_KEY=x\nEnvironment=SHAI_HOME=$HOME/.shai\n' \
+printf 'Environment=SHAI_API_KEY=x\nEnvironment=SHAI_API_URL=https://example.invalid/v1/chat/completions\nEnvironment=SHAI_MODEL=m\nEnvironment=SHAI_HOME=$HOME/.shai\n' \
   >>"$SHAI_UNIT_DIR/shai-heartbeat.service"
 OUT=$(run_doctor)
 RC=$?
@@ -544,7 +586,9 @@ Description=shai shai-heartbeat workflow
 [Service]
 Type=oneshot
 ExecStart=$FIX/pruned-install/workflows/heartbeat/run.sh
-Environment=DEEPSEEK_API_KEY=x
+Environment=SHAI_API_KEY=x
+Environment=SHAI_API_URL=https://example.invalid/v1/chat/completions
+Environment=SHAI_MODEL=m
 Environment=SHAI_HOME=$HOME/.shai
 EOF
 OUT=$(run_doctor)
@@ -558,7 +602,109 @@ assert_contains "$OUT" "fix: shai-supervise repoint --all" "doctor: broken WARN 
 SUMMARY=$(printf '%s' "$OUT" | tail -n1)
 assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: broken unit is exactly one warning"
 
-# --- Test 34: no shai units → the section is entirely silent ---
+# --- Test 34: legacy unit (current ExecStart, pre-branch Environment=) → its own WARN (I1) ---
+# Reproduces the exact reported gap: unit_install_state classifies purely on ExecStart, so a
+# unit whose ExecStart already resolves to the current install ("ok") but whose Environment=
+# lines predate SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL (here: a bare pre-branch-style
+# OLD_PROVIDER_KEY line instead) used to be reported as a plain [OK] and nothing else — even though the
+# workflow fails on every tick (worse for issue_dispatcher: it removes the queue label before
+# running). Positive control is Test 32 above: the identical fixture shape but with
+# all three Environment= provider lines instead produces no such WARN, so this WARN is
+# attributable to the missing variables, not to the fixture shape itself.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
+#                           # subshell does not change it (shai-doctor resolves the same root)
+cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$DIR/shai-print
+Environment=OLD_PROVIDER_KEY=x
+Environment=SHAI_HOME=$HOME/.shai
+EOF
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: legacy-env unit → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" "[OK]   shai-heartbeat" "doctor: legacy-env unit still reports OK for its (current) ExecStart"
+assert_contains "$OUT" "[WARN] shai-heartbeat missing Environment= for SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL" \
+  "doctor: legacy-env unit gets its own WARN naming every missing provider var"
+assert_contains "$OUT" "predates the required provider vars" \
+  "doctor: legacy-env WARN explains why (predates the required provider vars)"
+assert_contains "$OUT" "shai-supervise uninstall" "doctor: legacy-env WARN's fix hint recommends reinstalling"
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: legacy-env unit is exactly one warning"
+
+# --- Test 35: quoted Environment= values (the shape cmd_install now writes) → no WARN ---
+# The scan greps for '^Environment=SHAI_API_KEY=' and cmd_install now emits the value quoted
+# (Environment=SHAI_API_KEY="k"), so this pins that the check keys on the prefix and is not
+# accidentally coupled to the unquoted form Test 32 happens to use. Without this, every fixture
+# feeding the unit scan used the pre-quoting shape and a grep tightened to
+# '^Environment=SHAI_API_KEY=[^"]' would warn on every freshly installed unit while the suite
+# stayed green. Negative-shaped, and Test 34 immediately above is its positive control: the
+# same fixture minus the SHAI_API_KEY line does produce the WARN.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
+#                           # subshell does not change it (shai-doctor resolves the same root)
+cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$DIR/shai-print
+Environment=SHAI_API_KEY="k"
+Environment=SHAI_API_URL="https://example.invalid/v1/chat/completions"
+Environment=SHAI_MODEL="m"
+Environment=SHAI_HOME="$HOME/.shai"
+EOF
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: quoted-env unit → exit 0"
+assert_contains "$OUT" "[OK]   shai-heartbeat" "doctor: quoted-env unit reports OK"
+if printf '%s' "$OUT" | grep -q 'missing Environment= for'; then
+  assert_eq "warned" "not-warned" "doctor: quoted-env unit must NOT get the missing-key WARN"
+else
+  assert_eq "not-warned" "not-warned" "doctor: quoted-env unit must NOT get the missing-key WARN"
+fi
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 0 warnings" "doctor: a fully current unit is zero warnings"
+
+# --- Test 36: partially migrated unit (key renamed by hand, URL/model absent) → WARN (Copilot) ---
+# The gap a key-only check left: renaming the old provider-key line to SHAI_API_KEY in place
+# is the obvious manual migration, and it yields a unit carrying the key but neither the URL nor the
+# model. Every tick of it fails with "SHAI_API_URL, SHAI_MODEL are not set", yet a check that
+# looked only for the key printed a bare [OK] — indistinguishable from the fully current unit
+# in Test 35. The two negative assertions below are the load-bearing pair: the message must
+# name the two variables that are actually absent and must NOT name the one that is present,
+# so a check that simply warns whenever anything looks off cannot pass this.
+# shellcheck disable=SC2031  # deliberate: DIR is set by lib.sh at file scope; run_doctor's
+#                           # subshell does not change it (shai-doctor resolves the same root)
+cat >"$SHAI_UNIT_DIR/shai-heartbeat.service" <<EOF
+[Unit]
+Description=shai shai-heartbeat workflow
+
+[Service]
+Type=oneshot
+ExecStart=$DIR/shai-print
+Environment=SHAI_API_KEY="k"
+Environment=SHAI_HOME="$HOME/.shai"
+EOF
+OUT=$(run_doctor)
+RC=$?
+assert_eq "$RC" "0" "doctor: partially migrated unit → exit 0 (WARN, not fatal)"
+assert_contains "$OUT" "[WARN] shai-heartbeat missing Environment= for SHAI_API_URL, SHAI_MODEL" \
+  "doctor: partial-migration WARN names exactly the absent vars, in declaration order"
+if printf '%s' "$OUT" | grep -q 'missing Environment= for SHAI_API_KEY'; then
+  assert_eq "named-present-var" "named-only-absent-vars" \
+    "doctor: partial-migration WARN must NOT name the variable the unit does carry"
+else
+  assert_eq "named-only-absent-vars" "named-only-absent-vars" \
+    "doctor: partial-migration WARN must NOT name the variable the unit does carry"
+fi
+SUMMARY=$(printf '%s' "$OUT" | tail -n1)
+assert_eq "$SUMMARY" "0 errors, 1 warning" "doctor: partially migrated unit is exactly one warning"
+
+# --- Test 37: no shai units → the section is entirely silent ---
 # Absence-shaped, paired with the positive control in Tests 31-33: the section and its WARNs
 # appear the moment a unit exists, so silence here means "none present", not "never scanned".
 rm -f "$SHAI_UNIT_DIR"/shai-*.service

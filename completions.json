@@ -13,7 +13,7 @@
       }
     },
     "shai-context": {
-      "description": "Build the Deepseek messages request from the event log",
+      "description": "Build the OpenAI-compatible messages request from the event log",
       "flags": {
         "--max-bytes": {
           "arg": "N",
@@ -22,7 +22,7 @@
       }
     },
     "shai-eval": {
-      "description": "Call the Deepseek API for one eval turn",
+      "description": "Call the OpenAI-compatible chat-completions API for one eval turn",
       "flags": {
         "--tools-file": {
           "arg": "PATH",
@@ -41,7 +41,7 @@
           "description": "Print the request payload without calling the API"
         },
         "--health-check": {
-          "description": "Verify DEEPSEEK_API_KEY is set and exit"
+          "description": "Verify the required provider configuration is set and exit"
         }
       }
     },

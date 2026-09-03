@@ -79,7 +79,7 @@ assert_eq "$RC" "2" "review_resolver: exit 2 on PR number 0"
 
 # --- success case: valid assistant response ---
 desc "happy path"
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"Resolution complete."},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"Resolution complete."},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_env_curl_stub 200
 rm -rf "$SHAI_HOME/runs"
 

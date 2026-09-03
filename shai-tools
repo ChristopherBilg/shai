@@ -2,7 +2,7 @@
 # shai-tools — scan, validate, and aggregate tool plugin directories
 # Usage: shai-tools [tools-dir]   (default: $DIR/tools)
 # Reads: tools/*/tool.json and checks tools/*/run.sh for each plugin directory
-# Writes: aggregated Deepseek tool array (JSON) to stdout
+# Writes: aggregated OpenAI-compatible tool array (JSON) to stdout
 # Exit: 0 on success, 1 on validation failure
 set -euo pipefail
 

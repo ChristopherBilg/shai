@@ -4,11 +4,11 @@
 # Reads: $1 (JSON with .action, optional .check, .cwd and .tool_dir), $SHAI_HOME/ci.json, git remote
 # Writes: check output or check listing to stdout
 # Exit: 0 on success (including failed checks), 1 on tool-level error
-# The check runs in an environment scrubbed of every exported SHAI_* variable and the API keys
-# (PATH/HOME/LANG/TERM survive), so the repository-under-test cannot observe the agent that
-# dispatched the tool; a per-check "env" map in ci.json re-injects variables explicitly. The
-# scrub is scoped to SHAI_* names and DEEPSEEK_API_KEY/ANTHROPIC_API_KEY — any other credential
-# the agent exports (e.g. GITHUB_TOKEN) still reaches the check.
+# The check runs in an environment scrubbed of every exported SHAI_* variable, which includes
+# the API key SHAI_API_KEY (PATH/HOME/LANG/TERM survive), so the repository-under-test cannot
+# observe the agent that dispatched the tool; a per-check "env" map in ci.json re-injects
+# variables explicitly. The scrub is a prefix sweep over exported SHAI_* names — any other
+# credential the agent exports (e.g. GITHUB_TOKEN) still reaches the check.
 set -euo pipefail
 input="$1"
 
@@ -168,18 +168,18 @@ fi
 
 # Environment isolation: a check runs project code, so it must not observe the agent's own
 # state. Every exported SHAI_* variable (run/span/session ids, policy overlay, tools dir,
-# retry flag) and the API keys are scrubbed before the check starts; PATH, HOME, LANG and TERM
-# survive (env -i is the wrong instrument — a check still needs a working shell). A per-check
-# "env" map in ci.json re-injects variables explicitly, for the rare check that needs one. The
-# scrub is deliberately scoped — SHAI_* plus those two keys — so any other credential the
-# agent exports (e.g. GITHUB_TOKEN) still reaches the check.
+# retry flag, and the API key itself) is scrubbed before the check starts; PATH, HOME, LANG
+# and TERM survive (env -i is the wrong instrument — a check still needs a working shell). A
+# per-check "env" map in ci.json re-injects variables explicitly, for the rare check that
+# needs one. The scrub is a prefix sweep over exported names, so no deny-list can go stale:
+# moving the API key into the SHAI_* namespace is what let the named entries be deleted. Any
+# other credential the agent exports (e.g. GITHUB_TOKEN) still reaches the check.
 env_args=()
 while IFS='=' read -r name _; do
   case "$name" in
     SHAI_*) env_args+=(-u "$name") ;;
   esac
 done < <(env)
-env_args+=(-u ANTHROPIC_API_KEY -u DEEPSEEK_API_KEY)
 
 check_env_type=$(printf '%s' "$check_cfg" | jq -r '.env | type' 2>/dev/null) || check_env_type="null"
 if [ "$check_env_type" != "null" ] && [ "$check_env_type" != "object" ]; then

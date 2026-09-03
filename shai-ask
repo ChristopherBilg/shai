@@ -12,12 +12,12 @@
 #         markers ("⏺ name(args)" lines) to stderr unless -q/--quiet (other pipeline
 #         stderr is dropped on success, re-emitted on a hard failure); the system prompt,
 #         the turn, and (with --external) a fenced user message to the session log; the final event JSON is never emitted
-# Exit: 0 on success (answer printed); 1 if DEEPSEEK_API_KEY is missing (health check),
-#       the turn ended in an error event, or the pipeline crashed (shai-loop exited
-#       non-zero — its stderr is re-emitted, never its raw code, which would collide with
-#       the usage-error meaning of 2); 2 on usage error (no prompt, unknown option,
-#       --external without a prompt argument or with an empty SOURCE); 3 if the system
-#       prompt is missing or empty
+# Exit: 0 on success (answer printed); 1 if SHAI_API_KEY, SHAI_API_URL, or SHAI_MODEL is
+#       missing (health check), the turn ended in an error event, or the pipeline crashed
+#       (shai-loop exited non-zero — its stderr is re-emitted, never its raw code, which
+#       would collide with the usage-error meaning of 2); 2 on usage error (no prompt,
+#       unknown option, --external without a prompt argument or with an empty SOURCE);
+#       3 if the system prompt is missing or empty
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -47,6 +47,7 @@ EOF
 QUIET=false
 NO_TOOLS=false
 EXT_SOURCE=""
+CLI_MODEL=""
 LOOP_OPTS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -66,7 +67,10 @@ while [ "$#" -gt 0 ]; do
         exit 2
       }
       case "$flag" in
-        --model) LOOP_OPTS+=(--model "$2") ;;
+        --model)
+          CLI_MODEL="$2"
+          LOOP_OPTS+=(--model "$2")
+          ;;
         --max-tokens) LOOP_OPTS+=(--max-tokens "$2") ;;
         --external)
           # an empty SOURCE would silently disable the fencing and flip stdin's meaning back
@@ -167,8 +171,16 @@ export SHAI_RUN_ID=""
 export SHAI_SPAN_ID=""
 export SHAI_PARENT_SPAN_ID=""
 
-if ! "$DIR/shai-eval" --health-check; then
-  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl, config, and this API key)\n" "$DIR" >&2
+# --model must be able to satisfy an otherwise-unset SHAI_MODEL here too: shai-eval parses its
+# own args before checking, so only forwarding the resolved CLI_MODEL (never all of LOOP_OPTS —
+# that would relocate a bad --max-tokens value's rejection into this health check) keeps this
+# pre-flight in sync with shai-ask:38's documented --model behavior.
+HEALTH_CHECK_OPTS=()
+if [ -n "$CLI_MODEL" ]; then
+  HEALTH_CHECK_OPTS+=(--model "$CLI_MODEL")
+fi
+if ! "$DIR/shai-eval" --health-check "${HEALTH_CHECK_OPTS[@]}"; then
+  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl and the required provider configuration)\n" "$DIR" >&2
   exit 1
 fi
 

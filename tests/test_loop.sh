@@ -10,7 +10,7 @@ make_stub_bin
 write_gh_stub
 
 # --- single-shot prompt (no tools): session log gets user + assistant ---
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hello back"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hello back"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 TMP="$(mktemp -d)"
@@ -107,7 +107,7 @@ mkdir -p "$TMP6/sessions"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMP6/sessions/test.jsonl"
 : >"$TMP6/sessions/test.latest.json"
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 printf 'test' | SHAI_HOME="$TMP6" SHAI_SESSION_ID=test "$DIR/shai-loop" >/dev/null 2>&1
@@ -127,7 +127,7 @@ printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are sh
 : >"$TMP7/sessions/test.latest.json"
 printf 'blocked' >"$TMP7/runs"
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"degraded ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"degraded ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 OUT7=$(printf 'hi' | SHAI_HOME="$TMP7" SHAI_SESSION_ID=test "$DIR/shai-loop" 2>/dev/null)
@@ -143,7 +143,7 @@ _CLEANUP_DIRS+=("$TMP8")
 # deliberately no `mkdir -p "$TMP8/sessions"` and no pre-seeded .jsonl/.latest.json —
 # this is the never-before-used-session path
 
-printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"fresh session ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"fresh session ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 OUT8=$(printf 'hi' | SHAI_HOME="$TMP8" SHAI_SESSION_ID=neversession "$DIR/shai-loop" 2>/dev/null)
@@ -187,7 +187,7 @@ assert_contains "$MTNOVAL" "--max-tokens requires a value" "loop: --max-tokens w
 # an error event — instead of reading it as "a tool ran" and re-evaluating forever. Mirror the
 # repo layout in a scratch dir (like test_heartbeat.sh) with the runtime scripts shai-loop
 # shells out to, but deliberately no lib/ and no tools/.
-TOOLCALL_JSON='{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tl1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
+TOOLCALL_JSON='{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tl1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
 
 TMPMISS="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMPMISS")
@@ -245,7 +245,7 @@ mkdir -p "$TMPTRUNC/sessions"
 printf '%s\n' '{"type":"message","source":"system","payload":{"text":"You are shai."}}' >"$TMPTRUNC/sessions/test.jsonl"
 : >"$TMPTRUNC/sessions/test.latest.json"
 
-printf '{"id":"chatcmpl-trunc","choices":[{"message":{"role":"assistant","content":null},"finish_reason":"length"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":100,"completion_tokens":16000,"total_tokens":16100}}' |
+printf '{"id":"chatcmpl-trunc","choices":[{"message":{"role":"assistant","content":null},"finish_reason":"length"}],"model":"test-model","usage":{"prompt_tokens":100,"completion_tokens":16000,"total_tokens":16100}}' |
   write_curl_stub 200
 
 TRUNCOUT=$(printf 'implement this complex feature' | SHAI_HOME="$TMPTRUNC" SHAI_SESSION_ID=test "$DIR/shai-loop" 2>/dev/null)
@@ -276,11 +276,11 @@ cat > /dev/null
 n=$(cat "$SHAI_ROUND_COUNT"); echo $((n + 1)) > "$SHAI_ROUND_COUNT"
 if [ "$n" = "0" ]; then
   cat <<'JSON'
-{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tu1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"length"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":16000,"total_tokens":16010}}
+{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tu1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"length"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":16000,"total_tokens":16010}}
 JSON
 else
   cat <<'JSON'
-{"id":"chatcmpl-ok","choices":[{"message":{"role":"assistant","content":"done after length"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+{"id":"chatcmpl-ok","choices":[{"message":{"role":"assistant","content":"done after length"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
 JSON
 fi
 echo "200"

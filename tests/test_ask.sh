@@ -10,15 +10,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-ask (one-shot)"
 
-# Default-model assertions below are env-independent: pin the documented defaults off so a
-# leaked SHAI_MODEL/SHAI_MAX_TOKENS cannot skew the contrast cases for --model/--max-tokens.
-unset SHAI_MODEL SHAI_MAX_TOKENS
-DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' "$DIR/shai-eval")
+# Default-max-tokens assertions below are env-independent: pin the documented default off so a
+# leaked SHAI_MAX_TOKENS cannot skew the contrast case for --max-tokens. The contrast for
+# --model is now ambient-vs-override (SHAI_MODEL is required, so it stays set from tests/lib.sh).
+unset SHAI_MAX_TOKENS
 DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="${SHAI_MAX_TOKENS:-\([0-9]*\)}"/\1/p' "$DIR/shai-eval")
 
 make_stub_bin
 write_gh_stub
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # --- prompt as positional args: answer on stdout, session log gets system+user+assistant ---
@@ -82,11 +82,11 @@ assert_exit 2 "shai-ask: --external with an empty SOURCE exits 2" -- bash -c 'pr
 # --- an invalid inherited session id is rejected (path traversal guard) ---
 assert_exit 1 "shai-ask: invalid SHAI_SESSION_ID exits 1" -- bash -c 'SHAI_HOME="$1" SHAI_SESSION_ID="a/b" "$2/shai-ask" "hi"' _ "$A5" "$DIR"
 
-# --- missing DEEPSEEK_API_KEY aborts at the health check (exit 1), no session dir ---
+# --- missing SHAI_API_KEY aborts at the health check (exit 1), no session dir ---
 A6="$(mktemp -d)"
 _CLEANUP_DIRS+=("$A6")
-HEALTHERR=$(env -u DEEPSEEK_API_KEY SHAI_HOME="$A6" SHAI_SESSION_ID=ask6 "$DIR/shai-ask" "hello" 2>&1 >/dev/null)
-assert_exit 1 "shai-ask: missing key aborts at health-check (exit 1)" -- bash -c 'env -u DEEPSEEK_API_KEY SHAI_HOME="$1" SHAI_SESSION_ID=ask6 "$2/shai-ask" "hello"' _ "$A6" "$DIR"
+HEALTHERR=$(env -u SHAI_API_KEY SHAI_HOME="$A6" SHAI_SESSION_ID=ask6 "$DIR/shai-ask" "hello" 2>&1 >/dev/null)
+assert_exit 1 "shai-ask: missing key aborts at health-check (exit 1)" -- bash -c 'env -u SHAI_API_KEY SHAI_HOME="$1" SHAI_SESSION_ID=ask6 "$2/shai-ask" "hello"' _ "$A6" "$DIR"
 assert_contains "$HEALTHERR" "hint: run" "shai-ask: health-check failure prints a hint on stderr"
 assert_eq "$(test -d "$A6/sessions" && echo exists || echo absent)" "absent" "shai-ask: no session dir when health-check fails"
 
@@ -99,7 +99,7 @@ ERRRC=$?
 assert_eq "$ERRRC" "1" "shai-ask: turn ending in an error event exits 1"
 assert_contains "$ERROUT" "Error: boom" "shai-ask: error text still rendered on stdout"
 
-printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
+printf '%s' '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}' |
   write_curl_stub 200
 
 # --- a hard failure inside shai-loop exits 1 (never 2: that is the usage-error code) and
@@ -169,19 +169,35 @@ T_REQ="$A12/runs/$T_RUN/span_1-request.json"
 assert_eq "$T_OUT" "stub reply" "shai-ask: default turn completes"
 assert_eq "$(jq 'has("tools")' "$T_REQ")" "true" "shai-ask: tools enabled by default — request payload has tools"
 assert_contains "$(cat "$T_REQ")" '"name":"list_directory"' "shai-ask: default tool array includes the repo's tools"
-assert_eq "$(jq -r '.model' "$T_REQ")" "$DEFAULT_MODEL" "shai-ask: default model when --model is absent"
+assert_eq "$(jq -r '.model' "$T_REQ")" "test-model" "shai-ask: ambient SHAI_MODEL used when --model is absent"
 assert_eq "$(jq -r '.max_tokens' "$T_REQ")" "$DEFAULT_MAX_TOKENS" "shai-ask: default max_tokens when --max-tokens is absent"
 
 # --- --model and --max-tokens forwarded to shai-eval (visible in the request dump) ---
 A13="$(mktemp -d)"
 _CLEANUP_DIRS+=("$A13")
-M_OUT=$(SHAI_HOME="$A13" SHAI_SESSION_ID=ask13 "$DIR/shai-ask" --model deepseek-chat --max-tokens 1234 "model test" 2>/dev/null)
+M_OUT=$(SHAI_HOME="$A13" SHAI_SESSION_ID=ask13 "$DIR/shai-ask" --model override-model --max-tokens 1234 "model test" 2>/dev/null)
 M_HIST=$(cat "$A13/sessions/ask13.jsonl")
 M_RUN=$(printf '%s\n' "$M_HIST" | jq -r 'select(.source=="user") | .meta.run_id')
 M_REQ="$A13/runs/$M_RUN/span_1-request.json"
 assert_eq "$M_OUT" "stub reply" "shai-ask: turn completes with --model/--max-tokens"
-assert_eq "$(jq -r '.model' "$M_REQ")" "deepseek-chat" "shai-ask: --model overrides the model in the request"
+assert_eq "$(jq -r '.model' "$M_REQ")" "override-model" "shai-ask: --model overrides the model in the request"
 assert_eq "$(jq -r '.max_tokens' "$M_REQ")" "1234" "shai-ask: --max-tokens overrides the token budget in the request"
+
+# --- --model satisfies an unset SHAI_MODEL at the pre-flight health check too (I2) ---
+# Reproduced defect: shai-eval's own --health-check parses --model before checking SHAI_MODEL,
+# but shai-ask's pre-flight health check forwarded nothing, so `shai-ask --model X` with
+# SHAI_MODEL unset failed at the health check (exit 1) even though the turn itself would have
+# used X just fine — contradicting shai-ask's own --model help text (shai-ask:38).
+A13B="$(mktemp -d)"
+_CLEANUP_DIRS+=("$A13B")
+MB_OUT=$(env -u SHAI_MODEL SHAI_HOME="$A13B" SHAI_SESSION_ID=ask13b "$DIR/shai-ask" --model cli-model "hi" 2>/dev/null)
+MB_RC=$?
+MB_HIST=$(cat "$A13B/sessions/ask13b.jsonl" 2>/dev/null)
+MB_RUN=$(printf '%s\n' "$MB_HIST" | jq -r 'select(.source=="user") | .meta.run_id' 2>/dev/null)
+MB_REQ="$A13B/runs/$MB_RUN/span_1-request.json"
+assert_eq "$MB_RC" "0" "shai-ask: --model satisfies an unset SHAI_MODEL at the health check (exit 0)"
+assert_eq "$MB_OUT" "stub reply" "shai-ask: --model with SHAI_MODEL unset still completes the turn"
+assert_eq "$(jq -r '.model' "$MB_REQ")" "cli-model" "shai-ask: the request still uses the --model value with SHAI_MODEL unset"
 
 # --- --external: stdin is fenced as external data and seeded before the prompt ---
 A14="$(mktemp -d)"

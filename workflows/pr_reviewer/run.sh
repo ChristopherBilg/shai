@@ -1,7 +1,7 @@
 #!/bin/bash
 # pr_reviewer/run.sh — review a GitHub pull request via LLM and post a comment review
 # Usage: workflows/pr_reviewer/run.sh <repo> <number>
-# Reads: DEEPSEEK_API_KEY from environment; prompts/pr_reviewer.txt for review instructions
+# Reads: SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL from environment; prompts/pr_reviewer.txt for review instructions
 # Writes: GitHub comment review with inline comments; ephemeral session log (prunable)
 # Exit: 0 on success; 1 on failure; 2 on usage error
 set -euo pipefail

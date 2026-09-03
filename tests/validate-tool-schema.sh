@@ -1,5 +1,5 @@
 #!/bin/bash
-# Validate aggregated tools from shai-tools against the Deepseek (OpenAI-compatible) function tool-definition schema.
+# Validate aggregated tools from shai-tools against the OpenAI-compatible function tool-definition schema.
 # Usage: ./tests/validate-tool-schema.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"

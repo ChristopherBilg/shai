@@ -15,7 +15,6 @@ note() {
 }
 ok() { echo -e "  ${GREEN}✓${NC} $1"; }
 
-DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' shai-eval)
 MAX_BYTES=$(sed -n 's/^MAX_BYTES=\([0-9]*\)/\1/p' shai-dispatch)
 HEAD_BYTES=$(sed -n 's/^HEAD_BYTES=\([0-9]*\)/\1/p' shai-dispatch)
 # TAIL_BYTES is derived in shai-dispatch (MAX_BYTES - HEAD_BYTES), so derive it here too instead
@@ -44,8 +43,47 @@ check() {
   fi
 }
 
-check "$DEFAULT_MODEL" CLAUDE.md "default model"
-check "$DEFAULT_MODEL" shai-doctor "doctor default model"
+# The required provider variables are a public interface documented in shai-doctor, CLAUDE.md
+# and README.md. Extract the names from shai-eval (the source of truth: it is what refuses to
+# run without them) and assert each is documented, so a rename cannot silently desync the docs
+# the way the old hardcoded default could.
+# Match the missing+=(NAME) lines in missing_config rather than the surrounding test syntax:
+# the name is the only part that must stay in sync with the docs, and anchoring on the guard's
+# shape would break the next time that condition is reworded.
+REQUIRED_VARS=$(sed -n 's/.*missing+=(\([A-Z_]*\)).*/\1/p' shai-eval)
+# Self-maintaining guard: the capture group above only matches a literal ALL_CAPS name inside
+# missing+=(...). A refactor that swaps in a variable instead of a literal (e.g.
+# missing+=("$url_var")) makes that one call stop matching the pattern -- REQUIRED_VARS then
+# silently loses that name while staying non-empty (the sibling calls still extract fine), so
+# the "could not extract" guard above never fires and the dropped variable's docs just stop
+# being checked, with no failure anywhere. Comparing the extracted count against the number of
+# missing+=( call sites in the file closes that gap without hardcoding how many there are today.
+MISSING_CALLS=$(grep -c 'missing+=(' shai-eval || true)
+EXTRACTED_COUNT=0
+if [ -n "$REQUIRED_VARS" ]; then
+  EXTRACTED_COUNT=$(printf '%s\n' "$REQUIRED_VARS" | wc -l)
+fi
+if [ -z "$REQUIRED_VARS" ]; then
+  note "could not extract the required provider variables from shai-eval — check the sed pattern"
+elif [ "$EXTRACTED_COUNT" -ne "$MISSING_CALLS" ]; then
+  note "extracted $EXTRACTED_COUNT required-var name(s) from shai-eval but found $MISSING_CALLS 'missing+=(' call site(s) — the sed pattern did not match every call (e.g. a variable instead of a literal name); fix the pattern or the call so every required provider variable stays covered"
+else
+  for v in $REQUIRED_VARS; do
+    check "$v" shai-doctor "required var $v"
+    check "$v" CLAUDE.md "required var $v"
+    check "$v" README.md "required var $v"
+    # `check` greps for the value anywhere in the file, which for a variable NAME is a weak
+    # guarantee: SHAI_API_URL is mentioned 11 times in CLAUDE.md, so the name check passes
+    # even if the one line a reader actually copies is deleted. That is not hypothetical — a
+    # quick-start block exporting only SHAI_API_KEY, so that the `./shai-repl` beneath it
+    # exits 1, shipped on this branch and was invisible to this gate. Checking the runnable
+    # `export VAR=` form instead of the bare name is what closes it: it is still a plain
+    # substring check (no brittle anchoring on prose or section headings), but the only thing
+    # that satisfies it is a line someone can paste.
+    check "export $v=" CLAUDE.md "quick-start exports $v"
+    check "export $v=" README.md "quick-start exports $v"
+  done
+fi
 check "$MAX_BYTES" CLAUDE.md "truncation limit"
 check "$MAX_BYTES" README.md "truncation limit"
 check "$HEAD_BYTES" CLAUDE.md "truncation head window"

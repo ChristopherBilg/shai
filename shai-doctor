@@ -32,11 +32,23 @@ check_tool() {
   fi
 }
 
+# check_env <name> <level> [show_value]
+# show_value non-empty prints the resolved value on a second line, the way check_config does.
+# Deliberately opt-in: SHAI_API_URL and SHAI_MODEL pass it so the effective endpoint and model
+# are visible, and SHAI_API_KEY never does — a doctor report must not echo a secret.
 check_env() {
-  local name="$1" level="$2"
+  local name="$1" level="$2" show_value="${3:-}"
   local val="${!name:-}"
   if [ -n "$val" ]; then
     printf '  [OK]   %s\n' "$name" >&2
+    # An `if`, not `[ -n ] && printf`: this is the last statement in the branch when
+    # show_value is empty (the SHAI_API_KEY call), and an AND-list's own false result would
+    # become check_env's return status and trip `set -e` at the bare call site — a real
+    # crash observed while implementing this, not a hypothetical. `if` without `else`
+    # returns 0 when the condition is false, so this form is immune to that.
+    if [ -n "$show_value" ]; then
+      printf '         %s\n' "$val" >&2
+    fi
   elif [ "$level" = "core" ]; then
     printf '  [FAIL] %s\n' "$name" >&2
     ERRORS=$((ERRORS + 1))
@@ -129,11 +141,12 @@ printf '\nConditional tools:\n' >&2
 for t in "${COND_TOOLS[@]}"; do check_tool "$t" conditional; done
 
 printf '\nEnvironment:\n' >&2
-check_env DEEPSEEK_API_KEY core
+check_env SHAI_API_KEY core
+check_env SHAI_API_URL core show
+check_env SHAI_MODEL core show
 
 printf '\nConfiguration:\n' >&2
 check_config SHAI_HOME "$HOME/.shai"
-check_config SHAI_MODEL "deepseek-v4-pro"
 check_config SHAI_MAX_CONTEXT_BYTES "1300000"
 check_config SHAI_UNIT_DIR "$HOME/.config/systemd/user"
 check_config SHAI_SUGGEST "1"
@@ -206,18 +219,50 @@ for f in "$unit_scan_dir"/shai-*.service; do
       fi
       printf '         ExecStart=%s\n' "$(unit_exec_start "$unit_scan_dir" "$unit")" >&2
       # `repoint` migrates the ExecStart in place through the current symlink, so a
-      # customized interval and the embedded API key survive — unlike re-running
-      # `install`, which resets the interval and needs the key re-exported.
-      printf '         fix: shai-supervise repoint --all (preserves customized intervals and API keys)\n' >&2
+      # customized interval survives — unlike re-running `install`, which resets it. But
+      # repoint only ever rewrites the ExecStart= line: a unit installed before
+      # SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL existed still carries its old Environment=
+      # lines untouched, so repoint cannot migrate that unit — uninstall + install is the
+      # only fix for it (see the missing-Environment= WARN below, which names this case).
+      printf '         fix: shai-supervise repoint --all (preserves customized intervals; rewrites ExecStart= only — uninstall + install instead if this unit predates SHAI_API_KEY/SHAI_API_URL/SHAI_MODEL)\n' >&2
       WARNINGS=$((WARNINGS + 1))
       ;;
   esac
+  # A unit installed by pre-branch shai (or hand-edited) can have a perfectly current
+  # ExecStart= (state "ok" above) while its Environment= lines are missing some or all of the
+  # required provider variables — `shai-supervise repoint --all` never touches Environment=,
+  # so that case is invisible to the ExecStart-based classification above and would otherwise
+  # print a bare [OK]. Checked independently of $state (ok/stale/broken alike) so it fires
+  # alongside either report instead of being masked by it. WARN, not FAIL: the unit still
+  # exists, it just fails on every tick — the same degraded-but-usable treatment as the rest
+  # of this section.
+  #
+  # All three are checked, not just the key. A unit whose old provider-key line was renamed
+  # to SHAI_API_KEY by hand — the obvious manual migration, and the one a reader of the old
+  # README would attempt — carries the key but neither the URL nor the model, and a key-only
+  # check reported that as a bare [OK], indistinguishable from a fully current unit, while
+  # every tick failed with "SHAI_API_URL, SHAI_MODEL are not set". Naming the missing
+  # variables is what makes the warning actionable rather than merely alarming.
+  unit_missing=()
+  for required_var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+    grep -q "^Environment=$required_var=" "$f" || unit_missing+=("$required_var")
+  done
+  if [ "${#unit_missing[@]}" -gt 0 ]; then
+    # Same ", "-join idiom as shai-eval's missing_config, so a user who sees this warning and
+    # then sees the runtime error event reads one message shape, not two.
+    unit_missing_names=$(printf ', %s' "${unit_missing[@]}")
+    unit_missing_names="${unit_missing_names#, }"
+    printf '  [WARN] %s missing Environment= for %s (unit predates the required provider vars, or was hand-edited)\n' \
+      "$unit" "$unit_missing_names" >&2
+    printf '         fix: reinstall this unit — shai-supervise uninstall <script> && shai-supervise install <script> [--interval ...] (repoint only rewrites ExecStart=)\n' >&2
+    WARNINGS=$((WARNINGS + 1))
+  fi
 done
 
 # Derive additional deps from tool plugins
 if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
   SEEN_TOOLS=("${CORE_TOOLS[@]}" "${COND_TOOLS[@]}")
-  SEEN_ENVS=(DEEPSEEK_API_KEY)
+  SEEN_ENVS=(SHAI_API_KEY SHAI_API_URL SHAI_MODEL)
   is_seen() {
     local item="$1" s
     for s in "${SEEN_TOOLS[@]+"${SEEN_TOOLS[@]}"}"; do
@@ -278,9 +323,9 @@ if command -v jq >/dev/null 2>&1 && [ -d "$DIR/tools" ]; then
       fi
     done < <(jq -r '.capabilities.requires.tools // [] | .[]' "$tj" 2>/dev/null)
   done
-  # Report each unique env var once, at its strictest declared level. DEEPSEEK_API_KEY is
-  # skipped here — the unconditional check above already reported it, and SEEN_ENVS is seeded
-  # with it for exactly that.
+  # Report each unique env var once, at its strictest declared level. The three required
+  # provider variables are skipped here — the unconditional checks above already reported
+  # them, and SEEN_ENVS is seeded with them for exactly that.
   i=0
   while [ "$i" -lt "$ENV_COUNT" ]; do
     if ! is_env_seen "${ENV_NAMES[$i]}"; then

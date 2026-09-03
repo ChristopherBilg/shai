@@ -32,7 +32,7 @@ _CLEANUP_DIRS+=("$TMP_BASIC")
   WF_NAME="pr_reviewer"
   unset SHAI_FAILURE_WORKFLOW
   source "$DIR/lib/failure.sh"
-  fail_record "api_error" "HTTP 503 from Deepseek API" \
+  fail_record "api_error" "HTTP 503 from the API" \
     '{"script":"shai-eval","stage":"chat_completions","detail":"curl exit 0, HTTP 503 Service Unavailable"}'
   exit "$FAILED"
 ) || FAILED=1
@@ -54,7 +54,7 @@ assert_eq "$(printf '%s' "$LINE" | jq -r '.session_id')" "sess_1724512200_def456
   "fail_record: session_id field"
 assert_eq "$(printf '%s' "$LINE" | jq -r '.category')" "api_error" \
   "fail_record: category field"
-assert_eq "$(printf '%s' "$LINE" | jq -r '.summary')" "HTTP 503 from Deepseek API" \
+assert_eq "$(printf '%s' "$LINE" | jq -r '.summary')" "HTTP 503 from the API" \
   "fail_record: summary field"
 assert_eq "$(printf '%s' "$LINE" | jq -r '.context | type')" "object" \
   "fail_record: context is an object"
@@ -445,7 +445,7 @@ mkdir -p "$FAKE_INSTALL/lib"
 cp "$DIR/lib/failure.sh" "$FAKE_INSTALL/lib/"
 chmod +x "$FAKE_INSTALL"/shai-*
 
-TOOLCALL_JSON='{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tl1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
+TOOLCALL_JSON='{"id":"chatcmpl-tc","choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"tl1","type":"function","function":{"name":"list_directory","arguments":"{\"path\":\".\"}"}}]},"finish_reason":"tool_calls"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
 printf '%s\n' "$TOOLCALL_JSON" | write_curl_stub 200
 
 # timeout guards the assertion itself: if the loop fails to stop, the suite fails fast

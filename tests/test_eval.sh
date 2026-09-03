@@ -7,13 +7,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "shai-eval"
 
-DEFAULT_MODEL=$(sed -n 's/^MODEL="${SHAI_MODEL:-\(.*\)}"/\1/p' "$DIR/shai-eval")
 DEFAULT_MAX_TOKENS=$(sed -n 's/^MAX_TOKENS="${SHAI_MAX_TOKENS:-\(.*\)}"/\1/p' "$DIR/shai-eval")
 DEFAULT_EVAL_TIMEOUT=$(sed -n 's/^EVAL_TIMEOUT="${SHAI_EVAL_TIMEOUT:-\(.*\)}"/\1/p' "$DIR/shai-eval")
-[ -n "$DEFAULT_MODEL" ] || {
-  echo "FATAL: could not extract DEFAULT_MODEL from shai-eval" >&2
-  exit 1
-}
 [ -n "$DEFAULT_MAX_TOKENS" ] || {
   echo "FATAL: could not extract DEFAULT_MAX_TOKENS from shai-eval" >&2
   exit 1
@@ -33,7 +28,6 @@ TOOLS_TMP=$(mktemp)
 _CLEANUP_DIRS+=("$TOOLS_TMP")
 "$DIR/shai-tools" >"$TOOLS_TMP"
 DRY=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" --dry-run --tools-file "$TOOLS_TMP")
-assert_contains "$DRY" "\"model\":\"$DEFAULT_MODEL\"" "eval: default model"
 assert_contains "$DRY" "\"max_tokens\":$DEFAULT_MAX_TOKENS" "eval: default max_tokens"
 assert_contains "$DRY" '"gh"' "eval: tools included with --tools-file"
 assert_contains "$DRY" '"thinking":{"type":"enabled"}' "eval: thinking enabled in payload"
@@ -46,7 +40,7 @@ assert_eq "$(printf '%s' "$NOTOOLS" | jq 'has("tools")')" "false" "eval: no tool
 make_stub_bin
 
 write_curl_stub 200 <<'STUB'
-{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"deepseek-v4-pro-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
+{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"stub reply"},"finish_reason":"stop"}],"model":"test-model-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
 STUB
 EV=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_contains "$EV" '"source":"assistant"' "eval: assistant event (stubbed curl)"
@@ -58,7 +52,7 @@ assert_contains "$EV" 'stub reply' "eval: content passed through"
 # so a newline-only stderr emission would falsely compare equal to "".
 assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" "eval: first-attempt success emits no retry progress on stderr"
 
-env -u DEEPSEEK_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
+env -u SHAI_API_KEY "$DIR/shai-eval" --health-check 2>/dev/null
 assert_eq "$?" "1" "eval: health-check fails without key"
 
 "$DIR/shai-eval" --health-check
@@ -178,7 +172,7 @@ assert_eq "$(find "$HCHOME/runs" -name '*-request.json' 2>/dev/null | wc -l | tr
 
 # an unwritable SHAI_HOME must not break the call (best-effort dump)
 make_stub_bin
-printf '%s' '{"id":"msg_uw","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}' | write_curl_stub 200
+printf '%s' '{"id":"msg_uw","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}' | write_curl_stub 200
 UNWRITABLE="$(mktemp)" # a regular file — mkdir -p over it fails
 _CLEANUP_DIRS+=("$UNWRITABLE")
 EVUW=$(echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' | SHAI_HOME="$UNWRITABLE" "$DIR/shai-eval")
@@ -190,7 +184,7 @@ assert_eq "$RC" "0" "eval: unwritable SHAI_HOME still exits 0"
 EVH="$(mktemp -d)"
 _CLEANUP_DIRS+=("$EVH")
 write_curl_stub 200 <<'JSON'
-{"id":"msg_dump","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_dump","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 
 echo '{"system":"S","messages":[{"role":"user","content":"hi"}]}' |
@@ -229,11 +223,11 @@ assert_eq "$(printf '%s' "$OUT4" | jq -r '.source')" "assistant" \
 # --- response metadata: api key + response dump ------------------------------
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"model":"deepseek-v4-pro-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
+{"id":"msg_test123","choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}],"model":"test-model-20260801","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.api.message_id')" "msg_test123" "api.message_id"
-assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "deepseek-v4-pro-20260801" "api.model"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.api.model')" "test-model-20260801" "api.model"
 assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.prompt_tokens')" "100" "api.usage.prompt_tokens"
 assert_eq "$(printf '%s' "$OUT" | jq '.api.usage.completion_tokens')" "50" "api.usage.completion_tokens"
 # Presence must be asserted on the JSON type, not with assert_contains ... "" — the empty
@@ -268,7 +262,7 @@ EVR1=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR1")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_resp","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
+{"id":"msg_resp","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR1" SHAI_RUN_ID=run_resp_test SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
@@ -312,7 +306,7 @@ _CLEANUP_DIRS+=("$EVR3")
 touch "$EVR3/runs"
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_x","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_x","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 STUB
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' |
   SHAI_HOME="$EVR3" SHAI_RUN_ID=run_unwrite SHAI_SPAN_ID=span_1 "$DIR/shai-eval")
@@ -326,7 +320,7 @@ EVR4=$(mktemp -d)
 _CLEANUP_DIRS+=("$EVR4")
 make_stub_bin
 write_curl_stub 200 <<'STUB'
-{"id":"msg_ns","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_ns","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 STUB
 echo '{"messages":[{"role":"user","content":"hi"}]}' |
   env -u SHAI_SPAN_ID SHAI_HOME="$EVR4" SHAI_RUN_ID=run_nospan "$DIR/shai-eval" >/dev/null
@@ -362,7 +356,7 @@ STUBEOF
 
 # retry succeeds after transient 503
 make_stub_bin
-write_retry_curl_stub 2 503 '{"id":"msg_retry","choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 2 503 '{"id":"msg_retry","choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 RETRY_ERR=$(cat "$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: recovers after transient 503"
@@ -382,7 +376,7 @@ assert_eq "$(printf '%s' "$RETRY_ERR" | sed -n '2p')" \
 
 # retry succeeds after transient 429
 make_stub_bin
-write_retry_curl_stub 1 429 '{"id":"msg_429","choices":[{"message":{"role":"assistant","content":"ok429"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 1 429 '{"id":"msg_429","choices":[{"message":{"role":"assistant","content":"ok429"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 RETRY_ERR=$(cat "$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: recovers after 429"
@@ -394,7 +388,7 @@ assert_eq "$(printf '%s' "$RETRY_ERR" | sed -n '1p')" \
 
 # retry exhausted → error event (not crash)
 make_stub_bin
-write_retry_curl_stub 5 500 '{"id":"never","choices":[{"message":{"role":"assistant","content":"never"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 5 500 '{"id":"never","choices":[{"message":{"role":"assistant","content":"never"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>/dev/null)
 RC=$?
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: exhausted retries → error event"
@@ -402,7 +396,7 @@ assert_eq "$RC" "0" "retry: exhausted retries still exits 0"
 
 # SHAI_EVAL_RETRIES=0 disables retry — first failure is final
 make_stub_bin
-write_retry_curl_stub 1 503 '{"id":"msg_no","choices":[{"message":{"role":"assistant","content":"nope"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 1 503 '{"id":"msg_no","choices":[{"message":{"role":"assistant","content":"nope"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=0 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: SHAI_EVAL_RETRIES=0 disables retry"
 CALL_COUNT=$(cat "$STUB/.retry_count")
@@ -412,7 +406,7 @@ assert_eq "$(wc -c <"$STUB/.eval_stderr")" "0" \
 
 # 4xx (not 429) is never retried
 make_stub_bin
-write_retry_curl_stub 1 401 '{"id":"msg_auth","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 1 401 '{"id":"msg_auth","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | SHAI_EVAL_RETRIES=2 "$DIR/shai-eval" 2>"$STUB/.eval_stderr")
 assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "retry: 401 is not retried"
 CALL_COUNT=$(cat "$STUB/.retry_count")
@@ -433,7 +427,7 @@ if [ "$n" -lt 1 ]; then
   exit 7
 fi
 cat <<'JSON'
-{"id":"msg_curl_retry","choices":[{"message":{"role":"assistant","content":"curl recovered"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_curl_retry","choices":[{"message":{"role":"assistant","content":"curl recovered"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 echo "200"
 STUBEOF
@@ -466,7 +460,7 @@ assert_eq "$RC" "0" "retry: SHAI_EVAL_RETRIES=10 at the cap is accepted"
 
 # default retries (no env var) — a 503 should still be retried
 make_stub_bin
-write_retry_curl_stub 1 503 '{"id":"msg_default","choices":[{"message":{"role":"assistant","content":"default ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
+write_retry_curl_stub 1 503 '{"id":"msg_default","choices":[{"message":{"role":"assistant","content":"default ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}'
 OUT=$(echo '{"messages":[{"role":"user","content":"hi"}]}' | env -u SHAI_EVAL_RETRIES "$DIR/shai-eval" 2>/dev/null)
 assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" "retry: default retries recovers from transient 503"
 
@@ -487,7 +481,7 @@ for arg; do
 done
 cat > /dev/null
 cat <<'JSON'
-{"id":"msg_to","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_to","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 echo "200"
 STUBEOF
@@ -511,7 +505,7 @@ for arg; do
 done
 cat > /dev/null
 cat <<'JSON'
-{"id":"msg_tod","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"deepseek-v4-pro","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+{"id":"msg_tod","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
 JSON
 echo "200"
 STUBEOF
@@ -536,5 +530,118 @@ assert_eq "$RC" "2" "eval: SHAI_EVAL_TIMEOUT=0 exits 2"
 TOERR=$(SHAI_EVAL_TIMEOUT=0120 "$DIR/shai-eval" --dry-run <<<'{"messages":[]}' 2>&1)
 RC=$?
 assert_eq "$RC" "2" "eval: SHAI_EVAL_TIMEOUT with leading zero exits 2"
+
+# --- SHAI_API_URL reaches curl verbatim ------------------------------------------------------
+desc "SHAI_API_URL reaches curl"
+
+# Mutation-verified (M2): nothing else in this suite pins the URL curl actually receives to
+# $SHAI_API_URL -- hardcoding a URL literal into shai-eval's curl invocation left the rest of
+# this file fully green. Capture the value that follows --url the same way the --max-time /
+# --connect-timeout tests above capture theirs, and assert it against the ambient SHAI_API_URL
+# (exported by tests/lib.sh), so a regression back to a positional/hardcoded URL goes red here.
+make_stub_bin
+cat >"$STUB/curl" <<'STUBEOF'
+#!/bin/bash
+for arg; do
+  if [ "$prev" = "--url" ]; then
+    printf '%s' "$arg" > "$(dirname "$0")/.captured_url"
+  fi
+  prev="$arg"
+done
+cat > /dev/null
+cat <<'JSON'
+{"id":"msg_url","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+JSON
+echo "200"
+STUBEOF
+chmod +x "$STUB/curl"
+echo '{"messages":[{"role":"user","content":"hi"}]}' | "$DIR/shai-eval" >/dev/null
+assert_eq "$(cat "$STUB/.captured_url")" "$SHAI_API_URL" "eval: curl receives SHAI_API_URL via --url"
+
+desc "required provider configuration"
+
+# Each of the three missing individually: one error event, exit 0. Never a crash — the
+# never-crash-the-loop invariant is what this whole suite exists to protect.
+for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+  OUT=$(printf '{"messages":[]}' | env -u "$var" "$DIR/shai-eval")
+  RC=$?
+  assert_eq "$RC" "0" "missing $var: exit 0 (never crashes the loop)"
+  assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "error" "missing $var: error event"
+  assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "system" "missing $var: source system"
+  assert_eq "$(printf '%s' "$OUT" | jq -r '.payload.text')" "$var is not set" \
+    "missing $var: singular message names only $var"
+done
+
+# Two missing: ONE event, both names in declaration order, plural agreement.
+OUT=$(printf '{"messages":[]}' | env -u SHAI_API_KEY -u SHAI_MODEL "$DIR/shai-eval")
+assert_eq "$(printf '%s\n' "$OUT" | wc -l)" "1" "two missing: exactly one event emitted"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.payload.text')" \
+  "SHAI_API_KEY, SHAI_MODEL are not set" "two missing: one plural message, declaration order"
+
+OUT=$(printf '{"messages":[]}' |
+  env -u SHAI_API_KEY -u SHAI_API_URL -u SHAI_MODEL "$DIR/shai-eval")
+assert_eq "$(printf '%s' "$OUT" | jq -r '.payload.text')" \
+  "SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL are not set" "all three missing: declaration order"
+
+desc "--dry-run needs only the model"
+
+# NEGATIVE ASSERTION WITH ADJACENT POSITIVE CONTROL.
+# --dry-run must keep working with no credentials: inspecting a payload offline is its whole
+# purpose. The payload embeds `model`, so the model IS still required. Mutation-checked in
+# Step 11 — dropping the --dry-run guard inside missing_config turns this pair red.
+OUT=$(printf '{"messages":[]}' |
+  env -u SHAI_API_KEY -u SHAI_API_URL "$DIR/shai-eval" --dry-run)
+RC=$?
+assert_eq "$RC" "0" "--dry-run without credentials: exit 0"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.model')" "test-model" \
+  "--dry-run without credentials: payload still printed"
+
+# Positive control, adjacent by design: the same input WITH credentials reaches the stubbed
+# curl and yields a real assistant event. Without this, the exemption above could be passing
+# against a path that no longer works at all.
+write_curl_stub 200 <<'STUB'
+{"id":"msg_pc","choices":[{"message":{"role":"assistant","content":"live"},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}
+STUB
+OUT=$(printf '{"messages":[]}' | "$DIR/shai-eval")
+assert_eq "$(printf '%s' "$OUT" | jq -r '.type')" "message" \
+  "positive control: with credentials the same input makes a (stubbed) real call"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.source')" "assistant" \
+  "positive control: assistant event, so the dry-run exemption is not masking a dead path"
+
+OUT=$(printf '{"messages":[]}' | env -u SHAI_MODEL "$DIR/shai-eval" --dry-run)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.payload.text')" "SHAI_MODEL is not set" \
+  "--dry-run without a model: error event"
+
+desc "--model satisfies an unset SHAI_MODEL"
+
+OUT=$(printf '{"messages":[]}' |
+  env -u SHAI_MODEL "$DIR/shai-eval" --dry-run --model cli-model)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.model')" "cli-model" \
+  "--model resolves the requirement (the check runs after arg parsing)"
+
+desc "usage errors keep precedence over missing config"
+
+# A bad SHAI_MAX_TOKENS is exit 2 today, and the new config check must not demote it to an
+# error event. Not using assert_fails here: shai-eval reads stdin before the MAX_TOKENS
+# validation, and assert_fails cannot feed stdin. Mutation-checked in Step 11 — moving the
+# config check above the MAX_TOKENS case makes this report 0 instead of 2.
+ERR=$(printf '{"messages":[]}' |
+  env -u SHAI_API_KEY SHAI_MAX_TOKENS=abc "$DIR/shai-eval" 2>&1 >/dev/null)
+RC=$?
+assert_eq "$RC" "2" "bad SHAI_MAX_TOKENS with missing config: still exit 2"
+assert_contains "$ERR" "SHAI_MAX_TOKENS must be a positive integer" \
+  "bad SHAI_MAX_TOKENS with missing config: names the usage error, not the config error"
+
+desc "--health-check covers all three"
+
+# --health-check runs before stdin is read, so assert_fails (exit code + stderr fragment)
+# applies cleanly here.
+for var in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+  assert_fails 1 "$var is not set" "--health-check without $var" \
+    -- env -u "$var" "$DIR/shai-eval" --health-check
+done
+
+"$DIR/shai-eval" --health-check >/dev/null 2>&1
+assert_eq "$?" "0" "--health-check with all three set: exit 0"
 
 finish

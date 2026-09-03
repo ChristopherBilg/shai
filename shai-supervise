@@ -3,7 +3,7 @@
 # Usage: shai-supervise install|uninstall|start|stop|logs <script> [--interval <timespan>]
 #        shai-supervise status [script] [--json]
 #        shai-supervise repoint [<script> | --all] [--dry-run]
-# Reads: DEEPSEEK_API_KEY, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows;
+# Reads: SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL, SHAI_HOME from environment (install only); target script from $DIR or $DIR/workflows;
 #        installed unit files from $SHAI_UNIT_DIR (status, repoint)
 # Writes: systemd unit files to $SHAI_UNIT_DIR (default ~/.config/systemd/user) (install/uninstall);
 #        rewrites only the ExecStart= line of installed .service files (repoint)
@@ -43,14 +43,26 @@ cmd_install() {
     exit 1
   fi
 
-  if [ -z "${DEEPSEEK_API_KEY:-}" ]; then
-    printf 'error: DEEPSEEK_API_KEY must be set\n' >&2
-    exit 1
-  fi
+  local v
+  for v in SHAI_API_KEY SHAI_API_URL SHAI_MODEL; do
+    if [ -z "${!v:-}" ]; then
+      printf 'error: %s must be set\n' "$v" >&2
+      exit 1
+    fi
+  done
 
   local name shai_home
   name="$(unit_name "$script")"
   shai_home="${SHAI_HOME:-$HOME/.shai}"
+
+  # Escaped once here rather than inline in the heredoc: unit_env_value handles both quoting
+  # hazards (whitespace needs the surrounding quotes, and a literal " or \ inside them needs
+  # escaping), and systemd corrupts the value silently for either — see lib/units.sh.
+  local esc_key esc_url esc_model esc_home
+  esc_key="$(unit_env_value "$SHAI_API_KEY")"
+  esc_url="$(unit_env_value "$SHAI_API_URL")"
+  esc_model="$(unit_env_value "$SHAI_MODEL")"
+  esc_home="$(unit_env_value "$shai_home")"
 
   mkdir -p "$UNIT_DIR"
 
@@ -61,8 +73,10 @@ Description=shai $name workflow
 [Service]
 Type=oneshot
 ExecStart=$script_path
-Environment=DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
-Environment=SHAI_HOME=$shai_home
+Environment=SHAI_API_KEY="$esc_key"
+Environment=SHAI_API_URL="$esc_url"
+Environment=SHAI_MODEL="$esc_model"
+Environment=SHAI_HOME="$esc_home"
 EOF
   chmod 600 "$UNIT_DIR/$name.service"
 
@@ -221,7 +235,7 @@ repoint_unit() {
 # Invocation from a versioned install directory is refused outright: it would rewrite
 # ExecStart to another versioned path and re-bake the bug class repoint removes.
 # Unlike re-running `install`, this preserves a customized OnUnitActiveSec and the
-# Environment=DEEPSEEK_API_KEY= line, and needs no exported API key.
+# Environment=SHAI_API_KEY= line, and needs no exported API key.
 cmd_repoint() {
   case "$DIR" in
     */shai/v[0-9]*)

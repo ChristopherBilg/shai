@@ -88,7 +88,7 @@ JIRASTUB
 }
 
 # standard end_turn reply reused by every scenario below that doesn't inspect the response text
-STANDARD_OK='{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"done."},"finish_reason":"stop"}],"model":"deepseek-v4-flash","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
+STANDARD_OK='{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"done."},"finish_reason":"stop"}],"model":"test-model","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}'
 
 # --- jira failure ---
 desc "jira failure"

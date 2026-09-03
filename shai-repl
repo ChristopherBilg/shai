@@ -4,7 +4,7 @@
 # Reads: interactive prompt lines on stdin (or piped input); when stdin is a TTY, past prompts
 #        from $SHAI_HOME/history to seed readline's in-session history; SHAI_SESSION_ID /
 #        SHAI_SCHEMA_VERSION from the environment if already set (an inherited session id is
-#        never overwritten); SHAI_MODEL when explicitly set (shown in the startup banner)
+#        never overwritten); SHAI_MODEL (shown in the startup banner)
 # Writes: a one-line startup banner on stdout when stdout is a TTY (version/session/model; not
 #         suppressed by -q/--quiet), "Goodbye." on exit/quit/EOF, and accepted prompts appended
 #         to $SHAI_HOME/history (one per line, plain text) when stdin is a TTY; assistant turns
@@ -17,8 +17,9 @@
 #       Interrupted. notice and the session continues (a handled interrupt never changes the
 #       exit status; when the runs dir is writable the notice adds a "partial turn kept in
 #       run <id> — resume with: shai-retry --run <id>" hint — the aborted turn's events stay
-#       in its run log, never the session log); 1 if DEEPSEEK_API_KEY is missing (health
-#       check); 2 on unknown option; 3 if the system prompt is missing or empty (shai-prompt)
+#       in its run log, never the session log); 1 if SHAI_API_KEY, SHAI_API_URL, or SHAI_MODEL
+#       is missing (health check); 2 on unknown option; 3 if the system prompt is missing or
+#       empty (shai-prompt)
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -76,7 +77,7 @@ export SHAI_SPAN_ID=""
 export SHAI_PARENT_SPAN_ID=""
 
 if ! "$DIR/shai-eval" --health-check; then
-  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl, config, and this API key)\n" "$DIR" >&2
+  printf "hint: run '%s/shai-doctor' for a full environment check (jq/curl and the required provider configuration)\n" "$DIR" >&2
   exit 1
 fi
 
@@ -87,14 +88,13 @@ if [ ! -s "$SESSION_LOG" ]; then
   printf '%s' "$SYSTEM_PROMPT" | "$DIR/shai-read" --system | "$DIR/shai-stamp" >>"$SESSION_LOG"
 fi
 
-# one-line startup banner, stdout TTY only ([ -t 1 ]): version + session + model when SHAI_MODEL
-# is explicitly set. It is startup info, not per-turn dispatch noise, so -q/--quiet does not
-# suppress it. The deepseek-v4-pro default is never synthesized here — constants-sync.sh keeps
-# that default in sync across shai-eval/CLAUDE.md/shai-doctor, and a third copy would drift.
+# one-line startup banner, stdout TTY only ([ -t 1 ]): version + session + model. It is
+# startup info, not per-turn dispatch noise, so -q/--quiet does not suppress it. SHAI_MODEL is
+# required (shai-eval refuses without it), so the model segment is unconditional — there is no
+# default left to synthesize or keep in sync.
 if [ -t 1 ]; then
-  printf 'shai %s — session %s%s — type %s\n' \
-    "$("$DIR/shai-version")" "$SHAI_SESSION_ID" \
-    "${SHAI_MODEL:+ — model $SHAI_MODEL}" "'exit' to quit"
+  printf 'shai %s — session %s — model %s — type %s\n' \
+    "$("$DIR/shai-version")" "$SHAI_SESSION_ID" "$SHAI_MODEL" "'exit' to quit"
 fi
 
 # Readline editing + persistent prompt history (#298). Gated on stdin being a TTY: `read -e`

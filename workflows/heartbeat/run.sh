@@ -1,7 +1,7 @@
 #!/bin/bash
 # heartbeat/run.sh — exercise the full pipeline and report pass/fail
 # Usage: workflows/heartbeat/run.sh
-# Reads: DEEPSEEK_API_KEY from environment
+# Reads: SHAI_API_KEY, SHAI_API_URL, SHAI_MODEL from environment
 # Writes: timestamped pass/fail line to stderr; ephemeral session log (prunable)
 # Exit: 0 on pipeline success; 1 on pipeline failure
 set -euo pipefail

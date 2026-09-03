@@ -1,5 +1,5 @@
 #!/bin/bash
-# shai-context — pure jq reducer: build the Deepseek {messages} request from the event log
+# shai-context — pure jq reducer: build the OpenAI-compatible {messages} request from the event log
 # Usage: cat sessions/<id>.jsonl | shai-context [--max-bytes N]
 # Reads: the JSONL event log on stdin; SHAI_MAX_CONTEXT_BYTES from the environment (default 1300000)
 # Writes: one JSON {messages} request object
