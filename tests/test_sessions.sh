@@ -61,6 +61,10 @@ fixture_event "message" "user" '{"text":"b"}' "run_2" "$S2" "span_1" >"$SHAI_HOM
 OUT=$("$SESSIONS" --recent 1 --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "recent 1 count"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].session_id')" "$S2" "recent 1 is latest"
+OUT=$("$SESSIONS" --recent 1)
+assert_contains "$OUT" "$S2" "recent 1 keeps the later session"
+assert_not_contains "$OUT" "$S1" "recent 1 drops the earlier session"
+assert_row_count "$OUT" 1 "recent 1 emits one data row"
 
 desc "--recent 0: no sessions"
 setup_sessions
@@ -120,21 +124,29 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].session_id')" "$GOOD" "good sessio
 assert_contains "$ERR" "warning" "warning printed to stderr for the malformed file"
 assert_contains "$ERR" "$BAD" "warning names the malformed file"
 
-desc "human output: contains session id and header"
+desc "human output: contains session ids and header, one row per session"
 setup_sessions
-SID="sess_20260810T140000_aabbccdd"
-fixture_event "message" "user" '{"text":"hello"}' "run_1" "$SID" "span_1" >"$SHAI_HOME/sessions/$SID.jsonl"
+S1="sess_20260810T140000_aabbccdd"
+S2="sess_20260811T090000_eeff0011"
+fixture_event "message" "user" '{"text":"a"}' "run_1" "$S1" "span_1" >"$SHAI_HOME/sessions/$S1.jsonl"
+fixture_event "message" "user" '{"text":"b"}' "run_2" "$S2" "span_1" >"$SHAI_HOME/sessions/$S2.jsonl"
 OUT=$("$SESSIONS")
 assert_contains "$OUT" "SESSION" "header present"
-assert_contains "$OUT" "$SID" "session id in output"
-assert_row_count "$OUT" 1 "one data row per session"
+assert_contains "$OUT" "$S1" "earlier session id in output"
+assert_contains "$OUT" "$S2" "later session id in output"
+assert_row_count "$OUT" 2 "one data row per session"
 
 desc "human output: no api/meta shows -- placeholders"
 setup_sessions
 SID="sess_20260810T140000_aabbccdd"
 printf '{"type":"message","source":"user","payload":{"text":"old"}}\n' >"$SHAI_HOME/sessions/$SID.jsonl"
 OUT=$("$SESSIONS")
-assert_contains "$OUT" "--" "human output shows -- for missing runs/tokens"
+assert_contains "$OUT" "SESSION" "header present"
+# The RUNS/TOKENS columns are the last two fields of the single data row (the
+# STARTED timestamp contains a space, so early field positions shift); a blanket
+# `contains "--"` would also match flag names, so pin the two columns directly.
+assert_eq "$(printf '%s\n' "$OUT" | awk 'NR==2 {print $(NF-1)}')" "--" "missing runs renders as --"
+assert_eq "$(printf '%s\n' "$OUT" | awk 'NR==2 {print $NF}')" "--" "missing tokens renders as --"
 assert_row_count "$OUT" 1 "one data row"
 
 desc "invalid args: each error branch asserts its distinct message"
