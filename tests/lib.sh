@@ -293,9 +293,10 @@ fixture_mint_id() {
 # the log's tail — exactly fsck S5's predicate. Other envelope fields (meta.run_id,
 # span ids) are left as stamped: stage an S3 violation, or any other corruption, by
 # mutating the log in the open after the builder runs. An omitted session_id is minted
-# in the real sess_<ts>_<hex> shape. With no events both files are created empty (the
-# wf_init shape); pass at least one event for the healthy-by-default guarantee. Prints
-# the resolved session_id.
+# in the real sess_<ts>_<hex> shape. With no events both files are created empty — not
+# the pair wf_init leaves (one system-prompt event plus an empty .latest.json, the
+# stillborn pair #388 describes); pass at least one event for the healthy-by-default
+# guarantee. Prints the resolved session_id.
 fixture_session() {
   local session_id="${1:-}" events=("${@:2}") dir log latest last="" ev
   [ -n "$session_id" ] || session_id="$(fixture_mint_id sess)"
@@ -382,7 +383,10 @@ fixture_span_dump() {
 # naming a nonexistent session is exactly the state L3 reports, and a test stages it by
 # deleting the backing session. Use a workflow name that exists under workflows/ to also
 # keep L4 quiet. Prints the backing session id. Keys are written in argument order, as
-# given: pass the same key twice to stage an L2 duplicate.
+# given: pass the same key twice to stage an L2 duplicate. The file is truncated on each
+# call — build-from-scratch, like fixture_session/fixture_run, because every key arrives
+# in this one call; fixture_failure appends instead because its signature carries one
+# record per call.
 fixture_ledger() {
   local workflow="${1:-}" keys=("${@:2}") sid dir file key session_event
   if [ -z "$workflow" ]; then
