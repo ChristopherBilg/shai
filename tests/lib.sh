@@ -306,7 +306,7 @@ fixture_session() {
   : >"$log"
   : >"$latest"
   for ev in "${events[@]+"${events[@]}"}"; do
-    last="$(printf '%s\n' "$ev" | jq -c --arg sid "$session_id" '.meta.session_id = $sid')"
+    last="$(printf '%s\n' "$ev" | jq -c --arg sid "$session_id" '.meta.session_id = $sid')" || return 1
     printf '%s\n' "$last" >>"$log"
   done
   if [ -n "$last" ]; then
@@ -334,7 +334,7 @@ fixture_run() {
   : >"$log"
   for ev in "${events[@]+"${events[@]}"}"; do
     printf '%s\n' "$ev" | jq -c --arg rid "$run_id" --arg sid "$session_id" \
-      '.meta.run_id = $rid | .meta.session_id = $sid' >>"$log"
+      '.meta.run_id = $rid | .meta.session_id = $sid' >>"$log" || return 1
   done
   printf '%s\n' "$run_id"
 }

@@ -3,8 +3,9 @@
 # Covers: assert_fails — empty-fragment usage error, command skipped, literal fragment match;
 #         assert_row_count — blank/whitespace-only output is 0 rows, header excluded, exact
 #                            count enforced;
-#         fixture builders — fixture_session (.latest.json mirroring the tail), fixture_run,
-#                            fixture_span_dump, fixture_ledger, fixture_failure output shape
+#         fixture builders — fixture_session (.latest.json mirroring the tail, malformed
+#                            events fail the builder), fixture_run, fixture_span_dump,
+#                            fixture_ledger, fixture_failure output shape
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -151,6 +152,16 @@ RC=0
 assert_eq "$RC" "0" "minted id matches the real sess_YYYYMMDDTHHMMSS_<8hex> shape"
 assert_eq "$(jq -s 'length' "$SHAI_HOME/sessions/$SID.jsonl")" "1" "minted session's log holds the event"
 
+desc "fixture_session: a malformed event fails the builder instead of writing a blank line"
+setup_fixture_home
+(
+  fixture_session sess_bad 'not json' >/dev/null 2>/dev/null
+  exit "$?"
+)
+assert_eq "$?" "1" "malformed event returns non-zero (the jq rewrite is not silent)"
+assert_eq "$(wc -l <"$SHAI_HOME/sessions/sess_bad.jsonl" | tr -d ' ')" "0" \
+  "no blank line lands in the jsonl"
+
 # --- fixture_run: run log with the declared ids written into the envelope ---
 desc "fixture_run: events.jsonl with run_id/session_id normalized into each event"
 setup_fixture_home
@@ -173,6 +184,16 @@ RC=0
 [[ "$RID" =~ ^run_[0-9]{8}T[0-9]{6}_[0-9a-f]{8}$ ]] || RC=1
 assert_eq "$RC" "0" "minted run id matches the real run_YYYYMMDDTHHMMSS_<8hex> shape"
 assert_eq "$(jq -s 'length' "$SHAI_HOME/runs/$RID/events.jsonl")" "1" "minted run log holds the event"
+
+desc "fixture_run: a malformed event fails the builder instead of dropping it silently"
+setup_fixture_home
+(
+  fixture_run run_x sess_a 'not json' >/dev/null 2>/dev/null
+  exit "$?"
+)
+assert_eq "$?" "1" "malformed event returns non-zero (the jq rewrite is not silent)"
+assert_eq "$(wc -l <"$SHAI_HOME/runs/run_x/events.jsonl" | tr -d ' ')" "0" \
+  "no blank line lands in events.jsonl"
 
 # --- fixture_span_dump: span dumps with a fail-closed kind ---
 desc "fixture_span_dump: request and response dumps, explicit and default json"
