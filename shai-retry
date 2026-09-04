@@ -1,8 +1,9 @@
 #!/bin/bash
 # shai-retry — resume an interrupted run or replay a failed one
 # Usage: shai-retry [-q|--quiet] [--run <run_id>]
-# Reads: nothing on stdin; operates on $SHAI_HOME state;
-#        SHAI_SESSION_ID / SHAI_SCHEMA_VERSION from the environment if already set
+# Reads: nothing on stdin; operates on $SHAI_HOME state; lib/replay.sh (classify_replay, the
+#        --run replay preconditions); SHAI_SESSION_ID / SHAI_SCHEMA_VERSION from the environment
+#        if already set
 # Writes: --run: buffers in runs/<new_run_id>/events.jsonl, commits on success;
 #         no flags: appends to sessions/<session_id>.jsonl (in-place resume);
 #         prints via shai-print
@@ -12,6 +13,13 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 RUNS_DIR="$STATE_DIR/runs"
+
+# The --run replay preconditions live in lib/replay.sh (classify_replay), shared with
+# shai-fsck's run-store check so a run fsck calls "resumable" can never be refused here
+# (issue #386). The lib runs `set -uo pipefail` when sourced, so it never tightens this
+# script's options.
+# shellcheck source=lib/replay.sh
+source "$DIR/lib/replay.sh"
 
 TOOLS_FILE=$(mktemp)
 chmod u+w "$TOOLS_FILE"
@@ -59,21 +67,42 @@ if [ -n "$REPLAY_RUN" ]; then
     exit 1
   fi
   FAILED_RUN_LOG="$RUNS_DIR/$REPLAY_RUN/events.jsonl"
-  if [ ! -s "$FAILED_RUN_LOG" ]; then
-    printf 'error: run log not found: %s\n' "$FAILED_RUN_LOG" >&2
-    exit 1
-  fi
 
-  REPLAY_SESSION=$(jq -r 'select(has("meta")) | .meta.session_id // empty' "$FAILED_RUN_LOG" | head -n1)
-  if [ -z "$REPLAY_SESSION" ]; then
-    printf 'error: run log has no session_id metadata\n' >&2
-    exit 1
-  fi
-
-  if [[ "$REPLAY_SESSION" =~ [/] ]] || [[ "$REPLAY_SESSION" == *..* ]]; then
-    printf 'error: session_id in run log must not contain / or .. (got "%s")\n' "$REPLAY_SESSION" >&2
-    exit 1
-  fi
+  # classify_replay checks the five replay preconditions in order and leaves the verdict
+  # in REPLAY_VERDICT (plus the extracted session id / user text in REPLAY_SESSION /
+  # USER_TEXT); each verdict maps onto the pre-refactor message and exit code verbatim.
+  # It is called directly, never in a command substitution — a substitution forks a
+  # subshell and discards the extracted values the replay below consumes.
+  classify_replay "$REPLAY_RUN"
+  case "$REPLAY_VERDICT" in
+    replayable) ;;
+    committed)
+      printf 'run %s already committed\n' "$REPLAY_RUN"
+      exit 0
+      ;;
+    no-log)
+      printf 'error: run log not found: %s\n' "$FAILED_RUN_LOG" >&2
+      exit 1
+      ;;
+    no-session-id)
+      printf 'error: run log has no session_id metadata\n' >&2
+      exit 1
+      ;;
+    unsafe-session-id)
+      printf 'error: session_id in run log must not contain / or .. (got "%s")\n' "$REPLAY_SESSION" >&2
+      exit 1
+      ;;
+    no-user-message)
+      printf 'error: no user message found in run log\n' >&2
+      exit 1
+      ;;
+    *)
+      # classify_replay only prints the verdicts above; fail closed rather than fall
+      # through into a replay with unvalidated state.
+      printf 'error: cannot classify run log: %s\n' "$FAILED_RUN_LOG" >&2
+      exit 1
+      ;;
+  esac
 
   SHAI_SESSION_ID="$REPLAY_SESSION"
   export SHAI_SESSION_ID
@@ -81,17 +110,6 @@ if [ -n "$REPLAY_RUN" ]; then
   mkdir -p "$SESSIONS_DIR"
   SESSION_LOG="$SESSIONS_DIR/$SHAI_SESSION_ID.jsonl"
   LATEST="$SESSIONS_DIR/$SHAI_SESSION_ID.latest.json"
-
-  if [ -f "$SESSION_LOG" ] && jq -e --arg rid "$REPLAY_RUN" 'select(.meta.run_id? == $rid or .meta.retry_of? == $rid)' "$SESSION_LOG" >/dev/null 2>&1; then
-    printf 'run %s already committed\n' "$REPLAY_RUN"
-    exit 0
-  fi
-
-  USER_TEXT=$(jq -r -s '[.[] | select(.type=="message" and .source=="user")] | .[0].payload.text' "$FAILED_RUN_LOG")
-  if [ -z "$USER_TEXT" ] || [ "$USER_TEXT" = "null" ]; then
-    printf 'error: no user message found in run log\n' >&2
-    exit 1
-  fi
 
   "$DIR/shai-eval" --health-check || exit 1
 
