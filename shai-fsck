@@ -234,7 +234,10 @@ ck_S4() {
 #   whitespace noise: shai-stamp skips blanks deliberately, and a blank reaching the tail
 #   of a session log would make shai-retry's classifier report "nothing to resume" for a
 #   resumable run.
-# S2 (error): every event carries top-level type, source, and payload.
+# S2 (error): every event carries top-level type, source, and payload — string, string,
+#   and object respectively, not merely present keys. A null (or wrong-typed) value passes
+#   a has() check while every downstream selector (shai-context, shai-runs/trace/stats)
+#   matches on the real values and silently drops or misrenders it.
 # S3 (error): every event with a non-null meta.session_id matches the filename stem.
 #   Events predating the execution envelope have no meta at all and are skipped, never
 #   flagged — CLAUDE.md's additive-envelope guarantee keeps old session logs working.
@@ -335,10 +338,10 @@ SESS_SCAN_PROGRAM='
      + (if $s2 then
           [$parsed[]
            | select(is_event(.v))
-           | select(((.v | has("type")) | not) or ((.v | has("source")) | not)
-                    or ((.v | has("payload")) | not))
+           | select(((.v.type | type) != "string") or ((.v.source | type) != "string")
+                    or ((.v.payload | type) != "object"))
            | s_emit("S2"; "error";
-                    ("event " + (.n | tostring) + " missing type, source, or payload");
+                    ("event " + (.n | tostring) + " missing or invalid type, source, or payload");
                     false; "none"; $path)]
         else [] end)
      + (if $s3 then

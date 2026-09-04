@@ -707,8 +707,9 @@ OUT=$("$FSCK" --check S1 --json)
 assert_eq "$?" "0" "a clean one-line log exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a clean log yields zero S1"
 
-# --- S2: every event carries top-level type, source, and payload (error) ---
-desc "S2: an event missing the source key yields exactly one S2; a stamped event yields zero"
+# --- S2: every event carries top-level type, source, and payload — as string/string/object
+#     values, not merely present keys (error) ---
+desc "S2: a missing key and a null-typed key each yield exactly one S2; a stamped event yields zero"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
   "$(fixture_event message user '{"text":"hello"}')"
@@ -723,8 +724,26 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S2)"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S2" "the finding is S2"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "error" "S2 is an error"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
-  "event 1 missing type, source, or payload" "the summary names the contract keys"
+  "event 1 missing or invalid type, source, or payload" "the summary names the contract keys"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S2 is not fixable"
+# A null value carries the key, so a has()-only implementation admits it — the check must
+# require the values (string type/source, object payload), not just the keys. Mutation-
+# checked: with the has() predicate restored this fixture scanned clean (exit 0, zero
+# findings) and the assertion below went red.
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"hello"}')"
+TMP="$(mktemp)"
+jq -c '.type = null' "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" >"$TMP"
+mv "$TMP" "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
+cp "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" \
+  "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "null-typed event exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S2)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S2" "the finding is S2"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  "event 1 missing or invalid type, source, or payload" "a null type is named as invalid"
 # Healthy negative control. Mutation-checked: without the S2 emission the sourceless
 # event scanned clean (exit 0, zero findings).
 setup_home
