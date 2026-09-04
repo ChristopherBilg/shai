@@ -322,7 +322,7 @@ ck_L4() {
     if [ ! -d "$WORKFLOWS_DIR/$wf" ]; then
       finding L4 info ledgers "$wf" "$f" \
         "no workflows/$wf/ directory (workflow removed or renamed?)" false \
-        "ignore (the workflow outlived the ledger) or delete the ledger by hand"
+        "ignore (the ledger outlived the workflow) or delete the ledger by hand"
     fi
   done
 }
