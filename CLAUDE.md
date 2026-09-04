@@ -60,6 +60,11 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 # Retention:
 ./shai-prune [--sessions] [--runs] [--ledgers] [--failures] [--dry-run] [--before YYYY-MM-DD]  # manual retention
 
+# Store integrity:
+./shai-fsck [--store sessions|runs|ledgers|failures] [--check ID] [--after DATE] [--before DATE]  # findings table; exit 0 clean / 1 problems / 2 usage / 3 scan failed
+./shai-fsck --json                                                                                  # findings as a JSON array ([] when clean)
+./shai-fsck --summary                                                                               # only the trailing digest
+
 # Failure introspection:
 ./shai-failures list                         # per-workflow failure summary
 ./shai-failures list --workflow <name>       # one row per failure record

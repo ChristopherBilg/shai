@@ -106,6 +106,21 @@ The INSTALL column is `ok` / `stale` / `broken` / `--` (no `.service` file, or n
 `ExecStart=` line): `stale` means the unit's `ExecStart` still points at an older shai install
 than the one this command runs from.
 
+## Store health
+
+`shai-fsck` audits the four event stores for internal inconsistencies and reports them as
+normalized findings — one row per finding, scoped by store, check, and date:
+```shell
+./shai-fsck                                # findings table across all four stores
+./shai-fsck --store sessions --check S4    # one store, one check
+./shai-fsck --after 2026-08-01 --json      # findings as a JSON array ([] when clean)
+./shai-fsck --summary                      # only the trailing digest
+```
+
+Exit codes: `0` clean, `1` problems found, `2` usage error, `3` the scan could not complete.
+`shai-doctor` remains the owner of `policy.json`/`ci.json` validation, and `shai-prune` the
+owner of date/category-based deletion — `shai-fsck` only reports, it never deletes.
+
 ## Tests
 ```shell
 ./tests/run.sh          # all unit + integration suites, fully offline (curl + gh stubbed)

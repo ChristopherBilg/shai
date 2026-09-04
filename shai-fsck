@@ -1,0 +1,354 @@
+#!/bin/bash
+# shai-fsck — report $SHAI_HOME store inconsistencies as normalized findings
+# Usage: shai-fsck [--store STORE] [--check ID] [--after DATE] [--before DATE]
+#        [--fix] [--dry-run] [--summary] [--json]
+# Reads: $SHAI_HOME/sessions/, $SHAI_HOME/runs/, $SHAI_HOME/ledgers/, $SHAI_HOME/failures/
+# Writes: findings table to stdout (digest to stderr), the findings array to stdout with
+#         --json, or the digest alone to stdout with --summary; never modifies the store
+# Exit: 0 clean (no findings); 1 problems found; 2 usage error; 3 operational failure
+#       (the scan could not complete: jq missing, $SHAI_HOME absent/unreadable, or an
+#       unexpected command failure). 3 vs 1 is the point: a timer or CI job can tell
+#       "your state directory is dirty" apart from "the check never ran".
+set -euo pipefail
+
+# fsck_failed: ERR-trap handler — any unexpected command failure means the scan did not
+# complete, which must read as 3 (operational), never 1 ("problems found").
+fsck_failed() {
+  local rc=$?
+  printf 'shai-fsck: scan failed (exit %s) — the report may be incomplete\n' "$rc" >&2
+  exit 3
+}
+trap fsck_failed ERR
+
+STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
+SESSIONS_DIR="$STATE_DIR/sessions"
+RUNS_DIR="$STATE_DIR/runs"
+LEDGERS_DIR="$STATE_DIR/ledgers"
+FAILURES_DIR="$STATE_DIR/failures"
+
+# Check catalog: id -> the store its scan reads. S4 is the only check this issue ships;
+# the session/run/ledger/failure check families append their ids here in later issues.
+declare -A CHECK_STORE=([S4]=sessions)
+# Known ids in scan order (associative-array keys alone have no defined order).
+KNOWN_CHECKS=(S4)
+ALL_STORES=(sessions runs ledgers failures)
+
+STORES=() CHECKS=()
+AFTER="" BEFORE=""
+FIX=false DRY_RUN=false SUMMARY=false JSON=false
+
+# known_check <id>: 0 when the id is in the check catalog.
+known_check() {
+  local id="$1" c
+  for c in "${KNOWN_CHECKS[@]}"; do
+    [ "$c" = "$id" ] && return 0
+  done
+  return 1
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --store)
+      shift
+      case "${1:-}" in
+        sessions | runs | ledgers | failures) STORES+=("$1") ;;
+        "")
+          printf 'error: --store requires one of: sessions, runs, ledgers, failures\n' >&2
+          exit 2
+          ;;
+        *)
+          printf 'error: unknown store: %s (expected one of: %s)\n' "$1" "${ALL_STORES[*]}" >&2
+          exit 2
+          ;;
+      esac
+      ;;
+    --check)
+      shift
+      if [ -z "${1:-}" ]; then
+        printf 'error: --check requires a check id\n' >&2
+        exit 2
+      fi
+      if ! known_check "$1"; then
+        printf 'error: unknown check id: %s (known: %s)\n' "$1" "${KNOWN_CHECKS[*]}" >&2
+        exit 2
+      fi
+      CHECKS+=("$1")
+      ;;
+    --after)
+      shift
+      AFTER="${1:-}"
+      if [ -z "$AFTER" ]; then
+        printf 'error: --after requires a date (YYYY-MM-DD)\n' >&2
+        exit 2
+      fi
+      if ! [[ "$AFTER" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        printf 'error: --after date must be YYYY-MM-DD\n' >&2
+        exit 2
+      fi
+      ;;
+    --before)
+      shift
+      BEFORE="${1:-}"
+      if [ -z "$BEFORE" ]; then
+        printf 'error: --before requires a date (YYYY-MM-DD)\n' >&2
+        exit 2
+      fi
+      if ! [[ "$BEFORE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        printf 'error: --before date must be YYYY-MM-DD\n' >&2
+        exit 2
+      fi
+      ;;
+    --fix) FIX=true ;;
+    --dry-run) DRY_RUN=true ;;
+    --summary) SUMMARY=true ;;
+    --json) JSON=true ;;
+    *)
+      printf 'error: unknown option: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+# The default run is already read-only, so --dry-run without --fix is a flag that would do
+# nothing — refuse it rather than silently accept it.
+if [ "$DRY_RUN" = true ] && [ "$FIX" != true ]; then
+  printf 'error: --dry-run requires --fix\n' >&2
+  exit 2
+fi
+# --summary is the table renderer's digest-only mode; --json is the machine renderer. Both
+# at once would silently ignore one of them.
+if [ "$SUMMARY" = true ] && [ "$JSON" = true ]; then
+  printf 'error: --summary cannot be combined with --json\n' >&2
+  exit 2
+fi
+# --fix is parsed and validated here; the fix behaviour lands in a later issue. Say so
+# instead of silently accepting a flag that does nothing.
+if [ "$FIX" = true ]; then
+  printf 'warning: --fix is parsed but not implemented yet (a later issue); no files were modified\n' >&2
+fi
+
+# Operational guards — these are the exit 3 conditions, checked before any scan so a
+# failed prerequisite can never masquerade as a clean scan.
+if ! command -v jq >/dev/null 2>&1; then
+  printf 'error: jq is required but was not found on PATH\n' >&2
+  exit 3
+fi
+if [ ! -e "$STATE_DIR" ]; then
+  printf 'error: SHAI_HOME does not exist: %s\n' "$STATE_DIR" >&2
+  exit 3
+fi
+if [ ! -d "$STATE_DIR" ]; then
+  printf 'error: SHAI_HOME is not a directory: %s\n' "$STATE_DIR" >&2
+  exit 3
+fi
+if [ ! -r "$STATE_DIR" ] || [ ! -x "$STATE_DIR" ]; then
+  printf 'error: SHAI_HOME is not readable: %s\n' "$STATE_DIR" >&2
+  exit 3
+fi
+
+# Findings accumulator: checks append normalized records here and nothing downstream knows
+# how a check reached its conclusion. The table renderer, the --json renderer, the digest,
+# and (in a later issue) --fix all read the same file, so the summary line
+# "N problems found, M fixable with --fix" is true by construction.
+FINDINGS_FILE="$(mktemp)"
+trap 'rm -f "$FINDINGS_FILE"' EXIT
+
+# finding <check> <severity> <store> <target> <path> <summary> <fixable> <remedy>: append one
+# normalized finding carrying the eight-key contract to the accumulator.
+finding() {
+  jq -nc \
+    --arg check "$1" --arg severity "$2" --arg store "$3" --arg target "$4" \
+    --arg path "$5" --arg summary "$6" --argjson fixable "$7" --arg remedy "$8" \
+    '{check:$check, severity:$severity, store:$store, target:$target, path:$path,
+      summary:$summary, fixable:$fixable, remedy:$remedy}' >>"$FINDINGS_FILE"
+}
+
+# item_date <id>: "YYYY-MM-DD" embedded in a real-shaped <prefix>_YYYYMMDDTHHMMSS_<hex> id,
+# or "" when the id carries no parseable timestamp.
+item_date() {
+  local id="$1" ts
+  if [[ "$id" =~ ^[^_]+_[0-9]{8}T[0-9]{6}_[0-9a-f]{8}$ ]]; then
+    ts="${id#*_}"
+    printf '%s-%s-%s' "${ts:0:4}" "${ts:4:2}" "${ts:6:2}"
+  fi
+}
+
+# in_window <date>: inclusive [--after, --before] on "YYYY-MM-DD". An undated item ("") is
+# in-window only when no bound is active, matching shai-events' documented semantics: items
+# whose embedded date cannot be read are dropped when a window is set.
+in_window() {
+  local date="$1"
+  if [ -z "$date" ]; then
+    if [ -n "$AFTER" ] || [ -n "$BEFORE" ]; then return 1; fi
+    return 0
+  fi
+  if [ -n "$AFTER" ] && [[ "$date" < "$AFTER" ]]; then return 1; fi
+  if [ -n "$BEFORE" ] && [[ "$date" > "$BEFORE" ]]; then return 1; fi
+}
+
+# store_dir <store>: the on-disk directory backing one of the four store names.
+store_dir() {
+  case "$1" in
+    sessions) printf '%s' "$SESSIONS_DIR" ;;
+    runs) printf '%s' "$RUNS_DIR" ;;
+    ledgers) printf '%s' "$LEDGERS_DIR" ;;
+    failures) printf '%s' "$FAILURES_DIR" ;;
+  esac
+}
+
+# S4 — no orphan .latest.json: a sessions/<id>.latest.json with no sibling
+# sessions/<id>.jsonl. Severity error, fixable by deleting the orphan. Pure filesystem —
+# no jq, no event parsing — which is exactly why it proves the spine end to end.
+ck_S4() {
+  local f id date log
+  for f in "$SESSIONS_DIR"/*.latest.json; do
+    if [ ! -f "$f" ]; then continue; fi
+    id="$(basename "$f" .latest.json)"
+    # The date window short-circuits at the filename level, before any file is opened.
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    log="$SESSIONS_DIR/$id.jsonl"
+    if [ ! -e "$log" ]; then
+      finding S4 error sessions "$id" "$f" "orphan latest.json (no session log)" true delete
+    fi
+  done
+}
+
+# scan: run every selected check against every selected store. --store and --check are
+# repeatable filters; a check that belongs to an unselected store simply never fires.
+declare -A WANT_STORES=()
+if [ "${#STORES[@]}" -eq 0 ]; then
+  for s in "${ALL_STORES[@]}"; do WANT_STORES["$s"]=1; done
+else
+  for s in "${STORES[@]}"; do WANT_STORES["$s"]=1; done
+fi
+declare -A WANT_CHECKS=()
+if [ "${#CHECKS[@]}" -eq 0 ]; then
+  for c in "${KNOWN_CHECKS[@]}"; do WANT_CHECKS["$c"]=1; done
+else
+  for c in "${CHECKS[@]}"; do WANT_CHECKS["$c"]=1; done
+fi
+
+for store in "${ALL_STORES[@]}"; do
+  if [ -z "${WANT_STORES[$store]:-}" ]; then continue; fi
+  dir="$(store_dir "$store")"
+  # A store directory that was never created is an empty store, not a failure.
+  if [ ! -d "$dir" ]; then continue; fi
+  if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
+    printf 'error: cannot scan %s (not readable) — scan aborted\n' "$dir" >&2
+    exit 3
+  fi
+  for check in "${KNOWN_CHECKS[@]}"; do
+    if [ -z "${WANT_CHECKS[$check]:-}" ]; then continue; fi
+    if [ "${CHECK_STORE[$check]}" != "$store" ]; then continue; fi
+    "ck_$check"
+  done
+done
+
+# One jq pass over the accumulator (never over store files) computes every downstream
+# number: the digest, the exit verdict, and — later — the --fix worklist.
+STATS="$(jq -s '{
+  errors: ([.[] | select(.severity == "error")] | length),
+  warnings: ([.[] | select(.severity == "warn")] | length),
+  info: ([.[] | select(.severity == "info")] | length),
+  fixable: ([.[] | select(.fixable == true)] | length),
+  total: length
+}' "$FINDINGS_FILE")"
+total="$(printf '%s' "$STATS" | jq -r '.total')"
+errors="$(printf '%s' "$STATS" | jq -r '.errors')"
+warnings="$(printf '%s' "$STATS" | jq -r '.warnings')"
+info="$(printf '%s' "$STATS" | jq -r '.info')"
+fixable="$(printf '%s' "$STATS" | jq -r '.fixable')"
+
+# plural <n> <singular> <plural>: the word matching <n> (English count agreement).
+plural() {
+  if [ "$1" = "1" ]; then printf '%s' "$2"; else printf '%s' "$3"; fi
+}
+
+# digest: the trailing summary line, computed from the accumulator alone.
+digest() {
+  printf '%d %s, %d %s, %d info — %d fixable with --fix\n' \
+    "$errors" "$(plural "$errors" error errors)" \
+    "$warnings" "$(plural "$warnings" warning warnings)" \
+    "$info" "$fixable"
+}
+
+# store_count <store>: item count for the clean line (session logs, run directories, ledger
+# files, failure logs).
+store_count() {
+  local store="$1" dir f n=0
+  dir="$(store_dir "$store")"
+  if [ ! -d "$dir" ]; then
+    printf '0'
+    return
+  fi
+  if [ "$store" = "runs" ]; then
+    for f in "$dir"/*/; do
+      if [ -d "$f" ]; then n=$((n + 1)); fi
+    done
+  else
+    for f in "$dir"/*.jsonl; do
+      if [ -f "$f" ]; then n=$((n + 1)); fi
+    done
+  fi
+  printf '%d' "$n"
+}
+
+# clean_line: the distinctive project-owned clean output, with per-store item counts.
+clean_line() {
+  local store count label parts=() part joined=""
+  for store in "${ALL_STORES[@]}"; do
+    if [ -z "${WANT_STORES[$store]:-}" ]; then continue; fi
+    count="$(store_count "$store")"
+    case "$store" in
+      sessions) label="$(plural "$count" session sessions)" ;;
+      runs) label="$(plural "$count" run runs)" ;;
+      ledgers) label="$(plural "$count" ledger ledgers)" ;;
+      failures) label="$(plural "$count" "failure log" "failure logs")" ;;
+    esac
+    parts+=("$count $label")
+  done
+  # "${parts[*]}" joins on the first IFS character only, so a ", " separator is built
+  # explicitly rather than smuggled through IFS.
+  for part in "${parts[@]}"; do
+    if [ -n "$joined" ]; then joined="$joined, "; fi
+    joined="$joined$part"
+  done
+  printf 'no problems found (%s)\n' "$joined"
+}
+
+if [ "$JSON" = true ]; then
+  # JSON output is the findings array itself — the composability point for jq pipelines —
+  # and nothing else. [] when clean.
+  jq -s . "$FINDINGS_FILE"
+  if [ "$total" -eq 0 ]; then exit 0; else exit 1; fi
+fi
+
+# policy.json and ci.json stay shai-doctor's to validate — point there instead of
+# duplicating either verdict. Human-facing table mode only: --json and --summary keep
+# both streams to their single contract line.
+if [ "$SUMMARY" != true ]; then
+  printf 'note: policy.json and ci.json are validated by shai-doctor, not shai-fsck\n' >&2
+fi
+
+if [ "$total" -eq 0 ]; then
+  clean_line
+  exit 0
+fi
+
+if [ "$SUMMARY" = true ]; then
+  digest
+  exit 1
+fi
+
+# Table mode: one row per finding on stdout — honest and row-countable — with the digest
+# trailing on stderr, so assert_row_count sees exactly header + findings.
+printf '%-8s  %-5s  %-8s  %-29s  %s\n' "SEVERITY" "CHECK" "STORE" "TARGET" "SUMMARY"
+mapfile -t rows < <(jq -r '[.severity, .check, .store, .target, .summary] | @tsv' "$FINDINGS_FILE")
+for row in "${rows[@]}"; do
+  IFS=$'\t' read -r sev check store target summary <<<"$row" || true
+  printf '%-8s  %-5s  %-8s  %-29s  %s\n' "$sev" "$check" "$store" "$target" "$summary"
+done
+digest >&2
+exit 1
