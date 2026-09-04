@@ -267,6 +267,166 @@ fixture_event() {
      + (if $api == null then {} else {api:$api} end)'
 }
 
+# Store builders — composed from fixture_event, not parallel implementations of it. Each
+# one writes the on-disk shape a healthy $SHAI_HOME store has, so shai-fsck check tests
+# read as "take a healthy store, break exactly this in the open, assert exactly this
+# finding." Builders never stage corruption themselves: a corruption the caller wants to
+# test is applied after the builder runs, with plain shell.
+
+# fixture_mint_id <prefix>: a real-shaped <prefix>_YYYYMMDDTHHMMSS_<8 hex chars> id, the
+# same shape lib/workflow.sh's mint_id produces. Real shapes matter to the consumers of
+# ids, not just to humans: shai-sessions/shai-events/shai-runs parse the embedded date
+# for --after/--before filename-level filtering, and shai-fsck's X1 matches store entries
+# against this pattern. Prints the id.
+fixture_mint_id() {
+  printf '%s_%s_%s' "$1" "$(date -u +%Y%m%dT%H%M%S)" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')"
+}
+
+# fixture_session [session_id] [event...]: build a healthy session store from the given
+# stamped events (compact JSON lines, as produced by fixture_event). The events are
+# written one per line to $SHAI_HOME/sessions/<session_id>.jsonl, with each event's
+# meta.session_id rewritten to the session id — so the store satisfies fsck S3 by
+# construction even when the events were stamped with placeholder ids, and the issue's
+# flagship one-liner `fixture_session sess_a "$(fixture_event ...)"` yields a healthy
+# session rather than a subtly broken one. The last event is mirrored verbatim to
+# $SHAI_HOME/sessions/<session_id>.latest.json, so .latest.json is always JSON-equal to
+# the log's tail — exactly fsck S5's predicate. Other envelope fields (meta.run_id,
+# span ids) are left as stamped: stage an S3 violation, or any other corruption, by
+# mutating the log in the open after the builder runs. An omitted session_id is minted
+# in the real sess_<ts>_<hex> shape. With no events both files are created empty (the
+# wf_init shape); pass at least one event for the healthy-by-default guarantee. Prints
+# the resolved session_id.
+fixture_session() {
+  local session_id="${1:-}" events=("${@:2}") dir log latest last="" ev
+  [ -n "$session_id" ] || session_id="$(fixture_mint_id sess)"
+  dir="$SHAI_HOME/sessions"
+  log="$dir/$session_id.jsonl"
+  latest="$dir/$session_id.latest.json"
+  mkdir -p "$dir"
+  : >"$log"
+  : >"$latest"
+  for ev in "${events[@]+"${events[@]}"}"; do
+    last="$(printf '%s\n' "$ev" | jq -c --arg sid "$session_id" '.meta.session_id = $sid')"
+    printf '%s\n' "$last" >>"$log"
+  done
+  if [ -n "$last" ]; then
+    printf '%s\n' "$last" >"$latest"
+  fi
+  printf '%s\n' "$session_id"
+}
+
+# fixture_run [run_id] [session_id] [event...]: build $SHAI_HOME/runs/<run_id>/events.jsonl
+# from the given stamped events, one per line, with each event's meta.run_id rewritten to
+# the run id and meta.session_id to the session id — fsck R2 (run_id equals the directory
+# name) holds by construction, and the session_id declares which session the run's events
+# belong to (fsck R6 checks that they appear in some session log; build that log with
+# fixture_session and the same events). Span ids are left as stamped, since span structure
+# is the caller's to set. Both ids default to minted real-shaped values (run_<ts>_<hex> /
+# sess_<ts>_<hex>); with no events the log is created empty, mirroring the touch-if-missing
+# idiom shai-loop uses. Prints the resolved run_id.
+fixture_run() {
+  local run_id="${1:-}" session_id="${2:-}" events=("${@:3}") dir log ev
+  [ -n "$run_id" ] || run_id="$(fixture_mint_id run)"
+  [ -n "$session_id" ] || session_id="$(fixture_mint_id sess)"
+  dir="$SHAI_HOME/runs/$run_id"
+  log="$dir/events.jsonl"
+  mkdir -p "$dir"
+  : >"$log"
+  for ev in "${events[@]+"${events[@]}"}"; do
+    printf '%s\n' "$ev" | jq -c --arg rid "$run_id" --arg sid "$session_id" \
+      '.meta.run_id = $rid | .meta.session_id = $sid' >>"$log"
+  done
+  printf '%s\n' "$run_id"
+}
+
+# fixture_span_dump <run_id> <span_id> request|response [json]: write one API dump to
+# $SHAI_HOME/runs/<run_id>/<span_id>-request.json (or -response.json), creating the run
+# directory if needed. The json argument is written verbatim — a deliberately malformed
+# value survives, so it can stage an fsck R4 corruption — and defaults to a minimal
+# well-formed dump of the matching kind when omitted (the shapes shai-eval writes). The
+# kind must be exactly `request` or `response` (anything else is a usage error on stderr,
+# exit 1): a typo would otherwise create a third filename shape fsck's R4/R5 never look
+# at. A dump only belongs to a healthy run when the run log holds an event for the same
+# span (fsck R5); pair each dump with a span event built via fixture_run.
+fixture_span_dump() {
+  local run_id="${1:-}" span_id="${2:-}" kind="${3:-}" json="${4:-}"
+  local dir file default=""
+  case "$kind" in
+    request)
+      default='{"model":"test-model","messages":[]}'
+      ;;
+    response)
+      default='{"message_id":"m1","model":"test-model","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2},"finish_reason":"stop","latency_ms":100}'
+      ;;
+    *)
+      printf 'fixture_span_dump: kind must be request or response (got "%s")\n' "$kind" >&2
+      return 1
+      ;;
+  esac
+  if [ -z "$run_id" ] || [ -z "$span_id" ]; then
+    printf 'fixture_span_dump: run_id and span_id must be non-empty\n' >&2
+    return 1
+  fi
+  dir="$SHAI_HOME/runs/$run_id"
+  file="$dir/$span_id-$kind.json"
+  mkdir -p "$dir"
+  printf '%s\n' "${json:-$default}" >"$file"
+}
+
+# fixture_ledger <workflow> <key>...: build a healthy ledger at
+# $SHAI_HOME/ledgers/<workflow>.jsonl with one well-formed {key, ts, session_id} entry per
+# key argument, each ts the current time in the ISO shape wf_mark writes. Entries
+# reference one freshly minted real-shaped session, and the builder creates that session
+# (a one-event message/user session with a matching .latest.json, via fixture_session) so
+# the ledger is clean under fsck L3 (session_id resolves) as well as L1/L2 — a ledger
+# naming a nonexistent session is exactly the state L3 reports, and a test stages it by
+# deleting the backing session. Use a workflow name that exists under workflows/ to also
+# keep L4 quiet. Prints the backing session id. Keys are written in argument order, as
+# given: pass the same key twice to stage an L2 duplicate.
+fixture_ledger() {
+  local workflow="${1:-}" keys=("${@:2}") sid dir file key session_event
+  if [ -z "$workflow" ]; then
+    printf 'fixture_ledger: workflow name must be non-empty\n' >&2
+    return 1
+  fi
+  session_event="$(fixture_event message user '{"text":"ledger fixture session"}')"
+  sid="$(fixture_session "" "$session_event")"
+  dir="$SHAI_HOME/ledgers"
+  file="$dir/$workflow.jsonl"
+  mkdir -p "$dir"
+  : >"$file"
+  for key in "${keys[@]+"${keys[@]}"}"; do
+    jq -nc --arg k "$key" --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg sid "$sid" \
+      '{key: $k, ts: $ts, session_id: $sid}' >>"$file"
+  done
+  printf '%s\n' "$sid"
+}
+
+# fixture_failure <workflow> <category> <summary>: append one failure record to
+# $SHAI_HOME/failures/<workflow>.jsonl carrying all seven documented keys — ts (now, the
+# ISO shape fail_record writes), workflow, run_id, session_id, category, summary, context —
+# with run_id/session_id null and context {} exactly as fail_record produces when no
+# ambient trace context exists (the state fsck F4 skips, not flags). One record per call,
+# appending, so several calls build one workflow's log; a truncating builder would
+# silently drop the record a previous call wrote. category is written as given — pass one
+# of the five documented categories for a healthy record; an unknown one is the corruption
+# an F2 test stages.
+fixture_failure() {
+  local workflow="${1:-}" category="${2:-}" summary="${3:-}"
+  local dir file
+  if [ -z "$workflow" ]; then
+    printf 'fixture_failure: workflow name must be non-empty\n' >&2
+    return 1
+  fi
+  dir="$SHAI_HOME/failures"
+  file="$dir/$workflow.jsonl"
+  mkdir -p "$dir"
+  jq -nc --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg workflow "$workflow" --arg category "$category" --arg summary "$summary" \
+    '{ts:$ts, workflow:$workflow, run_id:null, session_id:null, category:$category,
+      summary:$summary, context:{}}' >>"$file"
+}
+
 export SHAI_API_KEY="test-key"
 # .invalid is reserved by RFC 2606 and can never resolve, so a stub-bypass bug surfaces as a
 # DNS failure rather than a real request to somebody's endpoint.
