@@ -13,6 +13,7 @@ set -euo pipefail
 
 # fsck_failed: ERR-trap handler — any unexpected command failure means the scan did not
 # complete, which must read as 3 (operational), never 1 ("problems found").
+# shellcheck disable=SC2317  # invoked by the ERR trap below, not visible to static analysis
 fsck_failed() {
   local rc=$?
   printf 'shai-fsck: scan failed (exit %s) — the report may be incomplete\n' "$rc" >&2
@@ -242,7 +243,12 @@ for store in "${ALL_STORES[@]}"; do
   for check in "${KNOWN_CHECKS[@]}"; do
     if [ -z "${WANT_CHECKS[$check]:-}" ]; then continue; fi
     if [ "${CHECK_STORE[$check]}" != "$store" ]; then continue; fi
-    "ck_$check"
+    # Explicit dispatch, not a dynamic "$check" invocation: shellcheck can prove these
+    # functions are reached, and the check families added in later issues add case arms
+    # here next to their catalog entries above.
+    case "$check" in
+      S4) ck_S4 ;;
+    esac
   done
 done
 
