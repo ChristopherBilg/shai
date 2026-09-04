@@ -818,7 +818,7 @@ assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S6")] | length')"
 
 # --- S5: the single predicate "latest.json is JSON-equal to the last event" — missing,
 #     empty, unparseable, and stale are all failures of it (error, fixable by rebuild) ---
-desc "S5: missing, unparseable, and stale latest.json each yield exactly one S5; a mirrored latest yields zero"
+desc "S5: missing, unparseable, and stale latest.json each yield exactly one S5; a mirrored or error-event latest yields zero"
 setup_home
 ev="$(fixture_event message user '{"text":"hello"}')"
 SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
@@ -858,6 +858,21 @@ fixture_session sess_20260810T120000_aabbccdd \
 OUT=$("$FSCK" --check S5 --json)
 assert_eq "$?" "0" "a mirrored latest exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a mirrored latest yields zero S5"
+# An error event in .latest.json is the genuine most-recent event of a session that ended
+# in an eval/dispatch error, not a stale file: shai-loop's commit_run filters error events
+# out of the session log (shai-loop:136) and emit_dispatch_error writes them to LATEST
+# only, so latest and log tail legitimately diverge — and "rebuild" would overwrite the
+# only copy of the error (CLAUDE.md:139). Mutation-checked: without the error-latest
+# exemption this fixture emits exactly one S5 ("latest.json is not the last event").
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"a"}')" \
+  "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')"
+printf '%s\n' '{"type":"error","source":"system","payload":{"text":"eval failed"}}' \
+  >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --check S5 --json)
+assert_eq "$?" "0" "an error-event latest exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "an error-event latest yields zero S5"
 
 # --- S6 negative: a seeded session whose latest.json mirrors the system event is not
 #     stillborn — the empty latest is what makes the pair ---

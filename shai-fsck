@@ -243,6 +243,13 @@ ck_S4() {
 #   (shai-loop:149,206,226) and shai-retry reads it too, so a missing/empty/stale file
 #   misleads both. The comparison happens on parsed values (jq ==), which is
 #   key-order-insensitive — the in-process equivalent of the jq -S text comparison.
+#   Exception: an error event in .latest.json is never a mismatch — error events are
+#   deliberately kept out of the session log (shai-loop's commit_run filters them, and
+#   emit_dispatch_error writes them to LATEST only), so a session that ended in an eval
+#   error, truncation, or dispatch failure leaves LATEST holding its genuine most-recent
+#   event (CLAUDE.md:139) beside a log whose tail is the last committed event. Flagging
+#   that divergence would be a false positive, and "rebuild" would overwrite the only
+#   copy of the error.
 # S6 (warn): stillborn session — exactly one event, a message/system seed, beside an
 #   empty .latest.json, the pair wf_seed_session writes. Evaluated before S5 and claims
 #   the session: without the precedence every stillborn session reports twice (correctly
@@ -354,6 +361,7 @@ SESS_SCAN_PROGRAM='
             [s_emit("S5"; "error"; "latest.json empty"; true; "rebuild"; $latest_path)]
           elif ($latest_parsed.ok | not) then
             [s_emit("S5"; "error"; "latest.json does not parse as JSON"; true; "rebuild"; $latest_path)]
+          elif $latest_parsed.v.type == "error" then []
           elif $events_n == 0 then
             [s_emit("S5"; "error"; "latest.json has content but the session log has no events";
                     true; "rebuild"; $latest_path)]
