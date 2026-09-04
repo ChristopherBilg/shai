@@ -2,7 +2,8 @@
 # resolve_dispatcher/run.sh — poll GitHub for reviewed PRs and delegate each to review_resolver
 # Usage: workflows/resolve_dispatcher/run.sh
 # Reads: gh auth from environment; searches open PRs labeled shai-resolve-dispatcher involving @me
-# Writes: removes the shai-resolve-dispatcher label; dispatches shai-workflow run review_resolver; ephemeral session log (prunable)
+# Writes: removes the shai-resolve-dispatcher label; dispatches shai-workflow run review_resolver;
+#   session files materialized only when a dispatch runs (idle ticks write nothing; prunable)
 # Exit: 0 on success (including idle tick with no matches); 1 on failure
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
@@ -81,6 +82,10 @@ while IFS=$'\t' read -r REPO NUMBER; do
     continue
   fi
 
+  # Materialize the session for a tick that actually dispatches (#388): wf_init only mints
+  # the id, so an idle tick writes nothing under $SHAI_HOME/sessions/. Seeding here — at the
+  # first real dispatch — keeps the system prompt as the session's first event.
+  wf_seed_session
   if env -u SHAI_POLICY_OVERLAY "$SHAI_WORKFLOW" run review_resolver "$REPO" "$NUMBER" </dev/null; then
     wf_mark "$KEY"
     DISPATCHED=$((DISPATCHED + 1))

@@ -9,7 +9,9 @@ echo "lib/workflow.sh"
 make_stub_bin
 write_gh_stub
 
-# --- wf_init: mints session, creates log, seeds system prompt ---
+# --- wf_init: mints session id, writes no files (lazy seeding, #388) ---
+# The expected-zero assertion below is mutation-checked: reverting wf_init to eager seeding
+# (system prompt + .latest.json on every call) must turn it red.
 TMP="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP")
 
@@ -22,15 +24,15 @@ printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content
   source "$DIR/lib/workflow.sh"
   wf_init
   assert_eq "$(test -n "$SHAI_SESSION_ID" && echo set)" "set" "wf_init: SHAI_SESSION_ID is set"
-  assert_eq "$(test -f "$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl" && echo exists)" "exists" \
-    "wf_init: session log created"
-  SYSEVT=$(jq -r '.source' "$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl")
-  assert_eq "$SYSEVT" "system" "wf_init: system prompt seeded in session log"
   assert_eq "$(test -n "$DIR" && echo set)" "set" "wf_init: DIR is set"
+  assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
+    "wf_init: writes no session files (lazy seeding)"
   exit "$FAILED"
 ) || FAILED=1
 
-# --- wf_llm: delegates to shai-loop ---
+# --- wf_llm: delegates to shai-loop, seeding the session exactly once (#388) ---
+# Positive control for the zero-count above: the first event write materializes the session
+# with the system prompt as its first event, plus the .latest.json sibling.
 TMP2="$(mktemp -d)"
 _CLEANUP_DIRS+=("$TMP2")
 
@@ -38,13 +40,25 @@ printf '{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content
   write_curl_stub 200
 
 # shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this test case
-OUT=$(
+(
   export SHAI_HOME="$TMP2"
   source "$DIR/lib/workflow.sh"
   wf_init
-  wf_llm "say hello"
-)
-assert_contains "$OUT" 'llm reply' "wf_llm: returns shai-loop output"
+  OUT=$(wf_llm "say hello")
+  assert_contains "$OUT" 'llm reply' "wf_llm: returns shai-loop output"
+  assert_eq "$(test -s "$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl" && echo exists)" "exists" \
+    "wf_llm: session log created"
+  assert_eq "$(jq -r '.source' "$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl" | head -n1)" "system" \
+    "wf_llm: system prompt seeded as the first event"
+  assert_eq "$(test -f "$SHAI_HOME/sessions/$SHAI_SESSION_ID.latest.json" && echo exists)" "exists" \
+    "wf_llm: .latest.json sibling created"
+  OUT2=$(wf_llm "say it again")
+  assert_contains "$OUT2" 'llm reply' "wf_llm: second call returns shai-loop output"
+  assert_eq "$(jq -s '[.[] | select(.type == "message" and .source == "system")] | length' \
+    "$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl")" "1" \
+    "wf_llm: system prompt seeded exactly once per session"
+  exit "$FAILED"
+) || FAILED=1
 
 # --- wf_output: structured line to stdout ---
 # shellcheck disable=SC2030,SC2031  # deliberate: subshell-scoped env vars isolate this test case

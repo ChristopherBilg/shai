@@ -4,7 +4,8 @@
 # Reads: gh auth from environment; searches open issues assigned to @me labeled shai-issue-dispatcher;
 #   checks each issue's blocked_by dependencies via gh api --paginate (defers issues with open
 #   blockers; fails loudly when the endpoint is missing)
-# Writes: removes the shai-issue-dispatcher label; dispatches shai-workflow run issue_worker; ephemeral session log (prunable)
+# Writes: removes the shai-issue-dispatcher label; dispatches shai-workflow run issue_worker;
+#   session files materialized only when a dispatch runs (idle ticks write nothing; prunable)
 # Exit: 0 on success (including idle tick with no matches); 1 on failure
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
@@ -96,6 +97,10 @@ while IFS=$'\t' read -r REPO NUMBER; do
     continue
   fi
 
+  # Materialize the session for a tick that actually dispatches (#388): wf_init only mints
+  # the id, so an idle tick writes nothing under $SHAI_HOME/sessions/. Seeding here — at the
+  # first real dispatch — keeps the system prompt as the session's first event.
+  wf_seed_session
   if env -u SHAI_POLICY_OVERLAY "$SHAI_WORKFLOW" run issue_worker "$REPO" "$NUMBER" </dev/null; then
     wf_mark "$KEY"
     DISPATCHED=$((DISPATCHED + 1))

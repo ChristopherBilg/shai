@@ -59,7 +59,7 @@ chmod +x "$STUB/gh"
 
 reset_state() {
   rm -f "$WORKER_LOG" "$EDIT_LOG" "$GH_ARGS_LOG"
-  rm -rf "$SHAI_HOME/ledgers"
+  rm -rf "$SHAI_HOME/ledgers" "$SHAI_HOME/sessions" "$SHAI_HOME/failures"
   echo 0 >"$WORKER_RC_FILE"
   echo 0 >"$EDIT_RC_FILE"
   echo 0 >"$SEARCH_RC_FILE"
@@ -75,6 +75,31 @@ assert_eq "$RC" "0" "review_dispatcher: exit 0 when no PRs match"
 assert_contains "$OUT" "no matching PRs" "review_dispatcher: reports idle tick"
 assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
   "review_dispatcher: no worker dispatched on idle tick"
+# Expected-zero assertion (#388): an idle tick must leave $SHAI_HOME/sessions/ empty — no
+# stillborn session files on every timer tick. Mutation-checked: reverting wf_init to eager
+# seeding turns this red.
+assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "review_dispatcher: idle tick creates no session files"
+
+# --- dispatching tick: session IS materialized (positive control for the idle zero-count) ---
+# The same fixture shape with a matching PR must produce the artifact the idle tick does not:
+# exactly two files — the session log seeded with the system prompt plus the empty
+# .latest.json sibling. The count (not bare existence) catches a fix that writes one file
+# instead of two; the adjacent zero-count above provides the contrast. Mutation-checked
+# (#388): removing the dispatcher's wf_seed_session call turns these red.
+desc "dispatching tick materializes the session"
+reset_state
+cat >"$SEARCH_FIXTURE" <<'JSON'
+[{"repository":{"nameWithOwner":"owner/repo"},"number":42}]
+JSON
+OUT=$("$DIR/workflows/review_dispatcher/run.sh" 2>&1)
+RC=$?
+assert_eq "$RC" "0" "review_dispatcher: dispatching tick exits 0"
+assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "2" \
+  "review_dispatcher: dispatching tick creates exactly two session files"
+SESSION_LOG=$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f -name '*.jsonl' | head -n1)
+assert_eq "$(jq -r '.source' "$SESSION_LOG" | head -n1)" "system" \
+  "review_dispatcher: dispatching tick seeds the system prompt as the first event"
 
 # --- scoped search: uses --involves @me ---
 desc "scoped search"
@@ -93,6 +118,18 @@ OUT=$("$DIR/workflows/review_dispatcher/run.sh" 2>&1)
 RC=$?
 assert_eq "$RC" "1" "review_dispatcher: exit 1 when gh search fails"
 assert_contains "$OUT" "ERROR" "review_dispatcher: prints ERROR on search failure"
+# wf_fail on a pure-bash tick still records a failure attributed to this workflow (not the
+# _repl fallback) with the minted session id, and still writes no session files.
+assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "review_dispatcher: failed search tick creates no session files"
+FAILURE_LOG="$SHAI_HOME/failures/review_dispatcher.jsonl"
+assert_eq "$(test -f "$FAILURE_LOG" && echo yes || echo no)" "yes" \
+  "review_dispatcher: records the search failure"
+assert_eq "$(jq -r '.workflow' "$FAILURE_LOG" | head -n1)" "review_dispatcher" \
+  "review_dispatcher: failure attributed to the workflow name, not _repl"
+FAILURE_SID=$(jq -r '.session_id' "$FAILURE_LOG" | head -n1)
+assert_eq "$(test -n "$FAILURE_SID" && echo set || echo empty)" "set" \
+  "review_dispatcher: failure record carries the minted session_id"
 
 # --- single PR: label removed before dispatch, then worker run, ledger marked ---
 desc "single PR happy path"
@@ -117,6 +154,9 @@ else
   echo -e "  ${RED}✗${NC} review_dispatcher: wf_mark did not record PR key"
   FAILED=1
 fi
+LEDGER_SID=$(jq -r '.session_id' "$LEDGER" 2>/dev/null | head -n1)
+assert_eq "$(test -n "$LEDGER_SID" && echo set || echo empty)" "set" \
+  "review_dispatcher: wf_mark ledger entry carries a non-empty session_id"
 
 # --- multiple PRs: all processed sequentially ---
 desc "multiple PRs"
