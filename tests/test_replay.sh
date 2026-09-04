@@ -1,8 +1,9 @@
 #!/bin/bash
 # test_replay.sh — unit tests for the shared replay classifier in lib/replay.sh
-# Covers: classify_replay — every verdict (no-log, no-session-id, unsafe-session-id,
-#         committed via run_id and via retry_of, no-user-message, replayable), the extracted
-#         REPLAY_SESSION / USER_TEXT values, and check-order pinning
+# Covers: classify_replay — every verdict (unsafe-run-id, no-log, no-session-id,
+#         unsafe-session-id, committed via run_id and via retry_of, no-user-message,
+#         replayable), the extracted REPLAY_SESSION / USER_TEXT values, and check-order
+#         pinning
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -37,6 +38,16 @@ classify() {
   SHAI_HOME="$1" classify_replay "$2"
   printf '%s' "$REPLAY_VERDICT"
 }
+
+# --- run-id guard: unsafe-run-id -------------------------------------------------
+# classify_replay guards its own $rid exactly as shai-retry's early --run check does, so
+# a caller that passes an unvalidated id cannot make the function open a path outside
+# runs/. Guard branches get unit tests (CLAUDE.md). The home below has no run logs at
+# all, which also pins the order: the id is reported before precondition 1's no-log.
+GOH=$(mktemp -d)
+_CLEANUP_DIRS+=("$GOH")
+assert_eq "$(classify "$GOH" "run/evil")" "unsafe-run-id" "classify: run id with / → unsafe-run-id"
+assert_eq "$(classify "$GOH" "a..b")" "unsafe-run-id" "classify: run id with .. → unsafe-run-id"
 
 # --- precondition 1: no-log ---------------------------------------------------
 NOH=$(mktemp -d)

@@ -80,6 +80,12 @@ if [ -n "$REPLAY_RUN" ]; then
       printf 'run %s already committed\n' "$REPLAY_RUN"
       exit 0
       ;;
+    unsafe-run-id)
+      # Unreachable from this script (the --run guard above exits first); kept so the
+      # verdict→message mapping stays total if the guard ever moves.
+      printf 'error: run_id must not contain / or .. (got "%s")\n' "$REPLAY_RUN" >&2
+      exit 1
+      ;;
     no-log)
       printf 'error: run log not found: %s\n' "$FAILED_RUN_LOG" >&2
       exit 1

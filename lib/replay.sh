@@ -6,6 +6,9 @@ set -uo pipefail
 # classify_replay <run_id>: run shai-retry's five replay preconditions over the run log at
 # runs/<run_id>/events.jsonl and set three caller-scope variables:
 #   REPLAY_VERDICT  one of:
+#     unsafe-run-id     run id contains / or .. (the guard shai-retry applies before its
+#                       preconditions, mirrored here so no caller can pass an id that
+#                       reads outside runs/)
 #     no-log            run log missing or empty (precondition 1)
 #     no-session-id     no meta.session_id anywhere in the log (precondition 2)
 #     unsafe-session-id session id contains / or .. (precondition 3)
@@ -18,8 +21,9 @@ set -uo pipefail
 #   REPLAY_SESSION  the first non-null meta.session_id from the log (set before
 #                   precondition 3, so a caller can name the offending id on unsafe)
 #   USER_TEXT       the first user message's payload.text (set before precondition 5)
-# Preconditions are checked in shai-retry's historical order, so a log failing several of
-# them classifies as the FIRST failure — the message a user sees does not change.
+# The run-id guard is checked first, then the preconditions in shai-retry's historical
+# order, so a log failing several of them classifies as the FIRST failure — the message a
+# user sees does not change.
 # The function prints nothing: the payloads are free-form values (USER_TEXT can be
 # multi-line), so a caller that needs them must call the function directly — a
 # `$(classify_replay ...)` command substitution forks a subshell and discards the
@@ -33,6 +37,13 @@ set -uo pipefail
 #                            # caller-scope outputs, read by the caller (see header)
 classify_replay() {
   local rid="$1"
+  # Same guard shai-retry applies to --run before any other check: an unvalidated id must
+  # not steer the path below outside runs/. Checked first so the verdict order matches
+  # shai-retry's.
+  if [[ "$rid" =~ [/] ]] || [[ "$rid" == *..* ]]; then
+    REPLAY_VERDICT="unsafe-run-id"
+    return 0
+  fi
   local state_dir="${STATE_DIR:-${SHAI_HOME:-$HOME/.shai}}"
   local runs_dir="${RUNS_DIR:-$state_dir/runs}"
   local run_log="$runs_dir/$rid/events.jsonl"
