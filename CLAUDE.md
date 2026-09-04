@@ -780,7 +780,9 @@ failure → `wf_fail`/exit 1 (next tick retries); blocked dependencies → defer
 (next tick re-checks); dependency API failure → defer with warning (next tick retries);
 missing dependency endpoint (404/410) → fail loudly (exit 1, no silent stall); label
 removal failure for one issue → warn, skip, continue (label stays for retry); worker failure →
-label already removed, ledger left unmarked (re-label to retry). Install via
+label already removed, ledger left unmarked (re-label to retry); session seed failure
+(`wf_seed_session`) → warn, record a `workflow_error`, skip, continue (label already removed;
+re-label to retry). Install via
 `shai-supervise install workflows/issue_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
 
@@ -813,7 +815,9 @@ materialized (`wf_seed_session`) only when a dispatch actually runs, so an idle 
 session files under `$SHAI_HOME/sessions/`. Error handling:
 no matches → exit 0 (idle tick); `gh search` failure → `wf_fail`/exit 1 (next tick retries);
 label removal failure for one PR → warn, skip, continue (label stays for retry); worker
-failure → label already removed, ledger left unmarked (re-label to retry). The `issue_worker`
+failure → label already removed, ledger left unmarked (re-label to retry); session seed
+failure (`wf_seed_session`) → warn, record a `workflow_error`, skip, continue (label already
+removed; re-label to retry). The `issue_worker`
 prompt instructs the LLM to add the `shai-review-dispatcher` label to PRs it creates once CI
 passes (creating the label in the repo first if needed), so PRs from `issue_worker` are
 automatically queued for review. Install via
@@ -891,7 +895,9 @@ no matches → exit 0 (idle tick); `gh search` failure → `wf_fail`/exit 1 (nex
 label removal failure for one PR → warn, skip, continue (label stays for retry) — the
 already-seen ledger path warns too, so a PR that can never be de-labeled does not silently
 re-appear as a skip on every tick; worker failure → label already removed, ledger left
-unmarked (re-label to retry). The `pr_reviewer` prompt instructs the LLM to add the
+unmarked (re-label to retry); session seed failure (`wf_seed_session`) → warn, record a
+`workflow_error`, skip, continue (label already removed; re-label to retry). The `pr_reviewer`
+prompt instructs the LLM to add the
 `shai-resolve-dispatcher` label once its review is posted with at least one actionable inline
 comment (creating the label in the repo first if needed), so reviewed PRs that have findings
 are automatically queued for resolution. Install via

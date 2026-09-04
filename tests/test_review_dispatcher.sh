@@ -253,6 +253,51 @@ else
   echo -e "  ${GREEN}✓${NC} review_dispatcher: ledger not marked when worker fails"
 fi
 
+# --- seed failure: label already removed, failure recorded, item skipped, tick continues ---
+# wf_seed_session runs after the label is removed, so a bare call under `set -e` would abort
+# the tick after the `gh` mutation with no failure record — pre-#388 the same failure aborted
+# in wf_init before any mutation. A read-only sessions dir makes the seed fail (skipped as
+# root, where chmod 555 is no obstacle). Mutation-checked: reverting the guard to a bare
+# `wf_seed_session` call turns the WARNING, failure-record, and zero-file assertions red.
+if [ "$(id -u)" -ne 0 ]; then
+  desc "seed failure records a failure and skips the dispatch"
+  reset_state
+  mkdir -p "$SHAI_HOME/sessions"
+  chmod 555 "$SHAI_HOME/sessions"
+  cat >"$SEARCH_FIXTURE" <<'JSON'
+[{"repository":{"nameWithOwner":"owner/repo"},"number":42}]
+JSON
+  OUT=$("$DIR/workflows/review_dispatcher/run.sh" 2>&1)
+  RC=$?
+  chmod 755 "$SHAI_HOME/sessions"
+  assert_eq "$RC" "1" "review_dispatcher: exit 1 when seeding fails (only item, nothing dispatched)"
+  assert_contains "$OUT" "WARNING: could not materialize session for owner/repo#42" \
+    "review_dispatcher: warns when seeding fails"
+  assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-review-dispatcher" \
+    "review_dispatcher: label was still removed before the seed failure"
+  assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
+    "review_dispatcher: no dispatch when seeding fails"
+  FAILURE_LOG="$SHAI_HOME/failures/review_dispatcher.jsonl"
+  assert_eq "$(test -f "$FAILURE_LOG" && echo yes || echo no)" "yes" \
+    "review_dispatcher: seed failure recorded in the failure store"
+  assert_eq "$(jq -r '.workflow' "$FAILURE_LOG" | head -n1)" "review_dispatcher" \
+    "review_dispatcher: seed failure attributed to the workflow name"
+  assert_eq "$(jq -r '.context.detail' "$FAILURE_LOG" | head -n1)" "re-label to retry" \
+    "review_dispatcher: seed failure tells the operator to re-label"
+  SEED_SID=$(jq -r '.session_id' "$FAILURE_LOG" | head -n1)
+  assert_eq "$(test -n "$SEED_SID" && echo set || echo empty)" "set" \
+    "review_dispatcher: seed failure record carries the minted session_id"
+  if [ -f "$SHAI_HOME/ledgers/review_dispatcher.jsonl" ] &&
+    grep -q '"pr:owner/repo:42"' "$SHAI_HOME/ledgers/review_dispatcher.jsonl"; then
+    echo -e "  ${RED}✗${NC} review_dispatcher: should not mark ledger when seeding fails"
+    FAILED=1
+  else
+    echo -e "  ${GREEN}✓${NC} review_dispatcher: ledger not marked when seeding fails"
+  fi
+  assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
+    "review_dispatcher: failed seed leaves no session files"
+fi
+
 # --- input validation: malformed repo/number skipped ---
 desc "input validation"
 reset_state
