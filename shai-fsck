@@ -2,7 +2,8 @@
 # shai-fsck — report $SHAI_HOME store inconsistencies as normalized findings
 # Usage: shai-fsck [--store STORE] [--check ID] [--after DATE] [--before DATE]
 #        [--fix] [--dry-run] [--summary] [--json]
-# Reads: $SHAI_HOME/sessions/, $SHAI_HOME/runs/, $SHAI_HOME/ledgers/, $SHAI_HOME/failures/
+# Reads: $SHAI_HOME/sessions/, $SHAI_HOME/runs/, $SHAI_HOME/ledgers/, $SHAI_HOME/failures/,
+#        workflows/ (L4 resolves a ledger filename against the shipped workflow directories)
 # Writes: findings table to stdout (digest to stderr), the findings array to stdout with
 #         --json, or the digest alone to stdout with --summary; never modifies the store
 # Exit: 0 clean (no findings); 1 problems found; 2 usage error; 3 operational failure
@@ -26,12 +27,19 @@ SESSIONS_DIR="$STATE_DIR/sessions"
 RUNS_DIR="$STATE_DIR/runs"
 LEDGERS_DIR="$STATE_DIR/ledgers"
 FAILURES_DIR="$STATE_DIR/failures"
+# The install tree's workflows/: L4 checks a ledger filename against the workflow
+# directories shipped next to this script (the repo root in a dev clone, the versioned
+# install tree in a release install — the exec wrapper hands off to the real script path).
+WORKFLOWS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/workflows"
 
-# Check catalog: id -> the store its scan reads. S4 is the only check this issue ships;
-# the session/run/ledger/failure check families append their ids here in later issues.
-declare -A CHECK_STORE=([S4]=sessions)
-# Known ids in scan order (associative-array keys alone have no defined order).
-KNOWN_CHECKS=(S4)
+# Check catalog: id -> the store its scan reads ("all" for the cross-store X1 name-pattern
+# check). The ledger, failure, and cross-store families this issue ships are L1-L4, F1-F4,
+# X1; the sessions and runs families (S1-S3/S5, R1-R6) append their ids here later.
+declare -A CHECK_STORE=([S4]=sessions [L1]=ledgers [L2]=ledgers [L3]=ledgers [L4]=ledgers
+  [F1]=failures [F2]=failures [F3]=failures [F4]=failures [X1]=all)
+# Known ids in scan order (associative-array keys alone have no defined order); the order
+# also fixes the findings' row order within a store.
+KNOWN_CHECKS=(S4 L1 L2 L3 L4 F1 F2 F3 F4 X1)
 ALL_STORES=(sessions runs ledgers failures)
 
 STORES=() CHECKS=()
@@ -216,6 +224,288 @@ ck_S4() {
   done
 }
 
+# want <id>: "true"/"false" whether check <id> is selected for this run. The L and F jq
+# passes receive these as --argjson so one pass per store file emits exactly the selected
+# family members' findings.
+want() {
+  if [ -n "${WANT_CHECKS[$1]:-}" ]; then printf 'true'; else printf 'false'; fi
+}
+
+# L1/L2/L3 — ledgers/<workflow>.jsonl, one jq pass per file. The --after/--before window
+# does not apply here: it is a filename-level filter for items carrying an embedded date,
+# and a ledger line that fails L1 has no parseable date at all, while an L2 duplicate is a
+# fact about the whole file.
+#
+# L1 (error): every line parses and has a non-empty string key, a ts, and a session_id.
+#   wf_mark writes all three, so a violation is a hand edit or a torn append.
+# L2 (error): no key appears twice. wf_mark is idempotent (wf_seen short-circuits), so a
+#   duplicate is evidence of a dispatcher race or a hand edit — it breaks the "have I done
+#   this already" guarantee the ledger exists to answer, hence error, and the summary
+#   names the duplicated key.
+# L3 (info): session_id resolves to an existing session log. shai-prune --sessions
+#   legitimately removes sessions a ledger still names, so this is info, not a defect.
+#
+# The pass appends complete accumulator records itself (same eight-key contract as
+# finding()) — routing each through the shell would cost a second jq invocation per
+# finding. Dispatch runs ck_L once per scan, from the first selected L1/L2/L3 arm, so the
+# one-pass-per-file property holds however many L ids are selected.
+ck_L() {
+  if [ -n "${L_SCAN_DONE:-}" ]; then return; fi
+  L_SCAN_DONE=1
+  local f wf
+  for f in "$LEDGERS_DIR"/*.jsonl; do
+    [ -f "$f" ] || continue
+    wf="$(basename "$f" .jsonl)"
+    jq -cnR --arg path "$f" --arg wf "$wf" \
+      --argjson l1 "$(want L1)" --argjson l2 "$(want L2)" --argjson l3 "$(want L3)" \
+      --argjson sessions "$SESSION_MAP_JSON" \
+      '
+      def l1_reason($v):
+        if $v.__unparseable == true then "is not valid JSON"
+        elif ($v | type) != "object" then "is not a JSON object"
+        elif ((($v.key // null) | type) != "string") or $v.key == "" then
+          "key is missing or not a non-empty string"
+        elif ($v | has("ts") | not) or $v.ts == null then "is missing ts"
+        elif ($v | has("session_id") | not) or $v.session_id == null then
+          "is missing session_id"
+        else empty end;
+      [inputs] as $lines
+      | [$lines | to_entries[] |
+          {n: (.key + 1), v: (try (.value | fromjson) catch {__unparseable: true})}]
+          as $parsed
+      | (if $l1 then
+           $parsed[]
+           | l1_reason(.v) as $reason
+           | {check: "L1", severity: "error", store: "ledgers",
+              target: $wf, path: $path,
+              summary: ("line " + (.n | tostring) + " " + $reason),
+              fixable: false,
+              remedy: "hand-edit the ledger to repair or remove the line"}
+         else empty end),
+        (if $l2 then
+           [$parsed[] | .v | select(type == "object") | .key
+            | select((type == "string") and (. != ""))]
+           | group_by(.)
+           | map(select(length > 1))
+           | .[]
+           | {check: "L2", severity: "error", store: "ledgers",
+              target: $wf, path: $path,
+              summary: ("duplicate key \"" + .[0] + "\" (" + (length | tostring) + " entries)"),
+              fixable: false,
+              remedy: "hand-edit the ledger to remove the duplicate entry"}
+         else empty end),
+        (if $l3 then
+           $parsed[]
+           | .v as $v
+           | select((($v.session_id // null) | type) == "string"
+                    and $v.session_id != ""
+                    and $sessions[$v.session_id] != true)
+           | {check: "L3", severity: "info", store: "ledgers",
+              target: $wf, path: $path,
+              summary: ("line " + (.n | tostring) + " references missing session \""
+                        + $v.session_id + "\""),
+              fixable: false,
+              remedy: "ignore (the session was likely pruned) or hand-edit the ledger entry"}
+         else empty end)
+      ' "$f" >>"$FINDINGS_FILE"
+  done
+}
+
+# L4 — the ledger filename names a directory under workflows/ (info). A ledger outlives a
+# workflow that was renamed or deleted; that is normal operation, so this reports rather
+# than judges — info, never fixable.
+ck_L4() {
+  local f wf
+  for f in "$LEDGERS_DIR"/*.jsonl; do
+    [ -f "$f" ] || continue
+    wf="$(basename "$f" .jsonl)"
+    if [ ! -d "$WORKFLOWS_DIR/$wf" ]; then
+      finding L4 info ledgers "$wf" "$f" \
+        "no workflows/$wf/ directory (workflow removed or renamed?)" false \
+        "ignore (the ledger outlived the workflow) or delete the ledger by hand"
+    fi
+  done
+}
+
+# F1-F4 — failures/<workflow>.jsonl, one jq pass per file. The failure store feeds
+# shai-stats' Failures: section, so a malformed record silently skews reported failure
+# rates — F1/F3 are errors for exactly that reason. Like the L family, the --after/--before
+# window does not apply (per-record corruption has no filename-level date to filter on).
+#
+# F1 (error): every line parses and carries all seven documented keys — ts, workflow,
+#   run_id, session_id, category, summary, context (nulls are fine: fail_record writes
+#   null ids when no trace context exists).
+# F2 (warn): category is one of the five documented values (api_error, dispatch_error,
+#   tool_error, policy_denial, workflow_error). A new category may legitimately land in
+#   code before the docs catch up, so this notices rather than blocks. A record missing
+#   the key entirely is F1's job (the guard below checks has("category") so the two never
+#   double-report); a present-but-null category is impossible through fail_record (the
+#   category is a --arg string) and is flagged here too.
+# F3 (error): context is a JSON object. fail_record's {"raw": ...} fallback guarantees the
+#   object shape, so a violation means a hand edit or a writer outside the documented path
+#   — should be impossible, hence error.
+# F4 (info): a non-null run_id/session_id resolves (to runs/<id>/ or sessions/<id>.jsonl).
+#   Null ids — no trace context — are skipped, not flagged; pruning legitimately removes
+#   runs/sessions a record still names, so unresolved ids are info.
+ck_F() {
+  if [ -n "${F_SCAN_DONE:-}" ]; then return; fi
+  F_SCAN_DONE=1
+  local f wf
+  for f in "$FAILURES_DIR"/*.jsonl; do
+    [ -f "$f" ] || continue
+    wf="$(basename "$f" .jsonl)"
+    jq -cnR --arg path "$f" --arg wf "$wf" \
+      --argjson f1 "$(want F1)" --argjson f2 "$(want F2)" \
+      --argjson f3 "$(want F3)" --argjson f4 "$(want F4)" \
+      --argjson sessions "$SESSION_MAP_JSON" --argjson runs "$RUN_MAP_JSON" \
+      '
+      def categories: ["api_error", "dispatch_error", "tool_error", "policy_denial",
+                       "workflow_error"];
+      def f1_reason($v):
+        if $v.__unparseable == true then "is not valid JSON"
+        elif ($v | type) != "object" then "is not a JSON object"
+        elif ($v | has("ts") | not) then "is missing key ts"
+        elif ($v | has("workflow") | not) then "is missing key workflow"
+        elif ($v | has("run_id") | not) then "is missing key run_id"
+        elif ($v | has("session_id") | not) then "is missing key session_id"
+        elif ($v | has("category") | not) then "is missing key category"
+        elif ($v | has("summary") | not) then "is missing key summary"
+        elif ($v | has("context") | not) then "is missing key context"
+        else empty end;
+      [inputs] as $lines
+      | [$lines | to_entries[] |
+          {n: (.key + 1), v: (try (.value | fromjson) catch {__unparseable: true})}]
+          as $parsed
+      | (if $f1 then
+           $parsed[]
+           | f1_reason(.v) as $reason
+           | {check: "F1", severity: "error", store: "failures",
+              target: $wf, path: $path,
+              summary: ("line " + (.n | tostring) + " " + $reason),
+              fixable: false,
+              remedy: "hand-edit the failure log to repair or remove the line"}
+         else empty end),
+        (if $f2 then
+           $parsed[]
+           | select((.v | type) == "object")
+           | .v.category as $c
+           | select((.v | has("category")) and ((categories | index($c)) == null))
+           | {check: "F2", severity: "warn", store: "failures",
+              target: $wf, path: $path,
+              summary: (if $c == null then ("line " + (.n | tostring) + " category is null")
+                        else ("line " + (.n | tostring) + " has unknown category \"" + $c + "\"") end),
+              fixable: false,
+              remedy: "ignore (a new category may predate its docs) or hand-edit the record"}
+         else empty end),
+        (if $f3 then
+           $parsed[]
+           | select((.v | type) == "object")
+           | select((.v | has("context")) and ((.v.context | type) != "object"))
+           | {check: "F3", severity: "error", store: "failures",
+              target: $wf, path: $path,
+              summary: ("line " + (.n | tostring) + " context is " + (.v.context | type) +
+                        ", not an object"),
+              fixable: false,
+              remedy: "hand-edit the record — every writer must go through fail_record"}
+         else empty end),
+        (if $f4 then
+           ($parsed[]
+            | select((.v | type) == "object")
+            | .v.run_id as $rid
+            | select((($rid // null) | type) == "string"
+                     and $rid != ""
+                     and $runs[$rid] != true)
+            | {check: "F4", severity: "info", store: "failures",
+               target: $wf, path: $path,
+               summary: ("line " + (.n | tostring) + " run_id \"" + $rid + "\" does not resolve"),
+               fixable: false,
+               remedy: "ignore (the run was likely pruned) or hand-edit the record"}),
+           ($parsed[]
+            | select((.v | type) == "object")
+            | .v.session_id as $sid
+            | select((($sid // null) | type) == "string"
+                     and $sid != ""
+                     and $sessions[$sid] != true)
+            | {check: "F4", severity: "info", store: "failures",
+               target: $wf, path: $path,
+               summary: ("line " + (.n | tostring) + " session_id \"" + $sid + "\" does not resolve"),
+               fixable: false,
+               remedy: "ignore (the session was likely pruned) or hand-edit the record"})
+         else empty end)
+      ' "$f" >>"$FINDINGS_FILE"
+  done
+}
+
+# X1 — every entry under a store directory matches that store's expected name pattern
+# (info). This is the "report the unknown, touch nothing" half of fsck: without it the
+# clean verdict is a lie by omission, because "no problems found" would mean only "every
+# file I recognized was fine". The patterns are the real writers' shapes: sessions/ holds
+# <id>.jsonl plus its <id>.latest.json sibling, runs/<id>/ holds events.jsonl plus
+# <span>-request.json / <span>-response.json dumps, and ledgers/ and failures/ hold
+# <workflow>.jsonl. Deliberately never fixable: deleting something fsck cannot classify
+# is exactly what an integrity tool must not do, so the remedy is manual.
+ck_X1() {
+  local store="$1" dir f g base gbase
+  dir="$(store_dir "$store")"
+  case "$store" in
+    sessions)
+      for f in "$dir"/*; do
+        [ -e "$f" ] || continue
+        base="$(basename "$f")"
+        if [ -f "$f" ]; then
+          case "$base" in
+            *.jsonl | *.latest.json) ;;
+            *) x1_finding sessions "$base" "*.jsonl or *.latest.json" ;;
+          esac
+        else
+          x1_finding sessions "$base" "*.jsonl or *.latest.json"
+        fi
+      done
+      ;;
+    ledgers | failures)
+      for f in "$dir"/*; do
+        [ -e "$f" ] || continue
+        base="$(basename "$f")"
+        if [ -f "$f" ]; then
+          case "$base" in
+            *.jsonl) ;;
+            *) x1_finding "$store" "$base" "*.jsonl" ;;
+          esac
+        else
+          x1_finding "$store" "$base" "*.jsonl"
+        fi
+      done
+      ;;
+    runs)
+      for f in "$dir"/*; do
+        [ -e "$f" ] || continue
+        base="$(basename "$f")"
+        if [ -d "$f" ]; then
+          for g in "$f"/*; do
+            [ -e "$g" ] || continue
+            gbase="$(basename "$g")"
+            case "$gbase" in
+              events.jsonl | *-request.json | *-response.json) ;;
+              *) x1_finding runs "$base/$gbase" \
+                "events.jsonl, *-request.json, or *-response.json" ;;
+            esac
+          done
+        else
+          x1_finding runs "$base" "a run directory"
+        fi
+      done
+      ;;
+  esac
+}
+
+# x1_finding <store> <store-relative-path> <expected-pattern>: emit one X1 info finding.
+x1_finding() {
+  local store="$1" rel="$2" expected="$3"
+  finding X1 info "$store" "$rel" "$(store_dir "$store")/$rel" \
+    "unrecognized entry (expected $expected)" false \
+    "inspect and remove the file by hand if it is a stray or temp file"
+}
+
 # scan: run every selected check against every selected store. --store and --check are
 # repeatable filters; a check that belongs to an unselected store simply never fires.
 declare -A WANT_STORES=()
@@ -231,6 +521,28 @@ else
   for c in "${CHECKS[@]}"; do WANT_CHECKS["$c"]=1; done
 fi
 
+# Resolution maps for L3/F4: the existing session ids and run ids, gathered once from the
+# filesystem and handed into the ledger/failure passes as {"<id>": true} JSON objects, so
+# a record's session_id/run_id resolution test happens inside the file's single jq pass
+# rather than as a per-record filesystem lookup.
+declare -a EXISTING_SESSIONS=() EXISTING_RUNS=()
+if [ -d "$SESSIONS_DIR" ]; then
+  for f in "$SESSIONS_DIR"/*.jsonl; do
+    [ -f "$f" ] || continue
+    EXISTING_SESSIONS+=("$(basename "$f" .jsonl)")
+  done
+fi
+if [ -d "$RUNS_DIR" ]; then
+  for d in "$RUNS_DIR"/*/; do
+    [ -d "$d" ] || continue
+    EXISTING_RUNS+=("$(basename "$d")")
+  done
+fi
+SESSION_MAP_JSON="$(printf '%s\n' "${EXISTING_SESSIONS[@]+"${EXISTING_SESSIONS[@]}"}" |
+  jq -cRn '[inputs | {(.): true}] | add // {}')"
+RUN_MAP_JSON="$(printf '%s\n' "${EXISTING_RUNS[@]+"${EXISTING_RUNS[@]}"}" |
+  jq -cRn '[inputs | {(.): true}] | add // {}')"
+
 for store in "${ALL_STORES[@]}"; do
   if [ -z "${WANT_STORES[$store]:-}" ]; then continue; fi
   dir="$(store_dir "$store")"
@@ -242,12 +554,17 @@ for store in "${ALL_STORES[@]}"; do
   fi
   for check in "${KNOWN_CHECKS[@]}"; do
     if [ -z "${WANT_CHECKS[$check]:-}" ]; then continue; fi
-    if [ "${CHECK_STORE[$check]}" != "$store" ]; then continue; fi
+    if [ "${CHECK_STORE[$check]}" != "$store" ] && [ "${CHECK_STORE[$check]}" != "all" ]; then continue; fi
     # Explicit dispatch, not a dynamic "$check" invocation: shellcheck can prove these
-    # functions are reached, and the check families added in later issues add case arms
-    # here next to their catalog entries above.
+    # functions are reached, and new check families add case arms here next to their
+    # catalog entries above. L1-L3 and F1-F4 share one jq pass per store file across the
+    # whole family (ck_L/ck_F), dispatched from the first selected member's arm.
     case "$check" in
       S4) ck_S4 ;;
+      L1 | L2 | L3) ck_L ;;
+      L4) ck_L4 ;;
+      F1 | F2 | F3 | F4) ck_F ;;
+      X1) ck_X1 "$store" ;;
     esac
   done
 done
