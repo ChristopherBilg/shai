@@ -337,7 +337,10 @@ ck_L4() {
 #   null ids when no trace context exists).
 # F2 (warn): category is one of the five documented values (api_error, dispatch_error,
 #   tool_error, policy_denial, workflow_error). A new category may legitimately land in
-#   code before the docs catch up, so this notices rather than blocks.
+#   code before the docs catch up, so this notices rather than blocks. A record missing
+#   the key entirely is F1's job (the guard below checks has("category") so the two never
+#   double-report); a present-but-null category is impossible through fail_record (the
+#   category is a --arg string) and is flagged here too.
 # F3 (error): context is a JSON object. fail_record's {"raw": ...} fallback guarantees the
 #   object shape, so a violation means a hand edit or a writer outside the documented path
 #   — should be impossible, hence error.
@@ -386,10 +389,11 @@ ck_F() {
            $parsed[]
            | select((.v | type) == "object")
            | .v.category as $c
-           | select(($c != null) and ((categories | index($c)) == null))
+           | select((.v | has("category")) and ((categories | index($c)) == null))
            | {check: "F2", severity: "warn", store: "failures",
               target: $wf, path: $path,
-              summary: ("line " + (.n | tostring) + " has unknown category \"" + $c + "\""),
+              summary: (if $c == null then ("line " + (.n | tostring) + " category is null")
+                        else ("line " + (.n | tostring) + " has unknown category \"" + $c + "\"") end),
               fixable: false,
               remedy: "ignore (a new category may predate its docs) or hand-edit the record"}
          else empty end),

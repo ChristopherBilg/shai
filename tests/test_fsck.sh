@@ -444,6 +444,21 @@ for c in api_error dispatch_error tool_error policy_denial workflow_error; do
   assert_eq "$?" "0" "category $c exits 0"
   assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "category $c yields zero F2"
 done
+# A null category is impossible through fail_record (the category is a --arg string), so a
+# present-but-null value is a hand edit and F2 flags it; F1 stays quiet because the key is
+# carried — F1 is presence-only, F2 owns values. Mutation-checked: without the F2 null arm
+# this record scanned clean (exit 0, zero findings).
+setup_home
+fixture_failure heartbeat api_error "boom"
+printf '%s\n' '{"ts":"2026-08-11T12:00:00Z","workflow":"heartbeat","run_id":null,"session_id":null,"category":null,"summary":"s","context":{}}' >>"$SHAI_HOME/failures/heartbeat.jsonl"
+OUT=$("$FSCK" --check F2 --json)
+assert_eq "$?" "1" "null category exits 1 under F2"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "null category yields exactly one F2"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 2 category is null" \
+  "the null category is named"
+OUT=$("$FSCK" --check F1 --json)
+assert_eq "$?" "0" "F1 stays quiet: the category key is present"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "F1 yields zero for a present-but-null category"
 
 # --- F3: context is a JSON object (error — fail_record's {"raw": ...} fallback makes a
 #     non-object context impossible through the documented write path) ---
