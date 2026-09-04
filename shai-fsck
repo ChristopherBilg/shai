@@ -344,9 +344,11 @@ ck_R2() {
 # set but no SHAI_SPAN_ID dumps to span_0-request.json, and real spans start at
 # span_1, so span_0 is never a gap and never a chain member. The chain is checked
 # only when the sequence is contiguous — a gapped sequence has no linear chain by
-# definition, and reporting both for one corruption would double-count it.
+# definition, and reporting both for one corruption would double-count it. Span ids
+# outside the span_N shape are reported individually: a corrupted id like span_1x is
+# otherwise invisible to both the gap and the chain check.
 ck_R3() {
-  local dir id date log summary n max missing k parent expected
+  local dir id date log summary n max missing k parent expected s
   for dir in "$RUNS_DIR"/*/; do
     if [ ! -d "$dir" ]; then continue; fi
     id="$(basename "$dir")"
@@ -358,6 +360,11 @@ ck_R3() {
     if [ -z "$summary" ]; then continue; fi
     n="$(printf '%s' "$summary" | jq -r '.count')"
     if [ "$n" -eq 0 ]; then continue; fi
+    while IFS= read -r s; do
+      finding R3 warn runs "$id" "$log" \
+        "span id $s is not in span_N form (span_1..span_N, or span_0 for hand runs)" \
+        false "manual: repair the run log"
+    done < <(printf '%s' "$summary" | jq -r '.spans[] | select(test("^span_[0-9]+$") | not)')
     max="$(printf '%s' "$summary" | jq -r '[.spans[]
       | select(test("^span_[0-9]+$")) | sub("^span_"; "") | tonumber
       | select(. > 0)] | if length == 0 then 0 else max end')"
@@ -514,17 +521,30 @@ ck_R6() {
 # user understands why shai-trace warns, not because anything is broken. Run ids
 # containing / or .. are skipped — they could never name a real run directory, and
 # probing them would re-derive shai-retry's path guard as a bare existence check.
+# ck_R7 also fires on the --store runs path (the dispatch arm and the missing-runs/
+# exception above), where the scan loop's sessions-store readability guard does not
+# apply — the check carries its own exit-3 guards so an unreadable sessions dir or an
+# unparseable session log aborts the scan instead of reading as a false-clean report.
 ck_R7() {
   local f id date refs rid
+  # A missing sessions dir is clean by definition (no session logs, no references);
+  # a present-but-unreadable one must abort — mirror the per-store guard above.
+  if [ -d "$SESSIONS_DIR" ] && { [ ! -r "$SESSIONS_DIR" ] || [ ! -x "$SESSIONS_DIR" ]; }; then
+    printf 'error: cannot scan %s (not readable) — scan aborted\n' "$SESSIONS_DIR" >&2
+    exit 3
+  fi
   for f in "$SESSIONS_DIR"/*.jsonl; do
     if [ ! -f "$f" ]; then continue; fi
     id="$(basename "$f" .jsonl)"
     date="$(item_date "$id")"
     if ! in_window "$date"; then continue; fi
-    refs="$(jq -c -s '[.[] | select(type == "object") | .meta.run_id? // empty
-                       | select(type == "string") | select(length > 0)
-                       | select(test("^[^/]+$")) | select(contains("..") | not)]
-                       | unique' "$f" 2>/dev/null)" || refs="[]"
+    if ! refs="$(jq -c -s '[.[] | select(type == "object") | .meta.run_id? // empty
+                           | select(type == "string") | select(length > 0)
+                           | select(test("^[^/]+$")) | select(contains("..") | not)]
+                           | unique' "$f" 2>/dev/null)"; then
+      printf 'error: cannot scan %s (unreadable or unparseable) — scan aborted\n' "$f" >&2
+      exit 3
+    fi
     while IFS= read -r rid; do
       if [ ! -d "$RUNS_DIR/$rid" ]; then
         finding R7 info runs "$rid" "$RUNS_DIR/$rid" \
