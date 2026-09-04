@@ -48,6 +48,8 @@ SID="sess_20260811T090000_aabb"
 make_mixed_session "$SID"
 OUT=$("$EVENTS" --type message --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "2" "type message count"
+OUT=$("$EVENTS" --type message)
+assert_row_count "$OUT" 2 "type message table rows"
 OUT=$("$EVENTS" --type tool_result --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "type tool_result count"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].payload.tool_call_id')" "tu_1" "tool_result id"
@@ -253,6 +255,10 @@ OUT=$("$EVENTS" --type message --recent 2 --json)
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "2" "recent after filter count"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].payload.text')" "e2" "recent 2 first"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[1].payload.text')" "e3" "recent 2 second"
+OUT=$("$EVENTS" --recent 1)
+assert_row_count "$OUT" 1 "recent 1 table rows"
+OUT=$("$EVENTS" --type message --recent 2)
+assert_row_count "$OUT" 2 "recent after filter table rows"
 
 desc "--recent 0: no events"
 setup_events
@@ -262,6 +268,7 @@ OUT=$("$EVENTS" --recent 0 --json)
 assert_eq "$OUT" "[]" "recent 0 produces empty array"
 OUT=$("$EVENTS" --recent 0)
 assert_eq "$OUT" "" "recent 0 human output is empty"
+assert_row_count "$OUT" 0 "recent 0 table rows"
 
 desc "ordering: chronological across sessions, stable within a file"
 setup_events
