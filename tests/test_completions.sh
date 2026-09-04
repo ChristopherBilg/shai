@@ -460,6 +460,14 @@ assert_contains "$out" "tool" "bash: shai-events --source <TAB> offers tool"
 out="$(run_bash _shai_events shai-events --source sys)"
 assert_contains "$out" "system" "bash: shai-events --source sys<TAB> completes system"
 
+# shai-fsck --store is a static list (the event_type pattern above): the four stores
+# are a closed set, so the type enumerates them literally.
+out="$(run_bash _shai_fsck shai-fsck --store "")"
+assert_contains "$out" "sessions" "bash: shai-fsck --store <TAB> offers sessions"
+assert_contains "$out" "runs" "bash: shai-fsck --store <TAB> offers runs"
+assert_contains "$out" "ledgers" "bash: shai-fsck --store <TAB> offers ledgers"
+assert_contains "$out" "failures" "bash: shai-fsck --store <TAB> offers failures"
+
 # Dynamic candidates: run IDs and session IDs from $SHAI_HOME.
 mkdir -p "$SHAI_HOME/runs/run_abc123" "$SHAI_HOME/runs/run_def456"
 mkdir -p "$SHAI_HOME/sessions"
@@ -595,6 +603,31 @@ else
   echo -e "  ${RED}✗${NC} bash: --tool completion offered a non-dispatchable dir (got $out)"
   FAILED=1
 fi
+
+# shai-fsck --check completes from the install dir too, but from a script's own
+# source rather than a directory listing: the fsck_check type parses shai-fsck's
+# KNOWN_CHECKS=(...) line, so each check-family issue that appends an id gets
+# completion for free with no manifest edit. The fixture therefore carries three
+# ids, not the one shai-fsck ships today — the point under test is that the parse
+# splits the whole array, which is what makes the no-manifest-edit claim true.
+# It also guards the parse itself: reformatting KNOWN_CHECKS (onto two lines, or
+# to a different assignment shape) silently empties the candidate list, and this
+# is what catches it.
+printf '#!/bin/bash\nKNOWN_CHECKS=(S4 R1 L2)\n' >"$WF/shai-fsck"
+chmod +x "$WF/shai-fsck"
+out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_fsck shai-fsck --check "")"
+assert_contains "$out" "S4" "bash: shai-fsck --check <TAB> completes check ids from KNOWN_CHECKS"
+assert_contains "$out" "R1" "bash: shai-fsck --check <TAB> completes every id in KNOWN_CHECKS"
+assert_contains "$out" "L2" "bash: shai-fsck --check <TAB> completes the last id in KNOWN_CHECKS"
+out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_fsck shai-fsck --check R)"
+assert_contains "$out" "R1" "bash: shai-fsck --check R<TAB> completes R1"
+if [[ "$out" != *S4* ]]; then
+  echo -e "  ${GREEN}✓${NC} bash: --check completion is prefix-filtered (S4 not offered for 'R')"
+else
+  echo -e "  ${RED}✗${NC} bash: --check completion is prefix-filtered (got $out)"
+  FAILED=1
+fi
+
 out="$(PATH="$STUB_BIN:$PATH" run_bash _shai_events shai-events --tool del)"
 assert_contains "$out" "delete_file" "bash: shai-events --tool del<TAB> completes delete_file"
 if [[ "$out" != *gh* ]]; then

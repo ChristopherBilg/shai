@@ -93,6 +93,20 @@ _shai_bash_policy_action() {
   cur="${COMP_WORDS[COMP_CWORD]}"
   COMPREPLY=( $(compgen -W "$(printf '%s\n' allow prompt deny | cut -f1)" -- "$cur") )
 }
+_shai_bash_fsck_store() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  COMPREPLY=( $(compgen -W "$(printf '%s\n' sessions runs ledgers failures | cut -f1)" -- "$cur") )
+}
+_shai_bash_fsck_check() {
+  local cur
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  if [ -z "${_shai_dir:-}" ] || [ ! -d "${_shai_dir:-}" ]; then
+    COMPREPLY=()
+    return
+  fi
+  COMPREPLY=( $(compgen -W "$(sed -n 's/^KNOWN_CHECKS=(\([^)]*\))/\1/p' "${_shai_dir}/shai-fsck" 2>/dev/null | tr ' ' '\n' | cut -f1)" -- "$cur") )
+}
 
 _shai_read() {
   local cur prev
@@ -362,6 +376,25 @@ _shai_failures() {
   esac
 }
 complete -F _shai_failures shai-failures
+_shai_fsck() {
+  local cur prev
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+  if [[ "$prev" == "--store" ]]; then
+    _shai_bash_fsck_store
+    return
+  fi
+  if [[ "$prev" == "--check" ]]; then
+    _shai_bash_fsck_check
+    return
+  fi
+  if [[ "$cur" == -* ]]; then
+    COMPREPLY=( $(compgen -W "--store --check --after --before --fix --dry-run --summary --json" -- "$cur") )
+    return
+  fi
+  COMPREPLY=()
+}
+complete -F _shai_fsck shai-fsck
 _shai_ledgers() {
   local cur prev
   cur="${COMP_WORDS[COMP_CWORD]}"
