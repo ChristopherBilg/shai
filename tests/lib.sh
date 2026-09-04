@@ -394,6 +394,10 @@ fixture_ledger() {
     return 1
   fi
   session_event="$(fixture_event message user '{"text":"ledger fixture session"}')"
+  # The backing session is synthetic: null its meta.run_id so fsck R7 (a session
+  # event's meta.run_id must have a run directory on disk) stays quiet by
+  # construction, exactly as fixture_session's session_id rewrite keeps S3 quiet.
+  session_event="$(printf '%s' "$session_event" | jq -c '.meta.run_id = null')"
   sid="$(fixture_session "" "$session_event")"
   dir="$SHAI_HOME/ledgers"
   file="$dir/$workflow.jsonl"

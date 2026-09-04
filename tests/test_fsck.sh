@@ -4,7 +4,10 @@
 #         the eight-key finding contract, --json findings array ([] when clean, type+length
 #         asserted), table renderer row counts, digest on stderr, --store/--check/--after/
 #         --before scoping, --summary, --fix/--dry-run parsing, usage errors (exit 2) with
-#         distinct messages, operational failures (exit 3)
+#         distinct messages, operational failures (exit 3), and the R1-R7 run-store checks
+#         (empty/garbled run logs, foreign meta.run_id, span gaps and chain breaks, span
+#         dump integrity, uncommitted-run classification via lib/replay.sh including the
+#         retry_of half, missing run directories)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -27,13 +30,22 @@ orphan_latest() {
   printf '{}\n' >"$SHAI_HOME/sessions/$1.latest.json"
 }
 
+# null_run <event>: the event with meta.run_id nulled. Session-only fixtures use this so
+# a run-store scan stays clean: R7 reports any session event whose meta.run_id names a
+# run directory that is not on disk, and shai-stamp writes exactly this null shape when
+# a pipeline runs without ambient SHAI_RUN_ID.
+null_run() { printf '%s\n' "$1" | jq -c '.meta.run_id = null'; }
+
 # --- healthy store built entirely from the #387 fixture builders reports clean, exit 0 ---
 # Closes #387's deferred assertion. The builders never stage corruption: fixture_session
 # mirrors the log tail into .latest.json (so S4 stays quiet by construction), fixture_run
 # and fixture_ledger build their healthy shapes, fixture_failure writes a healthy record.
+# The run is committed for R6 (the session log carries the same stamped event, so
+# meta.run_id matches) and resolves for R7 (the referenced run directory exists); the
+# ledger's backing session carries a null run_id (R7-clean by construction).
 desc "healthy store from fixture builders: clean, exit 0"
 setup_home
-ev="$(fixture_event message user '{"text":"hello"}')"
+ev="$(fixture_event message user '{"text":"hello"}' run_20260810T120000_aabbccdd)"
 fixture_session sess_20260810T120000_aabbccdd "$ev"
 fixture_run run_20260810T120000_aabbccdd sess_20260810T120000_aabbccdd "$ev"
 fixture_ledger heartbeat k1
@@ -104,11 +116,13 @@ assert_contains "$ERR" "2 errors, 0 warnings, 0 info — 2 fixable with --fix" \
 
 # --- S4's negative control: a .latest.json with a sibling .jsonl is not an orphan ---
 # The healthy-store block above is the positive control; this block pins the sibling test
-# directly (fixture_session always writes both files, so no corruption is needed).
+# directly (fixture_session always writes both files, so no corruption is needed). The
+# event's run_id is nulled (null_run) so the store is clean under R7 too — the only
+# assertion here is "no finding at all".
 desc "S4: .latest.json with a sibling session log is not an orphan"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(null_run "$(fixture_event message user '{"text":"hello"}')")"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "0" "paired .latest.json exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "paired .latest.json produces no finding"
@@ -155,7 +169,11 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "2" "undated id dropped when a w
 desc "--store: scopes the scan and the clean line"
 setup_home
 orphan_latest sess_20260810T120000_aabbccdd
-mkdir -p "$SHAI_HOME/runs/run_20260810T120000_aabbccdd"
+# A committed run keeps the runs store clean under R1-R7 (an empty directory would be
+# an R1 finding; an uncommitted one an R6 finding).
+ev="$(fixture_event message user '{"text":"hi"}' run_20260810T120000_aabbccdd)"
+fixture_session sess_20260810T120001_aabbccdd "$ev"
+fixture_run run_20260810T120000_aabbccdd sess_20260810T120001_aabbccdd "$ev"
 OUT=$("$FSCK" --store sessions --json)
 assert_eq "$?" "1" "sessions scope still finds the orphan"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "sessions scope reports one finding"
@@ -182,6 +200,307 @@ assert_eq "$OUT" "no problems found (0 runs)" "disjoint selection reports clean"
 assert_fails 2 "error: unknown check id: S9" "unknown check id" -- "$FSCK" --check S9
 assert_fails 2 "error: --check requires a check id" "--check missing value" -- "$FSCK" --check
 
+# --- R1: three adjacent shapes — wholly empty (fixable), dumps without a log
+#     (not fixable), and a healthy log (no finding), plus the two log-corruption shapes ---
+# Each expected-one assertion is mutation-checked: with the ck_R1 dispatch arm deleted
+# the scan reports zero findings and every one of these goes red (verified during
+# development, then restored).
+desc "R1: a wholly empty run directory is the narrow fixable case"
+setup_home
+mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$?" "1" "empty run directory exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R1 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "error" "severity error"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "true" "wholly empty directory is fixable"
+assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "delete" "remedy is delete"
+
+desc "R1: dumps without an event log are reported, not fixable"
+setup_home
+fixture_span_dump run_20260903T043418_67e3340f span_1 request
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$?" "1" "dumps-without-log exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R1 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "dumps are the only trace of a call — not fixable"
+assert_contains "$(printf '%s' "$F" | jq -r '.remedy')" "manual" "remedy is a manual instruction"
+
+desc "R1: an empty event log is a finding, not fixable"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "empty event log is one finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "events.jsonl is empty" "summary names the empty log"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "empty log is not fixable"
+
+desc "R1: a line that does not parse and a non-object line are each one finding"
+setup_home
+mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+ev="$(fixture_event message user '{"text":"hi"}')"
+{ printf '%s\n' "$ev" '{garbage'; } >"$SHAI_HOME/runs/run_20260903T043418_67e3340f/events.jsonl"
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "unparseable line is one finding"
+assert_contains "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "does not parse as JSON" \
+  "summary names the unparseable line"
+setup_home
+mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+printf '%s\n' '42' >"$SHAI_HOME/runs/run_20260903T043418_67e3340f/events.jsonl"
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "non-object line is one finding"
+assert_contains "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 1 is not a JSON object" \
+  "summary names the offending line"
+
+desc "R1: a healthy run log produces no finding (positive control)"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}')"
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$?" "0" "healthy run log exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "healthy run log produces no R1 finding"
+
+# --- R2: meta.run_id must equal the directory name ---
+# Mutation-checked: deleting the ck_R2 arm drops the expected-one finding below
+# (verified during development).
+desc "R2: a foreign meta.run_id in the log is one error finding"
+setup_home
+ev="$(fixture_event message user '{"text":"hi"}' run_other sess_20260903T043418_67e3340f)"
+mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+printf '%s\n' "$ev" | jq -c '.meta.session_id = "sess_20260903T043418_67e3340f"' \
+  >"$SHAI_HOME/runs/run_20260903T043418_67e3340f/events.jsonl"
+OUT=$("$FSCK" --check R2 --json)
+assert_eq "$?" "1" "foreign run_id exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R2 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "error" "severity error"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "meta.run_id run_other does not match the run directory" "summary names the foreign run_id"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "R2 is not fixable"
+
+desc "R2: a matching meta.run_id produces no finding (positive control)"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}')"
+OUT=$("$FSCK" --check R2 --json)
+assert_eq "$?" "0" "matching run_id exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "matching run_id produces no R2 finding"
+
+# --- R3/R5: span_0 is exempt from both; a missing span_2 is one R3 finding ---
+# Both zero-finding halves are mutation-checked at the exemption, not the check: the
+# first fixture below (the issue's exact wording — span_0 dump, events starting at
+# span_1) goes red when the span_0 skip is removed from ck_R5 (the dump reads as an
+# orphan); the second (a span_0 event among the spans) goes red when the `.n > 0`
+# exemption is removed from ck_R3's chain check (span_0 reads as a chain member with
+# an impossible "span_-1" parent). Both verified during development, then restored.
+# The gap finding is mutation-checked by deleting the ck_R3 arm (goes red).
+desc "R3/R5: a span_0 dump with events starting at span_1 produces zero findings"
+setup_home
+ev1="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+ev2="$(fixture_event message assistant '{"content":"a"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_2)"
+ev2="$(printf '%s' "$ev2" | jq -c '.meta.parent_span_id = "span_1"')"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev1" "$ev2"
+fixture_span_dump run_20260903T043418_67e3340f span_0 request
+OUT=$("$FSCK" --check R3 --check R5 --json)
+assert_eq "$?" "0" "span_0 dump fixture exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "span_0 dump is never a gap or an orphan"
+
+desc "R3: a run missing span_2 between span_1 and span_3 is one warning"
+setup_home
+ev1="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+ev3="$(fixture_event message assistant '{"content":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_3)"
+ev3="$(printf '%s' "$ev3" | jq -c '.meta.parent_span_id = "span_2"')"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev1" "$ev3"
+OUT=$("$FSCK" --check R3 --json)
+assert_eq "$?" "1" "gapped run exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one R3 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "warn" "severity warn"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "span_2 missing" "summary names the gap"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "R3 is not fixable"
+
+desc "R3: a span_0 event is never a gap or a chain member"
+setup_home
+ev0="$(fixture_event message user '{"text":"hand-run"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_0)"
+ev1="$(fixture_event message assistant '{"content":"a"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+ev2="$(fixture_event message assistant '{"content":"b"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_2)"
+ev2="$(printf '%s' "$ev2" | jq -c '.meta.parent_span_id = "span_1"')"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev0" "$ev1" "$ev2"
+fixture_span_dump run_20260903T043418_67e3340f span_0 request
+OUT=$("$FSCK" --check R3 --check R5 --json)
+assert_eq "$?" "0" "span_0 event fixture exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "span_0 event is never a gap or a chain member"
+
+desc "R3: a non-linear parent chain is one finding"
+setup_home
+ev1="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+ev2="$(fixture_event message assistant '{"content":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_2)"
+ev2="$(printf '%s' "$ev2" | jq -c '.meta.parent_span_id = "span_9"')"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev1" "$ev2"
+OUT=$("$FSCK" --check R3 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "broken chain is one finding"
+assert_contains "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  "span_2 parent_span_id is span_9 (expected span_1)" "summary names the chain break"
+
+# --- R4: span dumps must parse as JSON, never fixable ---
+# Mutation-checked: deleting the ck_R4 arm drops the expected-one finding (verified
+# during development).
+desc "R4: a malformed span dump is one warn finding, never fixable"
+setup_home
+fixture_span_dump run_20260903T043418_67e3340f span_1 request '{not json'
+OUT=$("$FSCK" --check R4 --json)
+assert_eq "$?" "1" "malformed dump exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R4 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "warn" "severity warn"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "span_1-request.json does not parse as JSON" "summary names the malformed dump"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" \
+  "a malformed dump is the only record of a failed call — not fixable"
+
+desc "R4: well-formed dumps produce no finding (positive control)"
+setup_home
+fixture_span_dump run_20260903T043418_67e3340f span_1 request
+fixture_span_dump run_20260903T043418_67e3340f span_1 response
+OUT=$("$FSCK" --check R4 --json)
+assert_eq "$?" "0" "well-formed dumps exit 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "well-formed dumps produce no R4 finding"
+
+# --- R5: an orphan span dump (the audit's defect: span_9 dump, events through span_8) ---
+# Mutation-checked: deleting the ck_R5 arm drops the expected-one finding (verified
+# during development).
+desc "R5: a dump whose span has no event is one fixable orphan finding"
+setup_home
+evs=()
+for i in {1..8}; do
+  if [ "$i" -eq 1 ]; then
+    ev="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+  else
+    ev="$(fixture_event message assistant '{"content":"step"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "span_$i")"
+    ev="$(printf '%s' "$ev" | jq -c --arg p "span_$((i - 1))" '.meta.parent_span_id = $p')"
+  fi
+  evs+=("$ev")
+done
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "${evs[@]+"${evs[@]}"}"
+fixture_span_dump run_20260903T043418_67e3340f span_9 request
+OUT=$("$FSCK" --check R5 --json)
+assert_eq "$?" "1" "orphan dump exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one R5 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "span_9-request.json has no matching event in the run log" "summary names the orphan dump"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "true" "orphan dump is fixable"
+assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "delete" "remedy is delete"
+
+# --- R6: committed (including retry_of-only), resumable vs dead ---
+# The retry_of zero-finding assertion below is the highest-value test in this issue and
+# was mutation-checked the way the issue prescribes: removing the
+# `or .meta.retry_of? == $rid` clause from lib/replay.sh makes classify_replay miss the
+# commit, the fixture's user message then satisfies precondition 5, the verdict falls
+# through to "replayable", and this assertion goes red (verified during development,
+# then restored). The resumable/dead expected-ones are mutation-checked by deleting the
+# ck_R6 arm (goes red).
+desc "R6: events committed only via meta.retry_of are not an uncommitted orphan"
+setup_home
+ev="$(fixture_event message user '{"text":"again"}')"
+rid=$(fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev")
+# A replay commits under a NEW run id carrying meta.retry_of, so the session log below
+# matches the run only via retry_of — no meta.run_id match exists.
+retried="$(printf '%s' "$ev" | jq -c --arg new run_20260903T043419_89abcdef --arg rof "$rid" \
+  '.meta.run_id = $new | .meta.retry_of = $rof')"
+fixture_session sess_20260903T043418_67e3340f "$retried"
+OUT=$("$FSCK" --check R6 --json)
+assert_eq "$?" "0" "already-retried run exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "retry_of match means committed — no R6 finding"
+
+desc "R6: resumable run is unfixable with the literal resume command; dead run is fixable"
+setup_home
+rid=$(fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hello"}')")
+# An unrelated earlier turn in the session log: the committed probe runs and misses,
+# the user message holds — exactly an interrupted-but-resumable run.
+fixture_session sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"older turn"}' run_20260903T043400_00000001)"
+OUT=$("$FSCK" --check R6 --json)
+assert_eq "$?" "1" "uncommitted resumable run exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R6 finding for the resumable run"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "resumable" "summary subclassifies resumable"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "resumable run is never fixable"
+assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "shai-retry --run $rid" \
+  "remedy is the literal resume command"
+# Adjacent: no user message anywhere in the log — the run is dead and deletable.
+setup_home
+fixture_run run_20260903T043419_89abcdef sess_20260903T043419_89abcdef \
+  "$(fixture_event error system '{"text":"timeout"}')"
+OUT=$("$FSCK" --check R6 --json)
+assert_eq "$?" "1" "dead run exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R6 finding for the dead run"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "dead" "summary subclassifies dead"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "true" "dead run is fixable"
+assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "delete" "remedy is delete"
+
+# --- R7: session references must have a run directory on disk (info, never fixable) ---
+# Mutation-checked: removing the scan loop's missing-runs/ exception (the path R7
+# fires through when runs/ is absent — its dispatch arm never runs then) drops the
+# expected-one finding below (verified during development, then restored).
+desc "R7: a session event referencing a missing run directory is one info finding"
+setup_home
+fixture_session sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f)"
+OUT=$("$FSCK" --check R7 --json)
+assert_eq "$?" "1" "missing run directory exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R7 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "info" "R7 is info, not a defect"
+assert_eq "$(printf '%s' "$F" | jq -r '.target')" "run_20260903T043418_67e3340f" \
+  "target is the missing run id"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "R7 is never fixable"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "run directory missing" \
+  "summary explains the missing directory"
+OUT=$("$FSCK" --check R7 --summary)
+assert_eq "$OUT" "0 errors, 0 warnings, 1 info — 0 fixable with --fix" \
+  "digest counts R7 as info"
+
+desc "R7: a referenced run directory on disk produces no finding (positive control)"
+setup_home
+ev="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f)"
+fixture_session sess_20260903T043418_67e3340f "$ev"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev"
+OUT=$("$FSCK" --check R7 --json)
+assert_eq "$?" "0" "referenced run directory exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "referenced run directory produces no R7 finding"
+
+# --- R6 in table mode: one row per finding, the resume command printed in the report ---
+desc "R6 table mode: resumable and dead render two rows; digest counts the fixable one"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_a "$(fixture_event message user '{"text":"hi"}')"
+fixture_run run_20260903T043419_89abcdef sess_b "$(fixture_event error system '{"text":"boom"}')"
+OUT=$("$FSCK" --check R6 2>/dev/null)
+assert_eq "$?" "1" "two uncommitted runs exit 1"
+assert_row_count "$OUT" 2 "one row per finding"
+assert_contains "$OUT" "shai-retry --run run_20260903T043418_67e3340f" \
+  "resume command printed in the report"
+ERR=$("$FSCK" --check R6 2>&1 >/dev/null)
+assert_contains "$ERR" "0 errors, 2 warnings, 0 info — 1 fixable with --fix" \
+  "digest counts only the dead run fixable"
+
+# --- --check R1..R7: every run check selects and runs alone on a healthy store ---
+# Each zero here is pinned by the check's corrupt-fixture block above (deleting a check
+# leaves these green but turns its expected-one block red), so these assertions cover
+# the selectability criterion without needing a per-check deletion pass.
+desc "--check R1..R7: each run check runs alone"
+setup_home
+ev="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f)"
+fixture_session sess_20260903T043418_67e3340f "$ev"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev"
+for c in R1 R2 R3 R4 R5 R6 R7; do
+  OUT=$("$FSCK" --check "$c" --json)
+  assert_eq "$?" "0" "--check $c runs alone on a healthy store"
+  assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "--check $c reports zero findings on a healthy run"
+done
+
 # --- --summary: the digest alone, exit 1 when problems exist ---
 desc "--summary: digest only, no rows"
 setup_home
@@ -193,9 +512,10 @@ assert_eq "$OUT" "1 error, 0 warnings, 0 info — 1 fixable with --fix" \
 ERR=$("$FSCK" --summary 2>&1 >/dev/null)
 assert_eq "$ERR" "" "summary mode keeps stderr quiet"
 # Clean store: the digest case reports the distinctive clean line, still exit 0.
+# null_run keeps the session-only fixture clean under R7 (no run directory exists).
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(null_run "$(fixture_event message user '{"text":"hello"}')")"
 OUT=$("$FSCK" --summary)
 assert_eq "$?" "0" "clean summary mode exits 0"
 assert_eq "$OUT" "no problems found (1 session, 0 runs, 0 ledgers, 0 failure logs)" \
@@ -222,7 +542,7 @@ assert_fails 2 "error: --dry-run requires --fix" "--dry-run without --fix" -- "$
 desc "scope pointer: policy.json and ci.json validation is pointed at shai-doctor"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(null_run "$(fixture_event message user '{"text":"hello"}')")"
 ERR=$("$FSCK" 2>&1 >/dev/null)
 assert_contains "$ERR" "validated by shai-doctor" \
   "table mode points policy/ci validation at shai-doctor"
