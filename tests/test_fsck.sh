@@ -342,6 +342,20 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "broken chain is one finding
 assert_contains "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
   "span_2 parent_span_id is span_9 (expected span_1)" "summary names the chain break"
 
+desc "R3: a span id outside the span_N shape is one warning, never silently ignored"
+setup_home
+ev1="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+evx="$(fixture_event message assistant '{"content":"a"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1x)"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev1" "$evx"
+OUT=$("$FSCK" --check R3 --json)
+assert_eq "$?" "1" "malformed span id exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R3 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "span id span_1x is not in span_N form" "summary names the malformed id"
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "warn" "severity warn"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "malformed id is not fixable"
+
 # --- R4: span dumps must parse as JSON, never fixable ---
 # Mutation-checked: deleting the ck_R4 arm drops the expected-one finding (verified
 # during development).
@@ -441,6 +455,21 @@ assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "dead" "summary subclas
 assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "true" "dead run is fixable"
 assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "delete" "remedy is delete"
 
+desc "R6: a session id shai-retry would refuse is one unfixable finding naming the id"
+setup_home
+fixture_run run_20260903T043418_67e3340f "sess/../20260903T043418_67e3340f" \
+  "$(fixture_event message user '{"text":"hello"}')"
+OUT=$("$FSCK" --check R6 --json)
+assert_eq "$?" "1" "unsafe session id exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R6 finding for the unsafe session id"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "session id in the run log is unsafe" "summary names the unsafe verdict"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "sess/../20260903T043418_67e3340f" \
+  "summary interpolates the offending session id"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "unsafe session id is never fixable"
+assert_contains "$(printf '%s' "$F" | jq -r '.remedy')" "manual" "remedy is manual"
+
 # --- R7: session references must have a run directory on disk (info, never fixable) ---
 # Mutation-checked: removing the scan loop's missing-runs/ exception (the path R7
 # fires through when runs/ is absent — its dispatch arm never runs then) drops the
@@ -471,6 +500,31 @@ fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev"
 OUT=$("$FSCK" --check R7 --json)
 assert_eq "$?" "0" "referenced run directory exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "referenced run directory produces no R7 finding"
+
+desc "R7: run ids containing / or .. are skipped; a plain missing id is still reported"
+setup_home
+fixture_session sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}' "run/20260903T043418_67e3340f")" \
+  "$(fixture_event message user '{"text":"hi"}' run_..20260903T043418_67e3340f)" \
+  "$(fixture_event message user '{"text":"hi"}' run_20260903T043419_89abcdef)"
+OUT=$("$FSCK" --check R7 --json)
+assert_eq "$?" "1" "plain missing id still exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "traversal ids are skipped — exactly one finding"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].target')" "run_20260903T043419_89abcdef" \
+  "the plain missing id is the finding"
+
+# The sessions-dir readability guard ck_R7 carries on the --store runs path is the same
+# chmod-only shape as the per-store guard (documented at the operational-failures block
+# below): not driven, for the same reason. The jq half IS driven — a malformed session
+# log is platform-producible corruption, and it must read as exit 3, never as a
+# false-clean R7 report.
+desc "R7: an unparseable session log aborts the scan (exit 3), never a false-clean report"
+setup_home
+fixture_session sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f)"
+printf '{truncated\n' >>"$SHAI_HOME/sessions/sess_20260903T043418_67e3340f.jsonl"
+assert_fails 3 "unreadable or unparseable" "unparseable session log exits 3" \
+  -- "$FSCK" --check R7
 
 # --- R6 in table mode: one row per finding, the resume command printed in the report ---
 desc "R6 table mode: resumable and dead render two rows; digest counts the fixable one"
