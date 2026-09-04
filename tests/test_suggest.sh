@@ -28,9 +28,16 @@ write_overlay() {
   printf '{"rules":[{"tool":"gh","action":"allow"}]}\n' >"$1"
 }
 
-# Session-log length, the observable proxy for "did an LLM call happen".
+# Session-log length, the observable proxy for "did an LLM call happen". A missing log
+# (lazy session seeding, #388: wf_init alone writes no files) counts as zero lines.
 # shellcheck disable=SC2031  # deliberate: reads the SHAI_* vars of the subshell that calls it
-log_lines() { wc -l <"$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl" | tr -d ' '; }
+log_lines() {
+  [ -f "$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl" ] || {
+    printf '0'
+    return 0
+  }
+  wc -l <"$SHAI_HOME/sessions/$SHAI_SESSION_ID.jsonl" | tr -d ' '
+}
 
 write_git_repo_stub
 write_gh_stub
