@@ -81,7 +81,7 @@ chmod +x "$STUB/gh"
 
 reset_state() {
   rm -f "$WORKER_LOG" "$EDIT_LOG"
-  rm -rf "$SHAI_HOME/ledgers" "$DEPS_DIR"
+  rm -rf "$SHAI_HOME/ledgers" "$SHAI_HOME/sessions" "$SHAI_HOME/failures" "$DEPS_DIR"
   mkdir -p "$DEPS_DIR"
   echo 0 >"$WORKER_RC_FILE"
   echo 0 >"$EDIT_RC_FILE"
@@ -124,6 +124,31 @@ assert_eq "$RC" "0" "issue_dispatcher: exit 0 when no issues match"
 assert_contains "$OUT" "no matching issues" "issue_dispatcher: reports idle tick"
 assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
   "issue_dispatcher: no worker dispatched on idle tick"
+# Expected-zero assertion (#388): an idle tick must leave $SHAI_HOME/sessions/ empty — no
+# stillborn session files on every timer tick. Mutation-checked: reverting wf_init to eager
+# seeding turns this red.
+assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "issue_dispatcher: idle tick creates no session files"
+
+# --- dispatching tick: session IS materialized (positive control for the idle zero-count) ---
+# The same fixture shape with a matching issue must produce the artifact the idle tick does
+# not: exactly two files — the session log seeded with the system prompt plus the empty
+# .latest.json sibling. The count (not bare existence) catches a fix that writes one file
+# instead of two; the adjacent zero-count above provides the contrast. Mutation-checked
+# (#388): removing the dispatcher's wf_seed_session call turns these red.
+desc "dispatching tick materializes the session"
+reset_state
+cat >"$SEARCH_FIXTURE" <<'JSON'
+[{"repository":{"nameWithOwner":"owner/repo"},"number":42}]
+JSON
+OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
+RC=$?
+assert_eq "$RC" "0" "issue_dispatcher: dispatching tick exits 0"
+assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "2" \
+  "issue_dispatcher: dispatching tick creates exactly two session files"
+SESSION_LOG=$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f -name '*.jsonl' | head -n1)
+assert_eq "$(jq -r '.source' "$SESSION_LOG" | head -n1)" "system" \
+  "issue_dispatcher: dispatching tick seeds the system prompt as the first event"
 
 # --- gh search failure ---
 desc "gh search failure"
@@ -134,6 +159,18 @@ OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
 RC=$?
 assert_eq "$RC" "1" "issue_dispatcher: exit 1 when gh search fails"
 assert_contains "$OUT" "ERROR" "issue_dispatcher: prints ERROR on search failure"
+# wf_fail on a pure-bash tick still records a failure attributed to this workflow (not the
+# _repl fallback) with the minted session id, and still writes no session files.
+assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "issue_dispatcher: failed search tick creates no session files"
+FAILURE_LOG="$SHAI_HOME/failures/issue_dispatcher.jsonl"
+assert_eq "$(test -f "$FAILURE_LOG" && echo yes || echo no)" "yes" \
+  "issue_dispatcher: records the search failure"
+assert_eq "$(jq -r '.workflow' "$FAILURE_LOG" | head -n1)" "issue_dispatcher" \
+  "issue_dispatcher: failure attributed to the workflow name, not _repl"
+FAILURE_SID=$(jq -r '.session_id' "$FAILURE_LOG" | head -n1)
+assert_eq "$(test -n "$FAILURE_SID" && echo set || echo empty)" "set" \
+  "issue_dispatcher: failure record carries the minted session_id"
 
 # --- single issue: label removed before dispatch, then worker run, then ledger marked ---
 desc "single issue happy path"
@@ -158,6 +195,9 @@ else
   echo -e "  ${RED}✗${NC} issue_dispatcher: wf_mark did not record issue key"
   FAILED=1
 fi
+LEDGER_SID=$(jq -r '.session_id' "$LEDGER" 2>/dev/null | head -n1)
+assert_eq "$(test -n "$LEDGER_SID" && echo set || echo empty)" "set" \
+  "issue_dispatcher: wf_mark ledger entry carries a non-empty session_id"
 
 # --- multiple issues: all processed sequentially ---
 desc "multiple issues"
@@ -252,6 +292,51 @@ if [ -f "$SHAI_HOME/ledgers/issue_dispatcher.jsonl" ] &&
   FAILED=1
 else
   echo -e "  ${GREEN}✓${NC} issue_dispatcher: ledger not marked when worker fails"
+fi
+
+# --- seed failure: label already removed, failure recorded, item skipped, tick continues ---
+# wf_seed_session runs after the label is removed, so a bare call under `set -e` would abort
+# the tick after the `gh` mutation with no failure record — pre-#388 the same failure aborted
+# in wf_init before any mutation. A read-only sessions dir makes the seed fail (skipped as
+# root, where chmod 555 is no obstacle). Mutation-checked: reverting the guard to a bare
+# `wf_seed_session` call turns the WARNING, failure-record, and zero-file assertions red.
+if [ "$(id -u)" -ne 0 ]; then
+  desc "seed failure records a failure and skips the dispatch"
+  reset_state
+  mkdir -p "$SHAI_HOME/sessions"
+  chmod 555 "$SHAI_HOME/sessions"
+  cat >"$SEARCH_FIXTURE" <<'JSON'
+[{"repository":{"nameWithOwner":"owner/repo"},"number":42}]
+JSON
+  OUT=$("$DIR/workflows/issue_dispatcher/run.sh" 2>&1)
+  RC=$?
+  chmod 755 "$SHAI_HOME/sessions"
+  assert_eq "$RC" "1" "issue_dispatcher: exit 1 when seeding fails (only item, nothing dispatched)"
+  assert_contains "$OUT" "WARNING: could not materialize session for owner/repo#42" \
+    "issue_dispatcher: warns when seeding fails"
+  assert_contains "$(cat "$EDIT_LOG")" "--remove-label shai-issue-dispatcher" \
+    "issue_dispatcher: label was still removed before the seed failure"
+  assert_eq "$(test -f "$WORKER_LOG" && echo yes || echo no)" "no" \
+    "issue_dispatcher: no dispatch when seeding fails"
+  FAILURE_LOG="$SHAI_HOME/failures/issue_dispatcher.jsonl"
+  assert_eq "$(test -f "$FAILURE_LOG" && echo yes || echo no)" "yes" \
+    "issue_dispatcher: seed failure recorded in the failure store"
+  assert_eq "$(jq -r '.workflow' "$FAILURE_LOG" | head -n1)" "issue_dispatcher" \
+    "issue_dispatcher: seed failure attributed to the workflow name"
+  assert_eq "$(jq -r '.context.detail' "$FAILURE_LOG" | head -n1)" "re-label to retry" \
+    "issue_dispatcher: seed failure tells the operator to re-label"
+  SEED_SID=$(jq -r '.session_id' "$FAILURE_LOG" | head -n1)
+  assert_eq "$(test -n "$SEED_SID" && echo set || echo empty)" "set" \
+    "issue_dispatcher: seed failure record carries the minted session_id"
+  if [ -f "$SHAI_HOME/ledgers/issue_dispatcher.jsonl" ] &&
+    grep -q '"issue:owner/repo:42"' "$SHAI_HOME/ledgers/issue_dispatcher.jsonl"; then
+    echo -e "  ${RED}✗${NC} issue_dispatcher: should not mark ledger when seeding fails"
+    FAILED=1
+  else
+    echo -e "  ${GREEN}✓${NC} issue_dispatcher: ledger not marked when seeding fails"
+  fi
+  assert_eq "$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')" "0" \
+    "issue_dispatcher: failed seed leaves no session files"
 fi
 
 # --- blocked issue: open dependencies, label stays, not dispatched ---
