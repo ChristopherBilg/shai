@@ -347,6 +347,43 @@
         }
       }
     },
+    "shai-fsck": {
+      "description": "Report $SHAI_HOME store inconsistencies as normalized findings",
+      "flags": {
+        "--store": {
+          "arg": "STORE",
+          "arg_type": "fsck_store",
+          "description": "Only scan this store (repeatable)"
+        },
+        "--check": {
+          "arg": "ID",
+          "arg_type": "fsck_check",
+          "description": "Only run this check id (repeatable)"
+        },
+        "--after": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only items at or after DATE"
+        },
+        "--before": {
+          "arg": "DATE",
+          "arg_type": "date",
+          "description": "Only items at or before DATE"
+        },
+        "--fix": {
+          "description": "Repair repairable findings (parsed, not yet implemented)"
+        },
+        "--dry-run": {
+          "description": "With --fix, report the repairs without making them"
+        },
+        "--summary": {
+          "description": "Print only the trailing digest"
+        },
+        "--json": {
+          "description": "Emit the findings array as JSON"
+        }
+      }
+    },
     "shai-ledgers": {
       "description": "List workflow ledger entries and summaries",
       "flags": {
@@ -770,6 +807,14 @@
     "policy_action": {
       "description": "Policy rule verdict",
       "command": "printf '%s\\n' allow prompt deny"
+    },
+    "fsck_store": {
+      "description": "Store shai-fsck scans",
+      "command": "printf '%s\\n' sessions runs ledgers failures"
+    },
+    "fsck_check": {
+      "description": "shai-fsck check id",
+      "command": "sed -n 's/^KNOWN_CHECKS=(\\([^)]*\\))/\\1/p' \"${_shai_dir}/shai-fsck\" 2>/dev/null | tr ' ' '\\n'"
     }
   }
 }
