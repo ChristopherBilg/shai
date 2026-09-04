@@ -33,13 +33,15 @@ FAILURES_DIR="$STATE_DIR/failures"
 WORKFLOWS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/workflows"
 
 # Check catalog: id -> the store its scan reads ("all" for the cross-store X1 name-pattern
-# check). The ledger, failure, and cross-store families this issue ships are L1-L4, F1-F4,
-# X1; the sessions and runs families (S1-S3/S5, R1-R6) append their ids here later.
-declare -A CHECK_STORE=([S4]=sessions [L1]=ledgers [L2]=ledgers [L3]=ledgers [L4]=ledgers
+# check). Shipped: S1-S9 (the session store, issues #389/#390), L1-L4 (ledgers), F1-F4
+# (failures), X1 (cross-store); the runs family (R1-R6) appends its ids here later.
+declare -A CHECK_STORE=([S1]=sessions [S2]=sessions [S3]=sessions [S4]=sessions
+  [S5]=sessions [S6]=sessions [S7]=sessions [S8]=sessions [S9]=sessions
+  [L1]=ledgers [L2]=ledgers [L3]=ledgers [L4]=ledgers
   [F1]=failures [F2]=failures [F3]=failures [F4]=failures [X1]=all)
 # Known ids in scan order (associative-array keys alone have no defined order); the order
 # also fixes the findings' row order within a store.
-KNOWN_CHECKS=(S4 L1 L2 L3 L4 F1 F2 F3 F4 X1)
+KNOWN_CHECKS=(S1 S2 S3 S4 S5 S6 S7 S8 S9 L1 L2 L3 L4 F1 F2 F3 F4 X1)
 ALL_STORES=(sessions runs ledgers failures)
 
 STORES=() CHECKS=()
@@ -220,6 +222,245 @@ ck_S4() {
     log="$SESSIONS_DIR/$id.jsonl"
     if [ ! -e "$log" ]; then
       finding S4 error sessions "$id" "$f" "orphan latest.json (no session log)" true delete
+    fi
+  done
+}
+
+# S1/S2/S3/S5/S6/S7/S8/S9 — sessions/<id>.jsonl plus its .latest.json sibling, one jq
+# pass per session log. The --after/--before window short-circuits at the filename level,
+# exactly like S4, before any file is opened.
+#
+# S1 (error): every line parses as a JSON object. A blank line is a violation, not
+#   whitespace noise: shai-stamp skips blanks deliberately, and a blank reaching the tail
+#   of a session log would make shai-retry's classifier report "nothing to resume" for a
+#   resumable run.
+# S2 (error): every event carries top-level type, source, and payload — string, string,
+#   and object respectively, not merely present keys. A null (or wrong-typed) value passes
+#   a has() check while every downstream selector (shai-context, shai-runs/trace/stats)
+#   matches on the real values and silently drops or misrenders it.
+# S3 (error): every event with a non-null meta.session_id matches the filename stem.
+#   Events predating the execution envelope have no meta at all and are skipped, never
+#   flagged — CLAUDE.md's additive-envelope guarantee keeps old session logs working.
+# S5 (error): for a non-stillborn session, .latest.json exists, is non-empty, parses, and
+#   is JSON-equal to the last event of the log. shai-loop's dispatch loop reads LATEST
+#   (shai-loop:149,206,226) and shai-retry reads it too, so a missing/empty/stale file
+#   misleads both. The comparison happens on parsed values (jq ==), which is
+#   key-order-insensitive — the in-process equivalent of the jq -S text comparison.
+#   Exception: an error event in .latest.json is never a mismatch — error events are
+#   deliberately kept out of the session log (shai-loop's commit_run filters them, and
+#   emit_dispatch_error writes them to LATEST only), so a session that ended in an eval
+#   error, truncation, or dispatch failure leaves LATEST holding its genuine most-recent
+#   event (CLAUDE.md:139) beside a log whose tail is the last committed event. Flagging
+#   that divergence would be a false positive, and "rebuild" would overwrite the only
+#   copy of the error.
+# S6 (warn): stillborn session — exactly one event, a message/system seed, beside an
+#   empty .latest.json, the pair wf_seed_session writes. Evaluated before S5 and claims
+#   the session: without the precedence every stillborn session reports twice (correctly
+#   as S6 and spuriously as S5). An empty .latest.json beside a multi-event log stays a
+#   genuine S5.
+# S7 (error): every tool_result's payload.tool_call_id appears in a PRECEDING assistant
+#   event's payload.tool_calls[].id. Ordering is load-bearing, not just set membership:
+#   shai-context renders each tool_result into a {role:"tool", tool_call_id} message, and
+#   a result with no preceding call — including one that matches a later assistant event —
+#   is a 400 from the API on the next turn.
+# S8 (warn): every assistant tool_calls[].id has a matching tool_result later in the
+#   session — except on the FINAL assistant event, the resumable-tail case shai-retry
+#   exists to handle (every interrupted session ends there, and that is healthy, not
+#   corruption — hence warn, not error, for the non-final violations too).
+# S9 (info/warn): version is a known schema version ("1.0"). No version at all is info —
+#   the same legacy tolerance as S3, since unstamped events predate the envelope; an
+#   unrecognized version string is the warn.
+#
+# The pass appends complete accumulator records itself (the same eight-key contract as
+# finding()); routing each through the shell would cost a second jq invocation per
+# finding. Dispatch runs ck_S once per scan, from the first selected S1/S2/S3/S5/S6/S7/
+# S8/S9 arm, so the one-pass-per-file property holds however many S ids are selected.
+SESS_SCAN_PROGRAM='
+  def s_emit($check; $severity; $summary; $fixable; $remedy; $path):
+    {check: $check, severity: $severity, store: "sessions", target: $sid, path: $path,
+     summary: $summary, fixable: $fixable, remedy: $remedy};
+  # A line that fails to parse carries the catch marker {__unparseable: true}, which is
+  # itself an object — the type check alone would admit it as an event, so every
+  # event-shaped select goes through this helper.
+  def is_event($v): (($v | type) == "object") and (($v.__unparseable // false) | not);
+  [inputs] as $lines
+  | [$lines | to_entries[]
+     | {i: .key, n: (.key + 1), line: .value,
+        v: (try (.value | fromjson) catch {__unparseable: true})}] as $parsed
+  | [$parsed[] | select(is_event(.v))] as $events
+  | ($events | length) as $events_n
+  | (if $events_n == 0 then null else $events[$events_n - 1].v end) as $last_event
+  | (if $latest_state != "empty" then false
+     elif $events_n != 1 then false
+     else ($events[0].v.type == "message" and $events[0].v.source == "system")
+     end) as $stillborn
+  | (if $latest_state == "present"
+     then ($latest_text | try ({ok: true, v: fromjson}) catch {ok: false})
+     else {ok: false} end) as $latest_parsed
+  | ([$parsed[] | select(is_event(.v))
+     | select(.v.type == "message" and .v.source == "assistant") | .i]) as $assist_i
+  | ($assist_i | length) as $assist_n
+  | (if $assist_n == 0 then null else $assist_i[$assist_n - 1] end) as $last_assist_i
+  | ([$parsed[] | select(is_event(.v))
+     | select(.v.type == "tool_result")
+     | {i: .i, id: (.v.payload.tool_call_id // null)}]) as $results
+  | (reduce range(0; ($parsed | length)) as $i ({seen: {}, out: []};
+       $parsed[$i].v as $v
+       | if (is_event($v) | not) then .
+         elif ($v.type == "message" and $v.source == "assistant") then
+             . + {seen: (.seen + (reduce ($v.payload.tool_calls // [] | .[]) as $tc ({};
+                        if (($tc.id // null) == null) then .
+                        else . + {($tc.id | tostring): true} end)))}
+         elif $v.type == "tool_result" then
+             (($v.payload.tool_call_id // null)) as $tid
+             | if $tid == null then
+                 . + {out: (.out + [("tool_result " + ($parsed[$i].n | tostring)
+                                     + " has no tool_call_id")])}
+               elif .seen[($tid | tostring)] == true then .
+               else
+                 . + {out: (.out + [("tool_result " + ($parsed[$i].n | tostring)
+                                     + " tool_call_id " + ($tid | tojson)
+                                     + " has no preceding assistant tool call")])}
+               end
+         else . end)
+     | .out) as $s7_bad
+  | ((if $s1 then
+        [$parsed[]
+         | if is_event(.v) then empty
+           elif .line == "" then
+               s_emit("S1"; "error"; ("line " + (.n | tostring) + " is blank");
+                      false; "none"; $path)
+           else
+               s_emit("S1"; "error"; ("line " + (.n | tostring) + " is not a JSON object");
+                      false; "none"; $path)
+           end]
+      else [] end)
+     + (if $s2 then
+          [$parsed[]
+           | select(is_event(.v))
+           | select(((.v.type | type) != "string") or ((.v.source | type) != "string")
+                    or ((.v.payload | type) != "object"))
+           | s_emit("S2"; "error";
+                    ("event " + (.n | tostring) + " missing or invalid type, source, or payload");
+                    false; "none"; $path)]
+        else [] end)
+     + (if $s3 then
+          [$parsed[]
+           | select(is_event(.v))
+           | select(((.v.meta // null) | type) == "object")
+           | select((.v.meta.session_id // null) != null)
+           | select(.v.meta.session_id != $sid)
+           | s_emit("S3"; "error";
+                    ("event " + (.n | tostring) + " meta.session_id "
+                     + (.v.meta.session_id | tojson) + " does not match the session id");
+                    false; "none"; $path)]
+        else [] end)
+     + (if $s5 and ($stillborn | not) then
+          if $latest_state == "missing" then
+            [s_emit("S5"; "error"; "latest.json missing"; true; "rebuild"; $latest_path)]
+          elif $latest_state == "other" then
+            [s_emit("S5"; "error"; "latest.json is not a regular file"; true; "rebuild"; $latest_path)]
+          elif $latest_state == "empty" then
+            [s_emit("S5"; "error"; "latest.json empty"; true; "rebuild"; $latest_path)]
+          elif ($latest_parsed.ok | not) then
+            [s_emit("S5"; "error"; "latest.json does not parse as JSON"; true; "rebuild"; $latest_path)]
+          elif $latest_parsed.v.type == "error" then []
+          elif $events_n == 0 then
+            [s_emit("S5"; "error"; "latest.json has content but the session log has no events";
+                    true; "rebuild"; $latest_path)]
+          elif $latest_parsed.v == $last_event then []
+          else
+            [s_emit("S5"; "error"; "latest.json is not the last event"; true; "rebuild"; $latest_path)]
+          end
+        else [] end)
+     + (if $s6 and $stillborn then
+          [s_emit("S6"; "warn"; "stillborn session (one system event, empty latest.json)";
+                  true; "delete pair"; $path)]
+        else [] end)
+     + (if $s7 then
+          [$s7_bad[] | s_emit("S7"; "error"; .; false; "none"; $path)]
+        else [] end)
+     + (if $s8 then
+          [$parsed[]
+           | select(is_event(.v))
+           | select(.v.type == "message" and .v.source == "assistant")
+           | select(.i != $last_assist_i)
+           | .n as $n
+           | .v as $v
+           | .i as $i
+           | ($v.payload.tool_calls // [] | .[]) as $tc
+           | if (($tc.id // null) == null) then
+               s_emit("S8"; "warn"; ("assistant tool call (event " + ($n | tostring) + ") has no id");
+                      false; "none"; $path)
+             elif any($results[]; .i > $i and .id == $tc.id) then empty
+             else
+               s_emit("S8"; "warn";
+                      ("assistant tool call " + ($tc.id | tojson) + " (event " + ($n | tostring)
+                       + ") has no tool_result");
+                      false; "none"; $path)
+             end]
+        else [] end)
+     + (if $s9 then
+          [$parsed[]
+           | select(is_event(.v))
+           | if (.v | has("version") | not) then
+               s_emit("S9"; "info"; ("event " + (.n | tostring) + " has no version");
+                      false; "none"; $path)
+             elif .v.version == "1.0" then empty
+             else
+               s_emit("S9"; "warn";
+                      ("event " + (.n | tostring) + " has unknown version " + (.v.version | tojson));
+                      false; "none"; $path)
+             end]
+        else [] end))
+  | .[]
+'
+ck_S() {
+  if [ -n "${S_SCAN_DONE:-}" ]; then return; fi
+  S_SCAN_DONE=1
+  local f id date latest latest_state want_s1 want_s2 want_s3 want_s5 want_s6 want_s7 want_s8 want_s9
+  want_s1="$(want S1)"
+  want_s2="$(want S2)"
+  want_s3="$(want S3)"
+  want_s5="$(want S5)"
+  want_s6="$(want S6)"
+  want_s7="$(want S7)"
+  want_s8="$(want S8)"
+  want_s9="$(want S9)"
+  for f in "$SESSIONS_DIR"/*.jsonl; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .jsonl)"
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    latest="$SESSIONS_DIR/$id.latest.json"
+    if [ ! -e "$latest" ]; then
+      latest_state=missing
+    elif [ ! -f "$latest" ]; then
+      latest_state=other
+    elif [ ! -s "$latest" ]; then
+      latest_state=empty
+    else
+      latest_state=present
+    fi
+    # $latest_text is defined for every branch of the program: the real file when it is a
+    # readable regular file, /dev/null otherwise. It is $latest_state that makes a
+    # missing/empty/non-file .latest.json report correctly, never the rawfile content.
+    if [ -f "$latest" ]; then
+      jq -cnR --rawfile latest_text "$latest" \
+        --arg sid "$id" --arg path "$f" --arg latest_path "$latest" \
+        --arg latest_state "$latest_state" \
+        --argjson s1 "$want_s1" --argjson s2 "$want_s2" --argjson s3 "$want_s3" \
+        --argjson s5 "$want_s5" --argjson s6 "$want_s6" --argjson s7 "$want_s7" \
+        --argjson s8 "$want_s8" --argjson s9 "$want_s9" \
+        "$SESS_SCAN_PROGRAM" "$f" >>"$FINDINGS_FILE"
+    else
+      jq -cnR --rawfile latest_text /dev/null \
+        --arg sid "$id" --arg path "$f" --arg latest_path "$latest" \
+        --arg latest_state "$latest_state" \
+        --argjson s1 "$want_s1" --argjson s2 "$want_s2" --argjson s3 "$want_s3" \
+        --argjson s5 "$want_s5" --argjson s6 "$want_s6" --argjson s7 "$want_s7" \
+        --argjson s8 "$want_s8" --argjson s9 "$want_s9" \
+        "$SESS_SCAN_PROGRAM" "$f" >>"$FINDINGS_FILE"
     fi
   done
 }
@@ -557,9 +798,11 @@ for store in "${ALL_STORES[@]}"; do
     if [ "${CHECK_STORE[$check]}" != "$store" ] && [ "${CHECK_STORE[$check]}" != "all" ]; then continue; fi
     # Explicit dispatch, not a dynamic "$check" invocation: shellcheck can prove these
     # functions are reached, and new check families add case arms here next to their
-    # catalog entries above. L1-L3 and F1-F4 share one jq pass per store file across the
-    # whole family (ck_L/ck_F), dispatched from the first selected member's arm.
+    # catalog entries above. S1-S3/S5-S9, L1-L3, and F1-F4 share one jq pass per store
+    # file across the whole family (ck_S/ck_L/ck_F), dispatched from the first selected
+    # member's arm.
     case "$check" in
+      S1 | S2 | S3 | S5 | S6 | S7 | S8 | S9) ck_S ;;
       S4) ck_S4 ;;
       L1 | L2 | L3) ck_L ;;
       L4) ck_L4 ;;

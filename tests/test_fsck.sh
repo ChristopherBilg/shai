@@ -1,11 +1,12 @@
 #!/bin/bash
 # test_fsck.sh — tests for shai-fsck store-integrity scanner
-# Covers: S4 orphan .latest.json detection, healthy #387-built store reports clean (exit 0),
-#         the eight-key finding contract, --json findings array ([] when clean, type+length
-#         asserted), table renderer row counts, digest on stderr, --store/--check/--after/
-#         --before scoping, --summary, --fix/--dry-run parsing, usage errors (exit 2) with
-#         distinct messages, operational failures (exit 3), L1-L4 ledger checks, F1-F4
-#         failure checks, X1 cross-store name patterns, and every check id running alone
+# Covers: S4 orphan .latest.json detection, S1-S3/S5-S9 session-store contract checks,
+#         healthy #387-built store reports clean (exit 0), the eight-key finding contract,
+#         --json findings array ([] when clean, type+length asserted), table renderer row
+#         counts, digest on stderr, --store/--check/--after/--before scoping, --summary,
+#         --fix/--dry-run parsing, usage errors (exit 2) with distinct messages,
+#         operational failures (exit 3), L1-L4 ledger checks, F1-F4 failure checks, X1
+#         cross-store name patterns, and every check id running alone
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -26,6 +27,62 @@ setup_home() {
 orphan_latest() {
   mkdir -p "$SHAI_HOME/sessions"
   printf '{}\n' >"$SHAI_HOME/sessions/$1.latest.json"
+}
+
+# build_sink: nine sessions, one per check id, each corrupt in exactly one way — the
+# isolation store for the --check loop below. Every corruption is staged in the open:
+# fixture builders produce the healthy shape first, then exactly one break is applied, so
+# a full scan of the sink must report exactly one finding per check id.
+build_sink() {
+  local ev tmp
+  mkdir -p "$SHAI_HOME/sessions"
+  # S1: healthy event plus a garbage line (line 2 is not a JSON object)
+  ev="$(fixture_event message user '{"text":"a"}')"
+  fixture_session sess_s1 "$ev"
+  printf 'not json\n' >>"$SHAI_HOME/sessions/sess_s1.jsonl"
+  # S2: an event with its source key deleted (log and latest rewritten together)
+  ev="$(fixture_event message user '{"text":"b"}')"
+  fixture_session sess_s2 "$ev"
+  tmp="$(mktemp)"
+  jq -c 'del(.source)' "$SHAI_HOME/sessions/sess_s2.jsonl" >"$tmp"
+  mv "$tmp" "$SHAI_HOME/sessions/sess_s2.jsonl"
+  cp "$SHAI_HOME/sessions/sess_s2.jsonl" "$SHAI_HOME/sessions/sess_s2.latest.json"
+  # S3: first of two events stamped with the wrong session id (latest still mirrors the
+  #     untouched second event)
+  fixture_session sess_s3 \
+    "$(fixture_event message user '{"text":"c1"}')" \
+    "$(fixture_event message user '{"text":"c2"}')"
+  tmp="$(mktemp)"
+  head -n 1 "$SHAI_HOME/sessions/sess_s3.jsonl" | jq -c '.meta.session_id = "elsewhere"' >"$tmp"
+  sed -n '2p' "$SHAI_HOME/sessions/sess_s3.jsonl" >>"$tmp"
+  mv "$tmp" "$SHAI_HOME/sessions/sess_s3.jsonl"
+  # S4: an orphan .latest.json
+  orphan_latest sess_s4
+  # S5: three events with an empty .latest.json (multi-event, so never stillborn)
+  fixture_session sess_s5 \
+    "$(fixture_event message user '{"text":"d"}')" \
+    "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')" \
+    "$(fixture_event message user '{"text":"e"}')"
+  : >"$SHAI_HOME/sessions/sess_s5.latest.json"
+  # S6: the stillborn pair — one system event, empty .latest.json
+  fixture_session sess_s6 "$(fixture_event message system '{"text":"seed"}')"
+  : >"$SHAI_HOME/sessions/sess_s6.latest.json"
+  # S7: a tool_result whose id no preceding assistant event announced
+  fixture_session sess_s7 \
+    "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+    "$(fixture_event tool_result tool '{"tool_call_id":"ghost","content":"nope","is_error":false}')"
+  # S8: an unanswered tool call on an earlier assistant event (the final assistant has none)
+  fixture_session sess_s8 \
+    "$(fixture_event message user '{"text":"f"}')" \
+    "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+    "$(fixture_event message assistant '{"content":"done","tool_calls":[],"finish_reason":"stop"}')"
+  # S9: an unrecognized schema version
+  ev="$(fixture_event message user '{"text":"g"}')"
+  fixture_session sess_s9 "$ev"
+  tmp="$(mktemp)"
+  jq -c '.version = "0.9"' "$SHAI_HOME/sessions/sess_s9.jsonl" >"$tmp"
+  mv "$tmp" "$SHAI_HOME/sessions/sess_s9.jsonl"
+  cp "$SHAI_HOME/sessions/sess_s9.jsonl" "$SHAI_HOME/sessions/sess_s9.latest.json"
 }
 
 # --- healthy store built entirely from the #387 fixture builders reports clean, exit 0 ---
@@ -180,7 +237,7 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "a repeated --check does not
 OUT=$("$FSCK" --check S4 --store runs 2>/dev/null)
 assert_eq "$?" "0" "a check disjoint from the selected store scans nothing"
 assert_eq "$OUT" "no problems found (0 runs)" "disjoint selection reports clean"
-assert_fails 2 "error: unknown check id: S9" "unknown check id" -- "$FSCK" --check S9
+assert_fails 2 "error: unknown check id: R1" "unknown check id" -- "$FSCK" --check R1
 assert_fails 2 "error: --check requires a check id" "--check missing value" -- "$FSCK" --check
 
 # --- --summary: the digest alone, exit 1 when problems exist ---
@@ -591,10 +648,428 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
   "unrecognized entry (expected a run directory)" \
   "a file where a run directory belongs is reported"
 
-# --- --check L1 … --check X1: every shipped id runs alone (each catalog entry is
+# =============================================================================
+# Session-store checks (S1-S3, S5-S9). Every check has a matched pair adjacent in the
+# file: a corrupt fixture producing exactly one finding of that id, and a healthy
+# fixture producing zero. Each zero expectation was mutation-checked while writing —
+# delete the check's emission, watch the positive control go red, restore — and is
+# stated inline where it is non-obvious.
+# =============================================================================
+
+# --- S1: every line parses as a JSON object (error). A blank line is a violation, not
+#     whitespace noise — one reaching the tail of a session log would make shai-retry's
+#     classifier report "nothing to resume" for a resumable run (CLAUDE.md's shai-stamp
+#     note) ---
+desc "S1: a blank line at the tail and one mid-log each yield exactly one S1; a clean log yields zero"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"hello"}')"
+printf '\n' >>"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "blank-tail session exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S1)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S1" "the finding is S1"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "error" "S1 is an error"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 2 is blank" \
+  "the tail blank is named by line"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S1 is not fixable"
+OUT=$("$FSCK" 2>/dev/null)
+assert_row_count "$OUT" 1 "table mode: exactly one S1 row"
+setup_home
+# a blank between two events, with the mirrored tail keeping S5 quiet
+ev1="$(fixture_event message user '{"text":"a"}')"
+ev2="$(fixture_event message user '{"text":"b"}')"
+SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev1" "$ev2")
+mapfile -t LINES <"$SHAI_HOME/sessions/$SID.jsonl"
+{
+  printf '%s\n' "${LINES[0]}"
+  printf '\n'
+  printf '%s\n' "${LINES[1]}"
+} >"$SHAI_HOME/sessions/$SID.jsonl"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "mid-log blank exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S1)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 2 is blank" \
+  "the mid-log blank is named by line"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"a"}')"
+printf 'this is not json\n' >>"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
+OUT=$("$FSCK" --json)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 2 is not a JSON object" \
+  "a non-blank garbage line carries its own summary"
+# Healthy negative control, written next to the positives. Mutation-checked: without the
+# S1 emission the blank-tail fixture scanned clean (exit 0, zero findings).
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"hello"}')"
+OUT=$("$FSCK" --check S1 --json)
+assert_eq "$?" "0" "a clean one-line log exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a clean log yields zero S1"
+
+# --- S2: every event carries top-level type, source, and payload — as string/string/object
+#     values, not merely present keys (error) ---
+desc "S2: a missing key and a null-typed key each yield exactly one S2; a stamped event yields zero"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"hello"}')"
+TMP="$(mktemp)"
+jq -c 'del(.source)' "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" >"$TMP"
+mv "$TMP" "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
+cp "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" \
+  "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "sourceless event exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S2)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S2" "the finding is S2"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "error" "S2 is an error"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  "event 1 missing or invalid type, source, or payload" "the summary names the contract keys"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S2 is not fixable"
+# A null value carries the key, so a has()-only implementation admits it — the check must
+# require the values (string type/source, object payload), not just the keys. Mutation-
+# checked: with the has() predicate restored this fixture scanned clean (exit 0, zero
+# findings) and the assertion below went red.
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"hello"}')"
+TMP="$(mktemp)"
+jq -c '.type = null' "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" >"$TMP"
+mv "$TMP" "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
+cp "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" \
+  "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "null-typed event exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S2)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S2" "the finding is S2"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  "event 1 missing or invalid type, source, or payload" "a null type is named as invalid"
+# Healthy negative control. Mutation-checked: without the S2 emission the sourceless
+# event scanned clean (exit 0, zero findings).
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"hello"}')"
+OUT=$("$FSCK" --check S2 --json)
+assert_eq "$?" "0" "a stamped event exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a stamped event yields zero S2"
+
+# --- S3: every event with a meta.session_id matches the filename stem (error).
+#     Unstamped events — no meta at all — are skipped, never flagged ---
+desc "S3: a mismatched meta.session_id yields exactly one S3; a legacy unstamped log yields zero"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"a"}')" \
+  "$(fixture_event message user '{"text":"b"}')"
+TMP="$(mktemp)"
+head -n 1 "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" |
+  jq -c '.meta.session_id = "elsewhere"' >"$TMP"
+sed -n '2p' "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" >>"$TMP"
+mv "$TMP" "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "mismatched session_id exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S3)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S3" "the finding is S3"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "error" "S3 is an error"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  'event 1 meta.session_id "elsewhere" does not match the session id' \
+  "the summary names the mismatched id"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S3 is not fixable"
+# Legacy negative control: wholly unstamped events (no meta, no version) yield zero S3
+# and zero S9 warnings — flagging them would make fsck report every historical log as
+# corrupt. Mutation-checked by flagging unstamped events: this fixture then emitted one
+# S3 and the zero-S3 assertion below went red.
+setup_home
+mkdir -p "$SHAI_HOME/sessions"
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":"legacy"}}' \
+  >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
+cp "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" \
+  "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S3")] | length')" "0" \
+  "an unstamped legacy event yields zero S3"
+assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S9" and .severity == "warn")] | length')" "0" \
+  "an unstamped legacy event yields zero S9 warnings"
+
+# --- S6 before S5 (the precedence contrast): a stillborn session — one system event,
+#     empty .latest.json, the pair wf_seed_session writes — yields exactly one S6 and
+#     ZERO S5; adjacent, an empty .latest.json beside a three-event log is a genuine S5
+#     and ZERO S6. The two halves are the precedence rule, asserted as one contrast ---
+desc "S6/S5 precedence: the stillborn pair is S6's alone; an empty latest beside a real log is S5"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message system '{"text":"seed"}')"
+: >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "stillborn session exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S6)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S6" "the finding is S6"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "warn" "S6 is a warning"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  "stillborn session (one system event, empty latest.json)" "the summary names the pair"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "true" "S6 is fixable"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].remedy')" "delete pair" \
+  "S6's remedy deletes the pair"
+assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S5")] | length')" "0" \
+  "the stillborn session yields ZERO S5 — S6 claims it (the precedence half of the contrast)"
+OUT=$("$FSCK" 2>/dev/null)
+assert_row_count "$OUT" 1 "table mode: exactly one S6 row"
+# The other half, adjacent: the same empty .latest.json beside a three-event log is S5.
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"a"}')" \
+  "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')" \
+  "$(fixture_event message user '{"text":"b"}')"
+: >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "empty latest beside a three-event log exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S5)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S5" "the finding is S5"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "error" "S5 is an error"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "latest.json empty" \
+  "the summary names the empty latest"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "true" "S5 is fixable"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].remedy')" "rebuild" "S5's remedy rebuilds latest.json"
+assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S6")] | length')" "0" \
+  "the three-event log yields ZERO S6 — only the seeded pair is stillborn"
+# Mutation-checked both directions: removing S5's stillborn gate made the stillborn
+# fixture emit a spurious S5 (the ZERO-S5 assertion above went red), and removing the S6
+# emission made the stillborn fixture scan clean instead of emitting its one finding.
+
+# --- S5: the single predicate "latest.json is JSON-equal to the last event" — missing,
+#     empty, unparseable, and stale are all failures of it (error, fixable by rebuild) ---
+desc "S5: missing, unparseable, and stale latest.json each yield exactly one S5; a mirrored or error-event latest yields zero"
+setup_home
+ev="$(fixture_event message user '{"text":"hello"}')"
+SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
+rm "$SHAI_HOME/sessions/$SID.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "missing latest exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S5)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S5" "the finding is S5"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "latest.json missing" \
+  "a missing latest.json is named"
+setup_home
+ev="$(fixture_event message user '{"text":"hello"}')"
+SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
+printf 'garbage\n' >"$SHAI_HOME/sessions/$SID.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S5" "the finding is S5"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "latest.json does not parse as JSON" \
+  "an unparseable latest.json is named"
+setup_home
+SID=$(fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"a"}')" \
+  "$(fixture_event message user '{"text":"b"}')")
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":"stale"}}' \
+  >"$SHAI_HOME/sessions/$SID.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "stale latest exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "a stale latest yields exactly one S5"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "latest.json is not the last event" \
+  "a stale latest.json is named"
+# Healthy negative control: fixture_session mirrors the log tail into .latest.json, so a
+# builder-built session satisfies S5 by construction. Mutation-checked: without the S5
+# emission the stale fixture scanned clean (exit 0, zero findings).
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"a"}')" \
+  "$(fixture_event message user '{"text":"b"}')"
+OUT=$("$FSCK" --check S5 --json)
+assert_eq "$?" "0" "a mirrored latest exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a mirrored latest yields zero S5"
+# An error event in .latest.json is the genuine most-recent event of a session that ended
+# in an eval/dispatch error, not a stale file: shai-loop's commit_run filters error events
+# out of the session log (shai-loop:136) and emit_dispatch_error writes them to LATEST
+# only, so latest and log tail legitimately diverge — and "rebuild" would overwrite the
+# only copy of the error (CLAUDE.md:139). Mutation-checked: without the error-latest
+# exemption this fixture emits exactly one S5 ("latest.json is not the last event").
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"a"}')" \
+  "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')"
+printf '%s\n' '{"type":"error","source":"system","payload":{"text":"eval failed"}}' \
+  >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --check S5 --json)
+assert_eq "$?" "0" "an error-event latest exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "an error-event latest yields zero S5"
+
+# --- S6 negative: a seeded session whose latest.json mirrors the system event is not
+#     stillborn — the empty latest is what makes the pair ---
+desc "S6: a seeded session with a mirrored latest.json yields zero S6"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message system '{"text":"seed"}')"
+OUT=$("$FSCK" --check S6 --json)
+assert_eq "$?" "0" "a mirrored system event exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a mirrored system event yields zero S6"
+
+# --- S7: every tool_result's tool_call_id appears in a PRECEDING assistant event's
+#     tool_calls (error). Ordering is part of the check, not just set membership: a
+#     result matching a LATER assistant event is equally malformed ---
+desc "S7: an unmatched tool_call_id yields exactly one S7; a result matching a later assistant event still fails"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+  "$(fixture_event tool_result tool '{"tool_call_id":"ghost","content":"nope","is_error":false}')"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "unmatched tool_result exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S7)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S7" "the finding is S7"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "error" "S7 is an error"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  'tool_result 2 tool_call_id "ghost" has no preceding assistant tool call' \
+  "the summary names the orphaned tool_call_id"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S7 is not fixable"
+# The ordering discriminator: the matching assistant event comes AFTER the result. A
+# set-membership implementation passes this fixture wrongly; only a preceding-order
+# implementation reports it.
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event tool_result tool '{"tool_call_id":"call1","content":"early","is_error":false}')" \
+  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "a result matching a later assistant event exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S7)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S7" "the finding is S7"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  'tool_result 1 tool_call_id "call1" has no preceding assistant tool call' \
+  "the premature result is named"
+# Healthy negative control: the result follows the assistant event that announced the id.
+# Mutation-checked: without the S7 emission the ghost fixture scanned clean (exit 0,
+# zero findings).
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+  "$(fixture_event tool_result tool '{"tool_call_id":"call1","content":"ok","is_error":false}')"
+OUT=$("$FSCK" --check S7 --json)
+assert_eq "$?" "0" "a matched tool_result exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a matched tool_result yields zero S7"
+
+# --- S8: every assistant tool_calls[].id has a matching tool_result later in the
+#     session (warn) — EXCEPT on the final assistant event, the resumable-tail case
+#     shai-retry exists to handle. Without the exemption every interrupted session (the
+#     REPL's healthy Ctrl-C path) would fire ---
+desc "S8: the final assistant event is exempt; an unanswered call on an earlier assistant event yields exactly one"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"list files"}')" \
+  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "0" "an interrupted session (unanswered calls on the final event) exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" \
+  "the resumable tail is exempt — zero findings, zero S8"
+# Mutation-checked by removing the final-assistant exemption: this same fixture then
+# emitted exactly one S8 and the zero-findings assertion above went red. That is the
+# state the check must not treat as corruption.
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"a"}')" \
+  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+  "$(fixture_event message assistant '{"content":"done","tool_calls":[],"finish_reason":"stop"}')"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "an unanswered earlier call exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S8)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S8" "the finding is S8"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "warn" "S8 is a warning"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  'assistant tool call "call1" (event 2) has no tool_result' \
+  "the summary names the unanswered call and its event"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S8 is not fixable"
+
+# --- S9: version is a known schema version ("1.0"). An unrecognized version is WARN;
+#     no version at all is INFO, never WARN — the same legacy tolerance as S3 ---
+desc "S9: an unrecognized version yields exactly one WARN S9; a versionless legacy log yields INFO only"
+setup_home
+ev="$(fixture_event message user '{"text":"hello"}')"
+SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
+TMP="$(mktemp)"
+jq -c '.version = "0.9"' "$SHAI_HOME/sessions/$SID.jsonl" >"$TMP"
+mv "$TMP" "$SHAI_HOME/sessions/$SID.jsonl"
+cp "$SHAI_HOME/sessions/$SID.jsonl" "$SHAI_HOME/sessions/$SID.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "unknown version exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S9)"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S9" "the finding is S9"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].severity')" "warn" "an unrecognized version is WARN"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  'event 1 has unknown version "0.9"' "the summary names the unknown version"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S9 is not fixable"
+setup_home
+mkdir -p "$SHAI_HOME/sessions"
+printf '%s\n' \
+  '{"type":"message","source":"user","payload":{"text":"one"}}' \
+  '{"type":"message","source":"user","payload":{"text":"two"}}' \
+  >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":"two"}}' \
+  >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --json)
+assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S9" and .severity == "warn")] | length')" "0" \
+  "a wholly unstamped log yields zero S9 WARNINGS"
+assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S9" and .severity == "info")] | length')" "2" \
+  "each versionless event yields one INFO S9, never a warning"
+# Healthy negative control: fixture_event always stamps version 1.0. Mutation-checked:
+# without the S9 emission the unknown-version fixture scanned clean (exit 0, zero
+# findings).
+setup_home
+fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"hello"}')"
+OUT=$("$FSCK" --check S9 --json)
+assert_eq "$?" "0" "a version 1.0 event exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a version 1.0 event yields zero S9"
+
+# --- --check S1 … --check S9: each id selects exactly its own finding from a
+#     nine-corruption store (isolation, not just reachability) ---
+desc "--check: each S id selects exactly its own finding from the nine-corruption sink"
+setup_home
+build_sink
+for id in S1 S2 S3 S4 S5 S6 S7 S8 S9; do
+  OUT=$("$FSCK" --check "$id" --json)
+  assert_eq "$?" "1" "--check $id exits 1 on its own corruption"
+  assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "--check $id reports exactly one finding"
+  assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "$id" "--check $id reports only $id"
+done
+# The full scan sees all nine, exactly one per check — the stillborn sess_s6 must not
+# also leak an S5 (S6 claims it), and sess_s7's final assistant must stay S8-exempt.
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "the sink store exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "9" "the full scan reports all nine corruptions"
+assert_eq "$(printf '%s' "$OUT" | jq -r '[.[].check] | sort | join(",")')" \
+  "S1,S2,S3,S4,S5,S6,S7,S8,S9" "every check fired exactly once"
+OUT=$("$FSCK" 2>/dev/null)
+assert_row_count "$OUT" 9 "table mode: one row per finding (9)"
+# --check S5 alone on the sink still respects S6's claim: one S5 (sess_s5), none from the
+# stillborn sess_s6.
+OUT=$("$FSCK" --check S5 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" \
+  "--check S5 alone never reports the stillborn session (S6 precedence holds without S6 selected)"
+
+# --- one jq pass per store file, per the shai-events:167 pattern: a counting jq stub
+#     must observe the session log opened by exactly one jq invocation ---
+desc "one jq pass per store file: the S-family shares a single jq pass over the session log"
+setup_home
+SID=$(fixture_session sess_20260810T120000_aabbccdd \
+  "$(fixture_event message user '{"text":"hello"}')" \
+  "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')")
+REAL_JQ="$(command -v jq)"
+JQ_LOG="$SHAI_HOME/jq.log"
+make_stub_bin
+cat >"$STUB/jq" <<EOF
+#!/bin/bash
+# one line per invocation: the jq program itself is multi-line, so flatten with tr
+printf '%s ' "\$*" | tr '\n' ' ' >>"$JQ_LOG"
+printf '\n' >>"$JQ_LOG"
+exec "$REAL_JQ" "\$@"
+EOF
+chmod +x "$STUB/jq"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "0" "healthy session exits 0 under the counting jq stub"
+assert_eq "$(grep -c "$SID.jsonl" "$JQ_LOG" || true)" "1" \
+  "the session log is opened by exactly one jq pass"
+
+# --- --check S1 … --check X1: every shipped id runs alone (each catalog entry is
 #     reachable, and no id depends on another id's scan side effects) ---
-desc "--check: each of the nine check ids runs alone"
-for id in S4 L1 L2 L3 L4 F1 F2 F3 F4 X1; do
+desc "--check: each of the eighteen check ids runs alone"
+for id in S1 S2 S3 S4 S5 S6 S7 S8 S9 L1 L2 L3 L4 F1 F2 F3 F4 X1; do
   setup_home
   RC=0
   "$FSCK" --check "$id" --json >/dev/null 2>&1 || RC=$?
