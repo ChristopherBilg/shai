@@ -21,18 +21,35 @@ wf_init() {
   export SHAI_SPAN_ID=""
   export SHAI_PARENT_SPAN_ID=""
 
-  local sessions_dir="$SHAI_HOME/sessions"
-  mkdir -p "$sessions_dir"
+  # Deliberately writes no session files (#388): a pure-bash workflow that never emits an
+  # event (an idle dispatcher tick) must leave $SHAI_HOME/sessions/ untouched. The session
+  # is materialized lazily by wf_seed_session, at the first event write.
+  mkdir -p "$SHAI_HOME/sessions"
+}
 
-  local session_log="$sessions_dir/$SHAI_SESSION_ID.jsonl"
+# wf_seed_session: materialize the session, exactly once per session id (#388). wf_init only
+# mints the id and prepares the environment; every caller that is about to write the first
+# session event — wf_llm before delegating to shai-loop, and the pure-bash dispatchers before
+# dispatching — must call this first, so the system prompt is the session's first event and
+# the .latest.json sibling exists. A session log that already has content (an earlier call in
+# this process, or a session id shared with another process) is left untouched, so the system
+# prompt is never seeded twice.
+wf_seed_session() {
+  local sessions_dir="$SHAI_HOME/sessions" session_log
+  session_log="$sessions_dir/$SHAI_SESSION_ID.jsonl"
+  if [ -s "$session_log" ]; then
+    return 0
+  fi
+  "$DIR/shai-prompt" system | "$DIR/shai-read" --system | "$DIR/shai-stamp" >>"$session_log"
   : >"$sessions_dir/$SHAI_SESSION_ID.latest.json"
-
-  "$DIR/shai-prompt" system | "$DIR/shai-read" --system | "$DIR/shai-stamp" >"$session_log"
 }
 
 wf_llm() {
   local prompt="${!#}"
   local flags=("${@:1:$#-1}")
+  # The first event write happens inside shai-loop; seed first so the system prompt
+  # remains the first event in the session log.
+  wf_seed_session
   printf '%s' "$prompt" | "$DIR/shai-loop" "${flags[@]+"${flags[@]}"}"
 }
 

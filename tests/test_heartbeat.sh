@@ -21,6 +21,11 @@ RC=$?
 assert_eq "$RC" "0" "heartbeat: exit 0 on valid assistant response"
 assert_contains "$OUT" "PASS" "heartbeat: prints PASS"
 assert_contains "$OUT" "heartbeat" "heartbeat: labels output"
+# heartbeat's wf_llm seeds the session before the first event write (#388): the system
+# prompt must be the first event in the session log.
+HEARTBEAT_SESSION_LOG=$(find "$SHAI_HOME/sessions" -maxdepth 1 -type f -name '*.jsonl' | head -n1)
+assert_eq "$(jq -r '.source' "$HEARTBEAT_SESSION_LOG" | head -n1)" "system" \
+  "heartbeat: wf_llm seeds the system prompt as the first session event"
 
 # --- FAIL case: error event from API ---
 printf '{"type":"error","error":{"type":"overloaded_error","message":"overloaded"}}' |
@@ -41,13 +46,14 @@ assert_eq "$RC" "1" "heartbeat: exit 1 on curl hard-failure"
 assert_contains "$OUT" "FAIL" "heartbeat: prints FAIL on curl hard-failure"
 
 # --- FAIL case: the pipeline itself fails (missing dependency) ---
-# workflows/heartbeat/run.sh sources lib/workflow.sh via "$(dirname "$0")/../../lib/workflow.sh", and
-# wf_init/wf_llm shell out to shai-prompt, shai-read, shai-context, shai-eval, shai-stamp, and
-# shai-loop. Mirror that layout in a scratch dir but leave shai-loop out: wf_init still succeeds
-# (it only needs shai-prompt/shai-read/shai-stamp plus prompts/system.txt), but wf_llm's
-# "$DIR/shai-loop" then resolves to a nonexistent path, bash reports "No such file or directory"
-# (127), and pipefail carries that non-zero status out of wf_llm — exactly the case
-# run.sh's `|| { ...; exit 1; }` catch exists for.
+# workflows/heartbeat/run.sh sources lib/workflow.sh via "$(dirname "$0")/../../lib/workflow.sh",
+# and wf_llm shells out to shai-prompt, shai-read, shai-context, shai-eval, shai-stamp, and
+# shai-loop. Mirror that layout in a scratch dir but leave shai-loop out: wf_init succeeds
+# (it writes no files at all — session seeding is lazy, #388), and the seed inside wf_llm
+# also succeeds (it only needs shai-prompt/shai-read/shai-stamp plus prompts/system.txt), but
+# wf_llm's "$DIR/shai-loop" then resolves to a nonexistent path, bash reports "No such file
+# or directory" (127), and pipefail carries that non-zero status out of wf_llm — exactly the
+# case run.sh's `|| { ...; exit 1; }` catch exists for.
 PIPEDIR="$(mktemp -d)"
 _CLEANUP_DIRS+=("$PIPEDIR")
 mkdir -p "$PIPEDIR/lib" "$PIPEDIR/workflows/heartbeat" "$PIPEDIR/prompts"

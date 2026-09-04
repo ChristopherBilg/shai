@@ -4,7 +4,8 @@
 # Reads: gh auth from environment; searches open issues assigned to @me labeled shai-issue-dispatcher;
 #   checks each issue's blocked_by dependencies via gh api --paginate (defers issues with open
 #   blockers; fails loudly when the endpoint is missing)
-# Writes: removes the shai-issue-dispatcher label; dispatches shai-workflow run issue_worker; ephemeral session log (prunable)
+# Writes: removes the shai-issue-dispatcher label; dispatches shai-workflow run issue_worker;
+#   session files materialized only when a dispatch runs (idle ticks write nothing; prunable)
 # Exit: 0 on success (including idle tick with no matches); 1 on failure
 set -euo pipefail
 # shellcheck source=lib/workflow.sh
@@ -96,6 +97,21 @@ while IFS=$'\t' read -r REPO NUMBER; do
     continue
   fi
 
+  # Materialize the session for a tick that actually dispatches (#388): wf_init only mints
+  # the id, so an idle tick writes nothing under $SHAI_HOME/sessions/. Seeding here — at the
+  # first real dispatch — keeps the system prompt as the session's first event. A failed seed
+  # must not abort the tick under `set -e`: the label is already removed (pre-#388 the same
+  # failure aborted in wf_init before any `gh` mutation), so record the failure, skip this
+  # item, and keep going — a human must re-apply the label to retry, as with a worker failure.
+  if ! wf_seed_session; then
+    # shellcheck source=lib/failure.sh
+    source "$DIR/lib/failure.sh"
+    fail_record "workflow_error" "could not materialize session for $REPO#$NUMBER" \
+      '{"script":"wf_seed_session","detail":"re-label to retry"}'
+    wf_output "WARNING: could not materialize session for $REPO#$NUMBER (re-label to retry)"
+    FAILED=$((FAILED + 1))
+    continue
+  fi
   if env -u SHAI_POLICY_OVERLAY "$SHAI_WORKFLOW" run issue_worker "$REPO" "$NUMBER" </dev/null; then
     wf_mark "$KEY"
     DISPATCHED=$((DISPATCHED + 1))

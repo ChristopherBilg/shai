@@ -416,7 +416,7 @@ The scripts:
   trace context (`shai-eval` reads `SHAI_RUN_ID`/`SHAI_SPAN_ID` too, just for its dump path).
   **Invariant: it must never fail the pipeline or drop an event** — a non-empty line that is not a
   JSON object is emitted verbatim, and it exits 0 always. Every write site pipes through it —
-  `shai-loop` and `shai-retry` for turn events, `shai-repl` and `wf_init` for system-prompt seeding.
+  `shai-loop` and `shai-retry` for turn events, `shai-repl` and `wf_seed_session` for system-prompt seeding.
   A **blank** line is the one deliberate exception: it is skipped, because it carries no event and
   a blank reaching the tail of a session log would make `shai-retry`'s classifier report
   "nothing to resume" for a resumable run. No filter emits one, so this only guards hand-run input.
@@ -669,8 +669,12 @@ check. Missing files are silent — policy is optional. When jq itself is not in
 section is skipped with a single warning (jq absence is already a core failure).
 
 **Workflow library** (`lib/workflow.sh`) — sourced by workflow scripts. Provides: `wf_init`
-(mints session, seeds system prompt), `wf_llm [--tools] [--quiet] "prompt"` (convenience
-wrapper around `shai-loop`), `wf_output "message"` (timestamped structured output to stdout),
+(mints the session id and prepares the workflow environment — writes **no** session files),
+`wf_seed_session` (materializes the session lazily at the first event write: system prompt as
+the first event plus the `.latest.json` sibling, exactly once per session — an existing
+non-empty session log is never re-seeded), `wf_llm [--tools] [--quiet] "prompt"` (convenience
+wrapper around `shai-loop`; seeds the session first), `wf_output "message"` (timestamped
+structured output to stdout),
 `wf_fail "message"` (stderr + exit 1; records a `workflow_error` to the failure store first —
 see **Failure store** below), `wf_seen "key"` / `wf_mark "key"` (work ledger — see
 below), `wf_suggest` (post-workflow suggestion step — see below). Sets `DIR` to the shai
@@ -738,8 +742,10 @@ peer data source.
 
 **Workflows** live in `workflows/`. Each is a standalone bash script (at `workflows/<name>/run.sh`)
 following the same conventions as runtime scripts (shebang, strict mode, doc header). Workflows
-mix mechanical bash steps with LLM steps via `wf_llm`. Each execution mints an ephemeral session
-(prunable via `shai-prune`). Schedulable via `shai-supervise install workflows/<name>/run.sh`.
+mix mechanical bash steps with LLM steps via `wf_llm`. Each execution mints a session id, but
+the session files are materialized lazily at the first event write (`wf_seed_session`), so a
+pure-bash tick with no work — an idle dispatcher tick — writes no session files at all; sessions
+are prunable via `shai-prune`. Schedulable via `shai-supervise install workflows/<name>/run.sh`.
 
 **`workflows/heartbeat/run.sh`** is the first workflow: it calls `wf_init` then `wf_llm --quiet`
 with a canned prompt, checks the reply is an `assistant` message, and prints a timestamped
@@ -767,12 +773,16 @@ re-checks); a transient API failure also defers (fail-safe), while a missing end
 even if the worker crashes; a human must re-apply the label to retry), then delegates to
 `shai-workflow run issue_worker <repo> <number>` and marks the ledger on success. All matching
 issues are processed sequentially per invocation. `SHAI_WORKFLOW` overrides the `shai-workflow`
-binary (used by the test suite). Error handling: no matches → exit 0 (idle tick); `gh search`
+binary (used by the test suite). The session is materialized (`wf_seed_session`) only when a
+dispatch actually runs, so an idle tick writes no session files under `$SHAI_HOME/sessions/`.
+Error handling: no matches → exit 0 (idle tick); `gh search`
 failure → `wf_fail`/exit 1 (next tick retries); blocked dependencies → defer, label stays
 (next tick re-checks); dependency API failure → defer with warning (next tick retries);
 missing dependency endpoint (404/410) → fail loudly (exit 1, no silent stall); label
 removal failure for one issue → warn, skip, continue (label stays for retry); worker failure →
-label already removed, ledger left unmarked (re-label to retry). Install via
+label already removed, ledger left unmarked (re-label to retry); session seed failure
+(`wf_seed_session`) → warn, record a `workflow_error`, skip, continue (label already removed;
+re-label to retry). Install via
 `shai-supervise install workflows/issue_dispatcher/run.sh --interval 15min`. Exit 0 on success
 (including idle tick), 1 on search failure.
 
@@ -800,10 +810,14 @@ key `pr:<repo>:<number>`), **removes the `shai-review-dispatcher` label before d
 primary dedup), then delegates to `shai-workflow run pr_reviewer <repo> <number>` and marks
 the ledger on success. Validates repo format and PR number before dispatch. Warns when result
 count hits the search limit. All matching PRs are processed sequentially per invocation.
-`SHAI_WORKFLOW` overrides the `shai-workflow` binary (used by the test suite). Error handling:
+`SHAI_WORKFLOW` overrides the `shai-workflow` binary (used by the test suite). The session is
+materialized (`wf_seed_session`) only when a dispatch actually runs, so an idle tick writes no
+session files under `$SHAI_HOME/sessions/`. Error handling:
 no matches → exit 0 (idle tick); `gh search` failure → `wf_fail`/exit 1 (next tick retries);
 label removal failure for one PR → warn, skip, continue (label stays for retry); worker
-failure → label already removed, ledger left unmarked (re-label to retry). The `issue_worker`
+failure → label already removed, ledger left unmarked (re-label to retry); session seed
+failure (`wf_seed_session`) → warn, record a `workflow_error`, skip, continue (label already
+removed; re-label to retry). The `issue_worker`
 prompt instructs the LLM to add the `shai-review-dispatcher` label to PRs it creates once CI
 passes (creating the label in the repo first if needed), so PRs from `issue_worker` are
 automatically queued for review. Install via
@@ -874,12 +888,16 @@ key `resolve:<repo>:<number>`), **removes the `shai-resolve-dispatcher` label be
 (the primary dedup), then delegates to `shai-workflow run review_resolver <repo> <number>` and
 marks the ledger on success. Validates repo format and PR number before dispatch. Warns when
 result count hits the search limit. All matching PRs are processed sequentially per invocation.
-`SHAI_WORKFLOW` overrides the `shai-workflow` binary (used by the test suite). Error handling:
+`SHAI_WORKFLOW` overrides the `shai-workflow` binary (used by the test suite). The session is
+materialized (`wf_seed_session`) only when a dispatch actually runs, so an idle tick writes no
+session files under `$SHAI_HOME/sessions/`. Error handling:
 no matches → exit 0 (idle tick); `gh search` failure → `wf_fail`/exit 1 (next tick retries);
 label removal failure for one PR → warn, skip, continue (label stays for retry) — the
 already-seen ledger path warns too, so a PR that can never be de-labeled does not silently
 re-appear as a skip on every tick; worker failure → label already removed, ledger left
-unmarked (re-label to retry). The `pr_reviewer` prompt instructs the LLM to add the
+unmarked (re-label to retry); session seed failure (`wf_seed_session`) → warn, record a
+`workflow_error`, skip, continue (label already removed; re-label to retry). The `pr_reviewer`
+prompt instructs the LLM to add the
 `shai-resolve-dispatcher` label once its review is posted with at least one actionable inline
 comment (creating the label in the repo first if needed), so reviewed PRs that have findings
 are automatically queued for resolution. Install via
