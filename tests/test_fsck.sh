@@ -248,6 +248,11 @@ assert_fails 2 "error: --summary cannot be combined with --json" "--summary with
 # CLAUDE.md: guard branches get unit tests, not integration tests — point the guards at
 # inputs that cannot be produced by the platform (an absent SHAI_HOME, a SHAI_HOME that is
 # a file, a PATH without jq) instead of trying to provoke them through a real store.
+# The two readability guards — SHAI_HOME -r/-x (shai-fsck:146) and the per-store dir
+# -r/-x (shai-fsck:239) — are deliberately not driven: the only way to make an existing
+# path unreadable is chmod, and root CI reads through any mode bits, so such an assertion
+# would pass vacuously there and flip green/red by runner user. Documented here rather
+# than "fixed" into vacuity.
 desc "operational failures: exit 3"
 D="$(mktemp -d)"
 _CLEANUP_DIRS+=("$D")
