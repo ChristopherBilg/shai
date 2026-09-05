@@ -350,4 +350,55 @@ assert_eq "$RC" "0" "policy: valid .rules array passes"
 run_docs workflows/bad-policy/policy.json
 assert_eq "$RC" "1" "policy: missing .rules array fails"
 
+# --- untracked guard (#413): the git-derived mode fails closed on untracked scripts ---
+# docs.sh locates its own root via ${BASH_SOURCE[0]}, so the guard fixture copies the script
+# itself (plus the shared guard helper) into a scratch git repo — the same technique the
+# completions check fixture uses. docs.sh must live under tests/ in the fixture: at the top
+# level it classifies itself as a runtime script (which would need Reads/Writes/Exit tags).
+GITFX="$(mktemp -d)"
+_CLEANUP_DIRS+=("$GITFX")
+mkdir -p "$GITFX/tests"
+cp "$DIR/tests/docs.sh" "$GITFX/tests/docs.sh"
+cp "$DIR/tests/check-untracked.sh" "$GITFX/tests/check-untracked.sh"
+git -C "$GITFX" init -q
+cat >"$GITFX/good-run" <<'EOF'
+#!/bin/bash
+# good-run — does a thing for the pipeline
+# Usage: cat x | good-run
+# Reads: stdin JSON
+# Writes: stdout JSON
+# Exit: 0 ok; 1 error
+set -euo pipefail
+EOF
+# Stage the fixture's own scripts too: untracked they would trip the very guard under test.
+git -C "$GITFX" add good-run tests/docs.sh tests/check-untracked.sh
+run_gitdocs() {
+  OUT="$(cd "$GITFX" && bash "$GITFX/tests/docs.sh" "$@" 2>&1)"
+  RC=$?
+}
+
+# Positive control: the same fixture with no untracked scripts passes and prints the banner.
+run_gitdocs
+assert_eq "$RC" "0" "untracked guard: a clean git fixture passes"
+assert_contains "$OUT" "DOCS OK" "untracked guard: clean git fixture prints the banner"
+
+# An untracked script is invisible to the git-derived file list, so the no-args run must
+# fail naming it instead of printing a green banner over it. (Mutation-checked: deleting the
+# check_no_untracked_scripts call in docs.sh leaves this green.)
+cat >"$GITFX/tests/newdoc.sh" <<'EOF'
+#!/bin/bash
+# newdoc.sh — untracked fixture script
+EOF
+run_gitdocs
+assert_eq "$RC" "1" "untracked guard: an untracked script fails the git-derived mode"
+assert_contains "$OUT" "error: 1 untracked script file(s) are invisible to this check — commit them first: tests/newdoc.sh" \
+  "untracked guard: names the invisible file"
+assert_not_contains "$OUT" "DOCS OK" "untracked guard: no green banner over a dirty tree"
+
+# Explicit file arguments name exactly what is being checked, so they are unaffected by the
+# guard: the same dirty tree still checks cleanly when the file is passed explicitly.
+run_gitdocs good-run
+assert_eq "$RC" "0" "untracked guard: explicit file mode still works on a dirty tree"
+assert_contains "$OUT" "DOCS OK" "untracked guard: explicit file mode prints the banner"
+
 finish

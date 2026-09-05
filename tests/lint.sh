@@ -4,6 +4,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
 cd "$ROOT"
+# shellcheck source=tests/check-untracked.sh
+source "$ROOT/tests/check-untracked.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -47,6 +49,12 @@ if [ "$mode" = "list" ]; then
   printf '%s\n' "${FILES[@]}"
   exit 0
 fi
+
+# Fail closed on dirty trees (#413): an untracked script is invisible to the git-derived
+# FILES list above, so a green banner would claim lint safety for a file that was never
+# shell-checked or formatted. --list stays a pure listing of tracked files (conventions.sh
+# consumes it programmatically), but every mode that can print a green banner gates here.
+check_no_untracked_scripts || exit 1
 
 # Prefer the pinned binaries in ./bin (tests/install-lint-tools.sh downloads them), then fall
 # back to $PATH so a platform those linux_amd64 downloads do not cover can still lint with

@@ -1031,6 +1031,21 @@ are automatically queued for resolution. Install via
   (#81). `tests/conventions.sh` asserts the inverse relation too: every runtime script it checks
   must appear in `./tests/lint.sh --list`, so a new runtime script cannot be invisible to the
   linter. Add a tracked shell script anywhere and it is linted automatically — no list to widen.
+- **Git-derived checks fail closed on untracked scripts (#413).** `tests/lint.sh` (check and
+  `--write` modes), `tests/conventions.sh`, `tests/docs.sh` (its no-args `git ls-files` mode),
+  and `shai-completions check`'s coverage gate all derive their file lists from git, so a new
+  untracked script is invisible to every one of them and a green banner would claim safety for
+  files never inspected. Each check refuses to run — exit 1 with
+  `error: N untracked script file(s) are invisible to this check — commit them first: <names>` —
+  when the tree holds untracked files matching the shared script predicate in
+  `tests/check-untracked.sh` (`shai-*`, any `*.sh`, or any file whose first line is
+  `#!/bin/bash` — the `*.sh`-plus-shebang predicate `tests/lint.sh` applies to tracked
+  files, extended with `shai-*` for conventions.sh's extensionless runtime scripts), and
+  the guard fails closed too when the untracked listing itself cannot be obtained;
+  `shai-completions check` gates on untracked `shai-*` scripts, its coverage universe, instead.
+  `tests/lint.sh --list` is deliberately exempt: it is a pure listing consumed programmatically
+  by `tests/conventions.sh`, not a green banner. Commit new scripts before expecting any of
+  these checks to go green — that is the whole point.
 - **Documentation is required and CI-enforced (`tests/docs.sh`, the `docs` job).** The check is
   *fail-closed*: it enumerates `git ls-files`, classifies each file, and fails on any file that is
   undocumented **or of an unrecognized type**. This fail-closed design is intentional and should not be

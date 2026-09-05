@@ -50,6 +50,51 @@ write_lint_stub shfmt 0
 write_lint_stub shellcheck-fail 1
 write_lint_stub shfmt-fail 1
 
+desc "check mode fails closed on untracked scripts instead of going green over them (#413)"
+# lint.sh locates its own root via ${BASH_SOURCE[0]}, so the fixture copies the script itself
+# (plus the shared guard helper it sources) into a scratch git repo — the same technique
+# test_docs.sh and test_completions.sh use for their git-derived fixtures. lint.sh must live
+# under tests/ in the fixture: ROOT is the script's own parent's parent.
+FX="$(mktemp -d)"
+_CLEANUP_DIRS+=("$FX")
+mkdir -p "$FX/tests"
+cp "$DIR/tests/lint.sh" "$FX/tests/lint.sh"
+cp "$DIR/tests/check-untracked.sh" "$FX/tests/check-untracked.sh"
+git -C "$FX" init -q
+cat >"$FX/shai-tracked" <<'EOF'
+#!/bin/bash
+# shai-tracked — committed fixture script for the untracked guard
+set -euo pipefail
+EOF
+# Stage the fixture's own scripts too: untracked they would trip the very guard under test.
+git -C "$FX" add shai-tracked tests/lint.sh tests/check-untracked.sh
+
+# Positive control: the same fixture with no untracked scripts passes and prints the banner.
+OUT="$(SHELLCHECK="$STUB_DIR/shellcheck" SHFMT="$STUB_DIR/shfmt" bash "$FX/tests/lint.sh" 2>&1)"
+assert_eq "$?" "0" "untracked guard: a clean fixture tree passes"
+assert_contains "$OUT" "LINT OK" "untracked guard: clean fixture prints the green banner"
+
+# An untracked script is invisible to the git-derived FILES list, so the run must fail
+# naming it before any linter runs instead of printing a green banner over it.
+# (Mutation-checked: deleting the check_no_untracked_scripts call in lint.sh leaves this
+# green, because the stubbed linters pass and the banner still prints.)
+cat >"$FX/tests/sneaky.sh" <<'EOF'
+#!/bin/bash
+# sneaky.sh — untracked fixture script
+EOF
+OUT="$(SHELLCHECK="$STUB_DIR/shellcheck" SHFMT="$STUB_DIR/shfmt" bash "$FX/tests/lint.sh" 2>&1)"
+assert_eq "$?" "1" "untracked guard: an untracked script fails the check"
+assert_contains "$OUT" "error: 1 untracked script file(s) are invisible to this check — commit them first: tests/sneaky.sh" \
+  "untracked guard: names the invisible file"
+assert_not_contains "$OUT" "LINT OK" "untracked guard: no green banner over a dirty tree"
+
+# --list is a pure listing consumed programmatically by tests/conventions.sh, not a green
+# banner: it must keep working on a dirty tree and keep excluding the untracked file.
+LIST_OUT="$(bash "$FX/tests/lint.sh" --list 2>&1)"
+assert_eq "$?" "0" "untracked guard: --list still works on a dirty tree"
+assert_contains "$LIST_OUT" "shai-tracked" "untracked guard: --list still names tracked files"
+assert_not_contains "$LIST_OUT" "sneaky.sh" "untracked guard: --list excludes the untracked file"
+
 desc "resolved linters are printed and receive the git-derived file list"
 OUT="$(SHELLCHECK="$STUB_DIR/shellcheck" SHFMT="$STUB_DIR/shfmt" bash "$DIR/tests/lint.sh" 2>&1)"
 RC=$?
