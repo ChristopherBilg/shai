@@ -1,7 +1,9 @@
 #!/bin/bash
 # test_retry_idempotent.sh — tests for buffer-then-commit and idempotent replay
 # Covers: shai-repl — buffer-then-commit write path (commit_run, error guard, /dev/null fallback);
-#         shai-retry --run — idempotent replay, retry_of metadata, already-committed guard
+#         shai-retry --run — idempotent replay, retry_of metadata, already-committed guard,
+#         and the verbatim error messages + exit codes of every --run failure path
+#         (#386's verdict→message contract; issue #407 pins them here)
 set -uo pipefail
 # shellcheck source=tests/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -115,13 +117,83 @@ printf '%s\n' '{"type":"message","source":"user","payload":{"text":"done"},"vers
 } >"$SHIST"
 BEFORE=$(wc -l <"$SHIST")
 OUT=$(SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_done 2>&1)
+RC=$?
 AFTER=$(wc -l <"$SHIST")
-assert_contains "$OUT" "already committed" "replay: already-committed run detected"
+# The whole line, run id included: #386's contract made the message text part of the API,
+# so a reword or an arm swap (e.g. the no-user-message text) must go red, not pass on an
+# "already committed" substring.
+assert_eq "$OUT" "run run_done already committed" "replay: already-committed run detected"
+assert_eq "$RC" "0" "replay: already-committed run exits 0"
 assert_eq "$AFTER" "$BEFORE" "replay: already-committed run appends nothing"
 
-# missing run log exits with error
+# --- shai-retry --run failure paths: verbatim messages + exit codes -----------------
+# Every case below pins the exact message shai-retry prints AND the exit code. #386 moved
+# these verdicts into lib/replay.sh's case mapping with the hard requirement that messages
+# and exit codes stay verbatim; before #407 only the exit code (missing log) and an
+# "already committed" substring were covered, so an arm swap or reword was a false green.
+# Fixtures are pure $SHAI_HOME filesystem state — no stubs needed, since every failure
+# path exits before the health-check / model call.
+
+# usage error: --run without a run_id is rejected before any state is read
 new_home
-assert_exit 1 "replay: missing run log exits 1" -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run nonexistent_run
+assert_fails 1 'error: --run requires a run_id' "replay: --run without a run_id" \
+  -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run
+
+# the --run id guard (shai-retry's own check, ahead of lib/replay.sh's mapping) is also
+# part of the user-visible surface: the offending id is named in the message
+assert_fails 1 'error: run_id must not contain / or .. (got "run/evil")' "replay: run_id with /" \
+  -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run/evil
+assert_fails 1 'error: run_id must not contain / or .. (got "a..b")' "replay: run_id with .." \
+  -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run a..b
+
+# missing run log: pin the message that names the log, not just "exit 1"
+new_home
+assert_fails 1 "error: run log not found: $SHOME/runs/nonexistent_run/events.jsonl" \
+  "replay: missing run log" -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run nonexistent_run
+
+# an empty run log hits the same precondition and message
+mkdir -p "$SHOME/runs/run_empty"
+: >"$SHOME/runs/run_empty/events.jsonl"
+assert_fails 1 "error: run log not found: $SHOME/runs/run_empty/events.jsonl" \
+  "replay: empty run log" -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_empty
+
+# run log with no meta.session_id line
+new_home
+mkdir -p "$SHOME/runs/run_nosid"
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}' \
+  >"$SHOME/runs/run_nosid/events.jsonl"
+assert_fails 1 'error: run log has no session_id metadata' "replay: run log without session_id" \
+  -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_nosid
+
+# run log whose session_id contains / or ..: the offending id is named in the message
+new_home
+mkdir -p "$SHOME/runs/run_slash"
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"},"meta":{"run_id":"run_slash","session_id":"../etc/passwd"}}' \
+  >"$SHOME/runs/run_slash/events.jsonl"
+assert_fails 1 'error: session_id in run log must not contain / or .. (got "../etc/passwd")' \
+  "replay: session_id with /" -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_slash
+
+mkdir -p "$SHOME/runs/run_dotdot"
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"},"meta":{"run_id":"run_dotdot","session_id":"a..b"}}' \
+  >"$SHOME/runs/run_dotdot/events.jsonl"
+assert_fails 1 'error: session_id in run log must not contain / or .. (got "a..b")' \
+  "replay: session_id with .." -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_dotdot
+
+# run log with no non-null user payload.text: no user message at all...
+new_home
+mkdir -p "$SHOME/runs/run_nomsg"
+printf '%s\n' '{"type":"error","source":"system","payload":{"text":"boom"},"meta":{"run_id":"run_nomsg","session_id":"sess"}}' \
+  >"$SHOME/runs/run_nomsg/events.jsonl"
+assert_fails 1 'error: no user message found in run log' "replay: no user message" \
+  -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_nomsg
+
+# ...or a user message whose payload.text is null (both read as "no text")
+new_home
+mkdir -p "$SHOME/runs/run_nulltext"
+printf '%s\n' '{"type":"message","source":"user","payload":{"text":null},"meta":{"run_id":"run_nulltext","session_id":"sess"}}' \
+  >"$SHOME/runs/run_nulltext/events.jsonl"
+assert_fails 1 'error: no user message found in run log' "replay: null user text" \
+  -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_nulltext
 
 # existing no-flag behavior is preserved (nothing to resume on empty history)
 new_home
