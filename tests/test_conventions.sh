@@ -49,5 +49,56 @@ assert_eq "$?" "1" "untracked guard: an untracked script fails the check"
 assert_contains "$OUT" "error: 1 untracked script file(s) are invisible to this check — commit them first: tests/newcon.sh" \
   "untracked guard: names the invisible file"
 assert_not_contains "$OUT" "CONVENTIONS OK" "untracked guard: no green banner over a dirty tree"
+rm -f "$FIX/tests/newcon.sh"
+
+# Lock the remaining predicate branches so a mutation that narrows the guard cannot go
+# unnoticed: the *.sh branch must catch any-depth .sh files (lint.sh lints every tracked
+# *.sh, tests/lint.sh:37, so a root-level ci.sh would otherwise earn a green banner), the
+# shebang fallback must catch extensionless #!/bin/bash files, and shai-* must catch
+# conventions.sh's extensionless runtime scripts. (Mutation-checked per branch: removing
+# `*.sh`, the `#!/bin/bash` fallback, or `shai-*` from tests/check-untracked.sh each turns
+# exactly one of these three cases red — the fixture is otherwise green.)
+cat >"$FIX/ci.sh" <<'EOF'
+#!/bin/sh
+# ci.sh — root-level untracked script: caught by the *.sh branch, not the shebang fallback
+EOF
+OUT="$(bash "$FIX/tests/conventions.sh" 2>&1)"
+assert_eq "$?" "1" "untracked guard: a root-level untracked *.sh fails the check"
+assert_contains "$OUT" "error: 1 untracked script file(s) are invisible to this check — commit them first: ci.sh" \
+  "untracked guard: *.sh branch names the root-level file"
+assert_not_contains "$OUT" "CONVENTIONS OK" "untracked guard: no green banner over a root-level *.sh"
+rm -f "$FIX/ci.sh"
+
+cat >"$FIX/bin-helper" <<'EOF'
+#!/bin/bash
+# bin-helper — extensionless untracked script: caught only by the shebang fallback
+EOF
+OUT="$(bash "$FIX/tests/conventions.sh" 2>&1)"
+assert_eq "$?" "1" "untracked guard: an extensionless #!/bin/bash file fails the check"
+assert_contains "$OUT" "error: 1 untracked script file(s) are invisible to this check — commit them first: bin-helper" \
+  "untracked guard: shebang fallback names the extensionless file"
+assert_not_contains "$OUT" "CONVENTIONS OK" "untracked guard: no green banner over a fallback-only file"
+rm -f "$FIX/bin-helper"
+
+cat >"$FIX/shai-untracked" <<'EOF'
+not a bash script, but still shai-*: invisible to conventions.sh's RUNTIME list until committed
+EOF
+OUT="$(bash "$FIX/tests/conventions.sh" 2>&1)"
+assert_eq "$?" "1" "untracked guard: an untracked shai-* file fails the check"
+assert_contains "$OUT" "error: 1 untracked script file(s) are invisible to this check — commit them first: shai-untracked" \
+  "untracked guard: shai-* branch names the extensionless file"
+assert_not_contains "$OUT" "CONVENTIONS OK" "untracked guard: no green banner over an untracked shai-* file"
+rm -f "$FIX/shai-untracked"
+
+# The guard's own listing must fail closed, not pass vacuously: without .git there is no
+# untracked list, and going green over an un-inspectable tree would be the exact false
+# confidence the guard exists to prevent. (Mutation-checked: restoring 2>/dev/null on the
+# git ls-files listing leaves this message assertion red — conventions.sh then fails later
+# for an unrelated reason, but the guard's own error is gone.)
+mv "$FIX/.git" "$FIX/.git.off"
+OUT="$(bash "$FIX/tests/conventions.sh" 2>&1)"
+assert_eq "$?" "1" "untracked guard: a git listing failure fails the check"
+assert_contains "$OUT" "cannot list untracked files" "untracked guard: git listing failure is named"
+mv "$FIX/.git.off" "$FIX/.git"
 
 finish
