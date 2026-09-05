@@ -72,6 +72,28 @@ assert_fails() {
   assert_contains "$err" "$frag" "$desc (stderr)"
 }
 
+# assert_fails_exact <expected_code> <expected_stderr> <description> -- <command...>: like
+# assert_fails, but the captured stderr must EQUAL <expected_stderr> (trailing newlines
+# stripped by the command substitution), not merely contain it — an extra or duplicated
+# stderr line goes red. For single-line error contracts whose exact text is part of the
+# API (#386's verdict→message mapping): a contains-match cannot see a reword or an arm swap
+# that also emits a stray line.
+assert_fails_exact() {
+  local expected="$1" want="$2" desc="$3"
+  shift 3
+  [ "${1:-}" = "--" ] && shift
+  if [ -z "$want" ]; then
+    echo -e "  ${RED}✗${NC} $desc (usage error: empty expected stderr)"
+    FAILED=1
+    return 1
+  fi
+  local err rc
+  err=$("$@" 2>&1 >/dev/null) # capture stderr only: dup before the stdout redirect
+  rc=$?
+  assert_eq "$rc" "$expected" "$desc (exit)"
+  assert_eq "$err" "$want" "$desc (stderr)"
+}
+
 # assert_row_count <output> <expected> <description>: assert the table in <output> has exactly
 # <expected> data rows, excluding the header line. Blank output (empty or whitespace-only)
 # counts as 0 rows.
