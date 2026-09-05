@@ -151,5 +151,7 @@ assert_contains "$OUT" "silently returns that PR's own data" \
   "review_resolver: prompt distinguishes bare-#N PR references from issue references"
 assert_contains "$OUT" "gh api repos/{{REPO}}/issues/N --jq 'has(\"pull_request\")'" \
   "review_resolver: prompt instructs detecting a bare-#N PR collision via the pull_request key"
+assert_contains "$OUT" "--jq '.[] | {id, in_reply_to_id, path, line, original_line, position, body}'" \
+  "review_resolver: prompt projects the inline-comment fetch so diff_hunk cannot truncate the list"
 
 finish
