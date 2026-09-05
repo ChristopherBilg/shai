@@ -5,9 +5,11 @@
 #         --json findings array ([] when clean, type+length asserted), table renderer row
 #         counts, digest on stderr, --store/--check/--after/--before scoping, --summary,
 #         --fix/--dry-run repairs (the dedicated log-preservation safety test, per-repair
-#         pairs for the six fixable classes, rescan-clean with the unfixable contrast,
-#         idempotency, R6's resumable-run protection, scoping, the dry-run/fix plan
-#         identity, exit codes 0/1/3), usage errors (exit 2) with distinct messages,
+#         pairs for the six fixable classes, the S5 zero-event refusal (a log with no
+#         parseable events is reported unfixable, never "rebuilt" into an empty file),
+#         rescan-clean with the unfixable contrast, idempotency, R6's resumable-run
+#         protection, scoping, the dry-run/fix plan identity, exit codes 0/1/3), usage
+#         errors (exit 2) with distinct messages,
 #         operational failures (exit 3), the R1-R7 run-store checks (empty/garbled run
 #         logs, foreign meta.run_id, span gaps and chain breaks, span dump integrity,
 #         uncommitted-run classification via lib/replay.sh including the retry_of half,
@@ -1680,6 +1682,46 @@ assert_eq "$(jq -S . "$SHAI_HOME/sessions/$SID.latest.json")" \
   "latest.json is JSON-equal to the log's last event"
 assert_contains "$ERR" "repair: rebuild $SHAI_HOME/sessions/$SID.latest.json (S5)" \
   "the repair line names the rebuild"
+
+desc "S5 zero-event refusal: --fix never empties a content latest.json whose log has no events"
+setup_home
+SID=$(fixture_session sess_20260810T120000_aabbccdd "$(sess_event message user '{"text":"hello"}')")
+: >"$SHAI_HOME/sessions/$SID.jsonl" # zero parseable events; latest still holds the mirrored event
+LOG_HASH_BEFORE="$(sha256sum "$SHAI_HOME/sessions/$SID.jsonl")"
+LATEST_HASH_BEFORE="$(sha256sum "$SHAI_HOME/sessions/$SID.latest.json")"
+ERR=$("$FSCK" --fix --check S5 2>&1 >/dev/null)
+assert_eq "$?" "1" "zero-event S5 exits 1 (unfixable), never a false exit 0"
+assert_not_contains "$ERR" "repair:" "no rebuild runs for a zero-event session log"
+assert_contains "$ERR" \
+  "manual: S5 $SHAI_HOME/sessions/$SID.latest.json — manual: hand-edit the session log to restore an event, or delete the session pair" \
+  "the zero-event S5 prints its named manual remedy"
+assert_eq "$(sha256sum "$SHAI_HOME/sessions/$SID.latest.json")" "$LATEST_HASH_BEFORE" \
+  "the content latest.json is byte-identical — the destructive empty rebuild never ran"
+assert_eq "$(sha256sum "$SHAI_HOME/sessions/$SID.jsonl")" "$LOG_HASH_BEFORE" \
+  "the session log is byte-identical"
+OUT=$("$FSCK" --check S5 --json)
+assert_eq "$?" "1" "rescan still reports S5 — the refusal does not fake a clean store"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "rescan reports exactly one S5"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "the zero-event S5 is unfixable"
+ERR=$("$FSCK" --fix --check S5 2>&1 >/dev/null)
+assert_eq "$?" "1" "a second --fix also exits 1"
+assert_eq "$(sha256sum "$SHAI_HOME/sessions/$SID.latest.json")" "$LATEST_HASH_BEFORE" \
+  "a second --fix leaves the latest byte-identical (idempotent refusal)"
+
+desc "S5 zero-event refusal covers the empty-latest shape too (no phantom rebuild loop)"
+setup_home
+SID=$(fixture_session sess_20260810T120000_aabbccdd "$(sess_event message user '{"text":"hello"}')")
+: >"$SHAI_HOME/sessions/$SID.jsonl"
+: >"$SHAI_HOME/sessions/$SID.latest.json"
+OUT=$("$FSCK" --check S5 --json)
+assert_eq "$?" "1" "zero-event log with empty latest exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one S5"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "the empty-latest zero-event S5 is unfixable"
+ERR=$("$FSCK" --fix --check S5 2>&1 >/dev/null)
+assert_eq "$?" "1" "--fix on the empty-latest zero-event shape exits 1"
+assert_not_contains "$ERR" "repair:" "no rebuild for a zero-event log"
+assert_eq "$([ -s "$SHAI_HOME/sessions/$SID.latest.json" ] && echo yes || echo no)" "no" \
+  "the empty latest stays empty — the rebuild that would loop forever never ran"
 
 desc "S6 repair pair: --fix deletes both halves of the stillborn pair"
 setup_home

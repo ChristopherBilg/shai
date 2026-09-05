@@ -267,6 +267,12 @@ ck_S4() {
 #   event (CLAUDE.md:139) beside a log whose tail is the last committed event. Flagging
 #   that divergence would be a false positive, and "rebuild" would overwrite the only
 #   copy of the error.
+#   Exception: a session log with no parseable events is never "rebuildable". The repair
+#   is `tail -n 1` of the log, and with zero events that writes an empty file (or the
+#   last garbage line) — destroying whatever the old LATEST held, while a rescan still
+#   reports S5, so the repair can never converge and the exit-0 promise would be false.
+#   Every zero-event shape (missing/empty/unparseable/content latest) is refused with a
+#   named manual remedy instead, mirroring the error-event carve-out above.
 # S6 (warn): stillborn session — exactly one event, a message/system seed, beside an
 #   empty .latest.json, the pair wf_seed_session writes. Evaluated before S5 and claims
 #   the session: without the precedence every stillborn session reports twice (correctly
@@ -370,7 +376,15 @@ SESS_SCAN_PROGRAM='
                     false; "manual: hand-edit the session log to correct meta.session_id"; $path)]
         else [] end)
      + (if $s5 and ($stillborn | not) then
-          if $latest_state == "missing" then
+          if ($latest_state == "present") and ($latest_parsed.ok)
+             and ($latest_parsed.v.type == "error") then []
+          elif $events_n == 0 then
+            [s_emit("S5"; "error";
+                    "latest.json cannot be rebuilt (the session log has no parseable events)";
+                    false;
+                    "manual: hand-edit the session log to restore an event, or delete the session pair";
+                    $latest_path)]
+          elif $latest_state == "missing" then
             [s_emit("S5"; "error"; "latest.json missing"; true; "rebuild"; $latest_path)]
           elif $latest_state == "other" then
             [s_emit("S5"; "error"; "latest.json is not a regular file"; true; "rebuild"; $latest_path)]
@@ -378,10 +392,6 @@ SESS_SCAN_PROGRAM='
             [s_emit("S5"; "error"; "latest.json empty"; true; "rebuild"; $latest_path)]
           elif ($latest_parsed.ok | not) then
             [s_emit("S5"; "error"; "latest.json does not parse as JSON"; true; "rebuild"; $latest_path)]
-          elif $latest_parsed.v.type == "error" then []
-          elif $events_n == 0 then
-            [s_emit("S5"; "error"; "latest.json has content but the session log has no events";
-                    true; "rebuild"; $latest_path)]
           elif $latest_parsed.v == $last_event then []
           else
             [s_emit("S5"; "error"; "latest.json is not the last event"; true; "rebuild"; $latest_path)]
