@@ -172,6 +172,8 @@ assert_contains "$OUT" '"subject_type": "file"' \
   "pr_reviewer: prompt documents the file-level comment fallback with no line"
 assert_contains "$OUT" "newStart + newCount - 1" \
   "pr_reviewer: prompt instructs verifying each line against the -U0 right-side ranges"
+assert_contains "$OUT" "--jq '.[] | {id, in_reply_to_id, path, line, original_line, position, body}'" \
+  "pr_reviewer: prompt projects the inline-comment fetch so diff_hunk cannot truncate the list"
 if [[ "$OUT" == *"pulls/{{NUMBER}}/reviews --method POST"* ]]; then
   echo -e "  ${RED}✗${NC} pr_reviewer: prompt still assembles the whole review into one bulk POST /reviews payload"
   FAILED=1
