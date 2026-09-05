@@ -52,7 +52,7 @@ fi
 
 # Fail closed on dirty trees (#413): an untracked script is invisible to the git-derived
 # FILES list above, so a green banner would claim lint safety for a file that was never
-# shellchecked or formatted. --list stays a pure listing of tracked files (conventions.sh
+# shell-checked or formatted. --list stays a pure listing of tracked files (conventions.sh
 # consumes it programmatically), but every mode that can print a green banner gates here.
 check_no_untracked_scripts || exit 1
 
