@@ -371,7 +371,7 @@
           "description": "Only items at or before DATE"
         },
         "--fix": {
-          "description": "Repair repairable findings (parsed, not yet implemented)"
+          "description": "Repair fixable findings without editing event logs"
         },
         "--dry-run": {
           "description": "With --fix, report the repairs without making them"

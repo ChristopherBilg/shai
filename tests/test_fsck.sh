@@ -4,7 +4,10 @@
 #         healthy #387-built store reports clean (exit 0), the eight-key finding contract,
 #         --json findings array ([] when clean, type+length asserted), table renderer row
 #         counts, digest on stderr, --store/--check/--after/--before scoping, --summary,
-#         --fix/--dry-run parsing, usage errors (exit 2) with distinct messages,
+#         --fix/--dry-run repairs (the dedicated log-preservation safety test, per-repair
+#         pairs for the six fixable classes, rescan-clean with the unfixable contrast,
+#         idempotency, R6's resumable-run protection, scoping, the dry-run/fix plan
+#         identity, exit codes 0/1/3), usage errors (exit 2) with distinct messages,
 #         operational failures (exit 3), the R1-R7 run-store checks (empty/garbled run
 #         logs, foreign meta.run_id, span gaps and chain breaks, span dump integrity,
 #         uncommitted-run classification via lib/replay.sh including the retry_of half,
@@ -649,21 +652,8 @@ assert_eq "$?" "0" "clean summary mode exits 0"
 assert_eq "$OUT" "no problems found (1 session, 0 runs, 0 ledgers, 0 failure logs)" \
   "clean summary mode prints the clean line"
 
-# --- --fix/--dry-run: parsed and validated, no behaviour yet ---
-desc "--fix/--dry-run: parsed and validated only — nothing is modified"
-setup_home
-orphan_latest sess_20260810T120000_aabbccdd
-OUT=$("$FSCK" --fix 2>/dev/null)
-assert_eq "$?" "1" "--fix still reports the findings"
-assert_row_count "$OUT" 1 "--fix table still has one row"
-assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json" ] && echo yes || echo no)" \
-  "yes" "--fix does not delete anything yet"
-ERR=$("$FSCK" --fix 2>&1 >/dev/null)
-assert_contains "$ERR" "warning: --fix is parsed but not implemented yet" \
-  "--fix warns that its behaviour lands later"
-OUT=$("$FSCK" --fix --dry-run 2>/dev/null)
-assert_eq "$?" "1" "--fix --dry-run is a valid combination"
-assert_row_count "$OUT" 1 "--fix --dry-run still reports one row"
+# --- --fix/--dry-run: the full repair suite lives at the end of this file ---
+desc "--fix/--dry-run: usage gates (the repair behaviour is tested below)"
 assert_fails 2 "error: --dry-run requires --fix" "--dry-run without --fix" -- "$FSCK" --dry-run
 
 # --- the out-of-scope pointer: policy.json/ci.json stay shai-doctor's, table mode only ---
@@ -1469,5 +1459,418 @@ for id in S1 S2 S3 S4 S5 S6 S7 S8 S9 R1 R2 R3 R4 R5 R6 R7 L1 L2 L3 L4 F1 F2 F3 F
   "$FSCK" --check "$id" --json >/dev/null 2>&1 || RC=$?
   assert_eq "$RC" "0" "--check $id runs alone (exit 0 on an empty store)"
 done
+
+# =============================================================================
+# --fix: safe repairs driven by the findings accumulator (#393). --fix consumes
+# the same FINDINGS_FILE the renderers read — it never re-scans or re-derives
+# fixability — and maps each fixable check to exactly one safe action: rebuild a
+# derived file (S5) or delete a whole redundant unit (S4, S6, R1's wholly-empty
+# run directory, R5, R6's dead run). Anything else is refused with its named
+# manual remedy on stderr. The dedicated safety test (byte-identity of malformed
+# event logs, with a repaired-finding positive control) leads, because it is the
+# property the whole --fix design exists to protect.
+# =============================================================================
+
+# store_checksum: one "sha256  path" line per file under $SHAI_HOME, sorted by path —
+# the snapshot the idempotency and byte-identity assertions compare.
+store_checksum() {
+  local f
+  if [ -d "$SHAI_HOME" ]; then
+    while IFS= read -r f; do
+      sha256sum "$f" 2>/dev/null
+    done < <(find "$SHAI_HOME" -type f | LC_ALL=C sort)
+  fi
+}
+
+# build_fixable_store: one corruption per fixable check — S4 orphan latest.json, S5
+# three-event log with an empty latest.json, S6 the stillborn pair, R1 a wholly empty
+# run directory, R5 an orphan span dump, R6 a dead uncommitted run. Each is a healthy
+# fixture with exactly one break, and every cross-reference (committed runs, nulled
+# run_ids) is arranged so a full scan finds exactly these six findings.
+build_fixable_store() {
+  local ev
+  mkdir -p "$SHAI_HOME/sessions" "$SHAI_HOME/runs"
+  # S4: orphan .latest.json
+  printf '{}\n' >"$SHAI_HOME/sessions/sess_s4.latest.json"
+  # S5: three events, empty .latest.json (multi-event, so never stillborn)
+  fixture_session sess_s5 \
+    "$(sess_event message user '{"text":"a"}')" \
+    "$(sess_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')" \
+    "$(sess_event message user '{"text":"b"}')"
+  : >"$SHAI_HOME/sessions/sess_s5.latest.json"
+  # S6: the stillborn pair
+  fixture_session sess_s6 "$(sess_event message system '{"text":"seed"}')"
+  : >"$SHAI_HOME/sessions/sess_s6.latest.json"
+  # R1: a wholly empty run directory
+  mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+  # R5: an orphan span dump beside a healthy committed one-span run
+  ev="$(fixture_event message user '{"text":"hi"}' run_r5 sess_r5 span_1)"
+  fixture_session sess_r5 "$ev"
+  fixture_run run_r5 sess_r5 "$ev"
+  fixture_span_dump run_r5 span_9 request
+  # R6: a dead uncommitted run — error event, no user message
+  fixture_run run_r6 sess_r6 "$(fixture_event error system '{"text":"boom"}')"
+}
+
+# build_unfixable_store: one corruption per REFUSED check — S1/S2/S3/S7/S8/S9, R1's
+# unfixable empty-log shape, R2, R3, R4, R6's resumable verdict, R7, L1-L4, F1-F4, X1.
+# The ledger fixtures each get their own workflow name because fixture_ledger truncates
+# its file (L1's garbage line would otherwise be wiped by the next builder call);
+# failure fixtures append and may share one file because each corruption is distinct.
+build_unfixable_store() {
+  local ev tmp sid
+  mkdir -p "$SHAI_HOME/sessions" "$SHAI_HOME/runs"
+  # S1: garbage line after a healthy event
+  ev="$(sess_event message user '{"text":"a"}')"
+  fixture_session sess_s1 "$ev"
+  printf 'not json\n' >>"$SHAI_HOME/sessions/sess_s1.jsonl"
+  # S2: source deleted (log and latest rewritten together)
+  ev="$(sess_event message user '{"text":"b"}')"
+  fixture_session sess_s2 "$ev"
+  tmp="$(mktemp)"
+  jq -c 'del(.source)' "$SHAI_HOME/sessions/sess_s2.jsonl" >"$tmp"
+  mv "$tmp" "$SHAI_HOME/sessions/sess_s2.jsonl"
+  cp "$SHAI_HOME/sessions/sess_s2.jsonl" "$SHAI_HOME/sessions/sess_s2.latest.json"
+  # S3: first of two events stamped with the wrong session id
+  fixture_session sess_s3 \
+    "$(sess_event message user '{"text":"c1"}')" \
+    "$(sess_event message user '{"text":"c2"}')"
+  tmp="$(mktemp)"
+  head -n 1 "$SHAI_HOME/sessions/sess_s3.jsonl" | jq -c '.meta.session_id = "elsewhere"' >"$tmp"
+  sed -n '2p' "$SHAI_HOME/sessions/sess_s3.jsonl" >>"$tmp"
+  mv "$tmp" "$SHAI_HOME/sessions/sess_s3.jsonl"
+  # S7: a tool_result whose id no preceding assistant event announced
+  fixture_session sess_s7 \
+    "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+    "$(sess_event tool_result tool '{"tool_call_id":"ghost","content":"nope","is_error":false}')"
+  # S8: an unanswered tool call on an earlier assistant event
+  fixture_session sess_s8 \
+    "$(sess_event message user '{"text":"f"}')" \
+    "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+    "$(sess_event message assistant '{"content":"done","tool_calls":[],"finish_reason":"stop"}')"
+  # S9: an unrecognized schema version
+  ev="$(sess_event message user '{"text":"g"}')"
+  fixture_session sess_s9 "$ev"
+  tmp="$(mktemp)"
+  jq -c '.version = "0.9"' "$SHAI_HOME/sessions/sess_s9.jsonl" >"$tmp"
+  mv "$tmp" "$SHAI_HOME/sessions/sess_s9.jsonl"
+  cp "$SHAI_HOME/sessions/sess_s9.jsonl" "$SHAI_HOME/sessions/sess_s9.latest.json"
+  # R1 (unfixable shape): an empty event log
+  fixture_run run_r1 sess_r1
+  # R2: a foreign meta.run_id, in a run that R6/R7 still classify as committed/resolved
+  ev="$(fixture_event message user '{"text":"hi"}' run_other sess_r2)"
+  mkdir -p "$SHAI_HOME/runs/run_r2"
+  printf '%s\n' "$ev" >"$SHAI_HOME/runs/run_r2/events.jsonl"
+  fixture_session sess_r2 "$(fixture_event message user '{"text":"hi"}' run_r2 sess_r2)"
+  # R3: a span gap (span_1 then span_3)
+  ev="$(fixture_event message user '{"text":"hi"}' run_r3 sess_r3 span_1)"
+  tmp="$(fixture_event message assistant '{"content":"hi"}' run_r3 sess_r3 span_3)"
+  tmp="$(printf '%s' "$tmp" | jq -c '.meta.parent_span_id = "span_2"')"
+  fixture_session sess_r3 "$ev" "$tmp"
+  fixture_run run_r3 sess_r3 "$ev" "$tmp"
+  # R4: a malformed span dump whose span does have an event (so R5 stays quiet)
+  ev="$(fixture_event message user '{"text":"hi"}' run_r4 sess_r4 span_1)"
+  fixture_session sess_r4 "$ev"
+  fixture_run run_r4 sess_r4 "$ev"
+  fixture_span_dump run_r4 span_1 request '{garbage'
+  # R6 (resumable): a user message whose session was never committed
+  fixture_run run_r6 sess_r6 "$(fixture_event message user '{"text":"hi"}')"
+  # R7: a session event referencing a run directory that does not exist
+  fixture_session sess_r7 "$(fixture_event message user '{"text":"hi"}' run_ghost sess_r7)"
+  # L1: a ledger line that does not parse
+  fixture_ledger heartbeat k1
+  printf 'not json\n' >>"$SHAI_HOME/ledgers/heartbeat.jsonl"
+  # L2: a duplicate key
+  fixture_ledger jira_worker k2 k2
+  # L3: a ledger entry naming a session that was removed
+  sid="$(fixture_ledger pr_reviewer k3)"
+  rm "$SHAI_HOME/sessions/$sid.jsonl" "$SHAI_HOME/sessions/$sid.latest.json"
+  # L4: a ledger for a workflow that no longer exists
+  fixture_ledger nope_workflow_xyz k4
+  # F1: a failure line that does not parse
+  fixture_failure heartbeat api_error "HTTP 503"
+  printf 'not json\n' >>"$SHAI_HOME/failures/heartbeat.jsonl"
+  # F2: an unknown category
+  fixture_failure heartbeat banana "unknown category"
+  # F3: a context that is not an object
+  jq -nc '{ts:"2026-08-11T12:00:00Z", workflow:"heartbeat", run_id:null, session_id:null,
+           category:"api_error", summary:"ctx", context:"not-an-object"}' \
+    >>"$SHAI_HOME/failures/heartbeat.jsonl"
+  # F4: a non-null run_id that does not resolve
+  jq -nc '{ts:"2026-08-11T12:00:00Z", workflow:"heartbeat", run_id:"run_ghost",
+           session_id:null, category:"api_error", summary:"x", context:{}}' \
+    >>"$SHAI_HOME/failures/heartbeat.jsonl"
+  # X1: a stray file where only *.jsonl / *.latest.json belong
+  printf 'stray\n' >"$SHAI_HOME/sessions/stray.txt"
+}
+
+# --- the dedicated safety test: malformed event logs stay byte-identical, and the
+#     fixable finding in the same store WAS repaired (the positive control — without
+#     it the byte-identity half passes trivially against a --fix that does nothing) ---
+desc "--fix safety: malformed event logs are byte-identical; the fixable finding is repaired"
+setup_home
+ev="$(sess_event message user '{"text":"hello"}')"
+SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
+printf 'not json\n' >>"$SHAI_HOME/sessions/$SID.jsonl"
+fixture_ledger heartbeat k1
+printf 'not json\n' >>"$SHAI_HOME/ledgers/heartbeat.jsonl"
+fixture_failure heartbeat api_error "HTTP 503 from the API"
+printf 'not json\n' >>"$SHAI_HOME/failures/heartbeat.jsonl"
+orphan_latest sess_20260811T120000_eeff0011
+log_hashes() {
+  sha256sum \
+    "$SHAI_HOME/sessions/$SID.jsonl" \
+    "$SHAI_HOME/ledgers/heartbeat.jsonl" \
+    "$SHAI_HOME/failures/heartbeat.jsonl"
+}
+BEFORE="$(log_hashes)"
+ERR=$("$FSCK" --fix 2>&1 >/dev/null)
+assert_eq "$?" "1" "--fix exits 1 when malformed logs cannot be safely repaired"
+assert_eq "$(log_hashes)" "$BEFORE" \
+  "the three malformed event-bearing .jsonl logs are byte-identical after --fix"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260811T120000_eeff0011.latest.json" ] && echo yes || echo no)" "no" \
+  "the fixable S4 orphan WAS repaired (the positive control, mutation-checked: a no-op --fix keeps the orphan and fails this)"
+assert_contains "$ERR" \
+  "repair: delete $SHAI_HOME/sessions/sess_20260811T120000_eeff0011.latest.json (S4)" \
+  "the repair line names the orphan"
+assert_contains "$ERR" \
+  "manual: S1 $SHAI_HOME/sessions/$SID.jsonl — manual: hand-edit the session log to repair or remove the line" \
+  "the refused S1 prints its named manual remedy"
+assert_contains "$ERR" \
+  "manual: L1 $SHAI_HOME/ledgers/heartbeat.jsonl — hand-edit the ledger to repair or remove the line" \
+  "the refused L1 prints its named manual remedy"
+assert_contains "$ERR" \
+  "manual: F1 $SHAI_HOME/failures/heartbeat.jsonl — hand-edit the failure log to repair or remove the line" \
+  "the refused F1 prints its named manual remedy"
+OUT=$("$FSCK" --check S4 --json)
+assert_eq "$?" "0" "rescan: the S4 orphan is gone"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "rescan: zero S4 findings"
+
+# --- per-repair pairs: each of the six fixable classes gets its own corrupt fixture
+#     and an assertion that the specific repair happened. Each was mutation-checked
+#     while written — break the individual repair arm in apply_fixes, watch the
+#     assertion go red, restore ---
+desc "S4 repair pair: --fix deletes the orphan latest.json"
+setup_home
+orphan_latest sess_20260810T120000_aabbccdd
+ERR=$("$FSCK" --fix --check S4 2>&1 >/dev/null)
+assert_eq "$?" "0" "S4-only fix exits 0"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json" ] && echo yes || echo no)" "no" \
+  "the orphan was deleted"
+assert_contains "$ERR" \
+  "repair: delete $SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json (S4)" \
+  "the repair line names the orphan"
+
+desc "S5 repair pair: --fix rebuilds latest.json from the log's last line, never deletes it"
+setup_home
+SID=$(fixture_session sess_20260810T120000_aabbccdd \
+  "$(sess_event message user '{"text":"a"}')" \
+  "$(sess_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')" \
+  "$(sess_event message user '{"text":"b"}')")
+head -n 1 "$SHAI_HOME/sessions/$SID.jsonl" >"$SHAI_HOME/sessions/$SID.latest.json"
+ERR=$("$FSCK" --fix --check S5 2>&1 >/dev/null)
+assert_eq "$?" "0" "S5-only fix exits 0"
+assert_eq "$([ -e "$SHAI_HOME/sessions/$SID.latest.json" ] && echo yes || echo no)" "yes" \
+  "latest.json was rebuilt, not deleted"
+assert_eq "$(cat "$SHAI_HOME/sessions/$SID.latest.json")" \
+  "$(tail -n 1 "$SHAI_HOME/sessions/$SID.jsonl")" \
+  "latest.json is byte-equal to the log's last line — rebuilt, not merely changed"
+assert_eq "$(jq -S . "$SHAI_HOME/sessions/$SID.latest.json")" \
+  "$(tail -n 1 "$SHAI_HOME/sessions/$SID.jsonl" | jq -S .)" \
+  "latest.json is JSON-equal to the log's last event"
+assert_contains "$ERR" "repair: rebuild $SHAI_HOME/sessions/$SID.latest.json (S5)" \
+  "the repair line names the rebuild"
+
+desc "S6 repair pair: --fix deletes both halves of the stillborn pair"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd "$(sess_event message system '{"text":"seed"}')"
+: >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+ERR=$("$FSCK" --fix --check S6 2>&1 >/dev/null)
+assert_eq "$?" "0" "S6-only fix exits 0"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" ] && echo yes || echo no)" "no" \
+  "the stillborn session log was deleted"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json" ] && echo yes || echo no)" "no" \
+  "the stillborn latest.json was deleted"
+assert_contains "$ERR" \
+  "repair: delete pair $SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl and $SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json (S6)" \
+  "the repair line names both halves of the pair"
+
+desc "R1 repair pair: --fix rmdir's the wholly empty run directory"
+setup_home
+mkdir -p "$SHAI_HOME/runs/run_20260810T120000_aabbccdd"
+ERR=$("$FSCK" --fix --check R1 2>&1 >/dev/null)
+assert_eq "$?" "0" "R1-only fix exits 0"
+assert_eq "$([ -d "$SHAI_HOME/runs/run_20260810T120000_aabbccdd" ] && echo yes || echo no)" "no" \
+  "the empty run directory was removed"
+assert_contains "$ERR" "repair: delete $SHAI_HOME/runs/run_20260810T120000_aabbccdd (R1)" \
+  "the repair line names the run directory"
+
+desc "R5 repair pair: --fix deletes the orphan dump, leaves the run log untouched"
+setup_home
+ev="$(fixture_event message user '{"text":"hi"}' run_20260810T120000_aabbccdd sess_20260810T120000_aabbccdd span_1)"
+fixture_session sess_20260810T120000_aabbccdd "$ev"
+fixture_run run_20260810T120000_aabbccdd sess_20260810T120000_aabbccdd "$ev"
+fixture_span_dump run_20260810T120000_aabbccdd span_9 request
+LOG_HASH_BEFORE="$(sha256sum "$SHAI_HOME/runs/run_20260810T120000_aabbccdd/events.jsonl")"
+ERR=$("$FSCK" --fix --check R5 2>&1 >/dev/null)
+assert_eq "$?" "0" "R5-only fix exits 0"
+assert_eq "$([ -e "$SHAI_HOME/runs/run_20260810T120000_aabbccdd/span_9-request.json" ] && echo yes || echo no)" "no" \
+  "the orphan dump was deleted"
+assert_eq "$(sha256sum "$SHAI_HOME/runs/run_20260810T120000_aabbccdd/events.jsonl")" "$LOG_HASH_BEFORE" \
+  "the run log is byte-identical after the R5 repair"
+assert_contains "$ERR" \
+  "repair: delete $SHAI_HOME/runs/run_20260810T120000_aabbccdd/span_9-request.json (R5)" \
+  "the repair line names the dump"
+
+desc "R6 repair pair: --fix deletes the dead run directory"
+setup_home
+fixture_run run_20260810T120000_aabbccdd sess_20260810T120000_aabbccdd \
+  "$(fixture_event error system '{"text":"boom"}')"
+ERR=$("$FSCK" --fix --check R6 2>&1 >/dev/null)
+assert_eq "$?" "0" "R6-only fix exits 0"
+assert_eq "$([ -d "$SHAI_HOME/runs/run_20260810T120000_aabbccdd" ] && echo yes || echo no)" "no" \
+  "the dead run directory was deleted"
+assert_contains "$ERR" "repair: delete $SHAI_HOME/runs/run_20260810T120000_aabbccdd (R6)" \
+  "the repair line names the run directory"
+
+# --- R6 safety: two adjacent uncommitted runs, one resumable and one dead. --fix
+#     deletes only the dead one — deleting replayable work is the single worst thing
+#     this tool could do, so both halves get explicit assertions ---
+desc "R6 safety: --fix deletes the dead run, keeps the resumable one"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_a "$(fixture_event message user '{"text":"hi"}')"
+fixture_run run_20260903T043419_89abcdef sess_b "$(fixture_event error system '{"text":"boom"}')"
+ERR=$("$FSCK" --fix --check R6 2>&1 >/dev/null)
+assert_eq "$?" "1" "the resumable run stays unfixable (exit 1)"
+assert_eq "$([ -d "$SHAI_HOME/runs/run_20260903T043418_67e3340f" ] && echo yes || echo no)" "yes" \
+  "the resumable run still exists"
+assert_eq "$([ -d "$SHAI_HOME/runs/run_20260903T043419_89abcdef" ] && echo yes || echo no)" "no" \
+  "the dead run was deleted"
+assert_contains "$ERR" "repair: delete $SHAI_HOME/runs/run_20260903T043419_89abcdef (R6)" \
+  "the repair line names the dead run directory"
+assert_contains "$ERR" \
+  "manual: R6 $SHAI_HOME/runs/run_20260903T043418_67e3340f/events.jsonl — shai-retry --run run_20260903T043418_67e3340f" \
+  "the refused resumable run prints its resume command"
+
+# --- scoping: --fix honors --check, --store, and --after exactly like the scan ---
+desc "--fix scoping: --check S6 repairs only stillborn sessions"
+setup_home
+orphan_latest sess_20260810T120000_aabbccdd
+fixture_session sess_20260811T120000_aabbccdd "$(sess_event message system '{"text":"seed"}')"
+: >"$SHAI_HOME/sessions/sess_20260811T120000_aabbccdd.latest.json"
+OUT=$("$FSCK" --fix --check S6 2>/dev/null)
+assert_eq "$?" "0" "--fix --check S6 exits 0 (its one finding was repaired)"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260811T120000_aabbccdd.jsonl" ] && echo yes || echo no)" "no" \
+  "the stillborn log was deleted"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260811T120000_aabbccdd.latest.json" ] && echo yes || echo no)" "no" \
+  "the stillborn latest.json was deleted"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json" ] && echo yes || echo no)" "yes" \
+  "the S4 orphan in the same store was left untouched by --check S6"
+
+desc "--fix scoping: --store runs and --after both narrow the worklist"
+setup_home
+orphan_latest sess_20260810T120000_aabbccdd
+mkdir -p "$SHAI_HOME/runs/run_20260810T120000_aabbccdd"
+"$FSCK" --fix --store runs >/dev/null 2>&1
+assert_eq "$([ -d "$SHAI_HOME/runs/run_20260810T120000_aabbccdd" ] && echo yes || echo no)" "no" \
+  "--fix --store runs deleted the empty run directory"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json" ] && echo yes || echo no)" "yes" \
+  "--fix --store runs left the sessions orphan alone"
+setup_home
+orphan_latest sess_20260810T120000_aabbccdd
+orphan_latest sess_20260812T120000_eeff0011
+"$FSCK" --fix --after 2026-08-11 --check S4 >/dev/null 2>&1
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260812T120000_eeff0011.latest.json" ] && echo yes || echo no)" "no" \
+  "--fix --after repaired the in-window orphan"
+assert_eq "$([ -e "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json" ] && echo yes || echo no)" "yes" \
+  "--fix --after left the out-of-window orphan alone"
+
+# --- --dry-run prints the same plan --fix then executes, and writes nothing ---
+desc "--dry-run prints exactly the plan --fix executes; the store stays dirty"
+setup_home
+build_fixable_store
+DRY_ERR=$("$FSCK" --fix --dry-run 2>&1 >/dev/null)
+assert_eq "$?" "0" "--fix --dry-run exits 0 (the plan repairs everything found)"
+assert_eq "$(printf '%s\n' "$DRY_ERR" | grep -c '^repair: ' || true)" "6" \
+  "dry-run prints all six repair lines"
+OUT=$("$FSCK" --fix --dry-run 2>/dev/null)
+assert_row_count "$OUT" 6 "dry-run table still renders one row per finding"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "after dry-run the store is still dirty"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "6" "after dry-run all six findings remain"
+FIX_ERR=$("$FSCK" --fix 2>&1 >/dev/null)
+dry_plan="$(printf '%s\n' "$DRY_ERR" | grep '^repair: ')"
+fix_plan="$(printf '%s\n' "$FIX_ERR" | grep '^repair: ')"
+assert_eq "$dry_plan" "$fix_plan" "dry-run printed exactly the plan --fix then executed"
+
+# --- rescan-clean: a store holding every fixable class at once is clean after --fix;
+#     adjacent, a store holding every unfixable class still reports them all — the
+#     contrast that proves the first result came from repair, not dead checks ---
+desc "--fix rescan-clean: every fixable class repaired, fresh scan clean (exit 0)"
+setup_home
+build_fixable_store
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "the all-fixable store is dirty before --fix"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "6" "six fixable findings before --fix"
+ERR=$("$FSCK" --fix 2>&1 >/dev/null)
+assert_eq "$?" "0" "--fix repaired everything it found (exit 0)"
+assert_eq "$(printf '%s\n' "$ERR" | grep -c '^repair: ' || true)" "6" \
+  "one repair: line per repaired finding"
+assert_eq "$(printf '%s\n' "$ERR" | grep -c '^manual: ' || true)" "0" \
+  "no manual: lines when nothing is refused"
+OUT=$("$FSCK" --json)
+assert_eq "$?" "0" "rescan after --fix exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "rescan after --fix reports zero findings"
+OUT=$("$FSCK" 2>/dev/null)
+assert_eq "$OUT" "no problems found (2 sessions, 1 run, 0 ledgers, 0 failure logs)" \
+  "the clean line counts the surviving healthy items"
+
+desc "--fix contrast: every unfixable class is refused, reported with a manual remedy, and re-reported by the next scan"
+setup_home
+build_unfixable_store
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "the all-unfixable store exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "21" "exactly 21 findings — one per refused check"
+assert_eq "$(printf '%s' "$OUT" | jq -r '[.[].check] | sort | join(",")')" \
+  "F1,F2,F3,F4,L1,L2,L3,L4,R1,R2,R3,R4,R6,R7,S1,S2,S3,S7,S8,S9,X1" \
+  "every refused check fired exactly once"
+BEFORE="$(store_checksum)"
+ERR=$("$FSCK" --fix 2>&1 >/dev/null)
+assert_eq "$?" "1" "--fix on the all-unfixable store exits 1"
+assert_not_contains "$ERR" "repair:" "--fix repairs nothing it cannot safely repair"
+assert_eq "$(store_checksum)" "$BEFORE" "--fix changed nothing in the all-unfixable store"
+assert_eq "$(printf '%s\n' "$ERR" | grep -c '^manual: ' || true)" "21" \
+  "one manual: line per refused finding"
+REFUSED=(S1 S2 S3 S7 S8 S9 R1 R2 R3 R4 R6 R7 L1 L2 L3 L4 F1 F2 F3 F4 X1)
+for id in "${REFUSED[@]}"; do
+  assert_contains "$ERR" "manual: $id " "--fix prints a named manual remedy for $id"
+done
+# The contrast half: the checks still fire after --fix — all 21 findings re-reported,
+# proving the fixable store's clean rescan came from repair, not from dead checks.
+OUT=$("$FSCK" --json)
+assert_eq "$?" "1" "rescan of the all-unfixable store still exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "21" "rescan still reports all 21 findings"
+
+# --- idempotency: a second --fix repairs nothing and changes nothing ---
+desc "--fix idempotency: the second run repairs nothing and the store is byte-identical"
+setup_home
+build_fixable_store
+"$FSCK" --fix >/dev/null 2>&1
+assert_eq "$?" "0" "first --fix exits 0"
+SNAP="$(store_checksum)"
+ERR=$("$FSCK" --fix 2>&1 >/dev/null)
+assert_eq "$?" "0" "second --fix exits 0"
+assert_not_contains "$ERR" "repair:" "the second run reports zero repairs"
+assert_eq "$(store_checksum)" "$SNAP" "the store is byte-identical after the second run"
+
+# --- exit codes: 0 repaired-everything (above), 1 unfixable remain (above), 3 when a
+#     repair cannot complete. The S5 rebuild guard drives the 3 directly: a directory
+#     sitting where .latest.json belongs makes the rebuild fail ---
+desc "--fix exit 3: a repair that cannot complete"
+setup_home
+fixture_session sess_20260810T120000_aabbccdd "$(sess_event message user '{"text":"hi"}')"
+rm "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+mkdir "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
+assert_fails 3 "error: cannot rebuild" "--fix fails a repair it cannot complete" -- "$FSCK" --fix
 
 finish

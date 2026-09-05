@@ -64,6 +64,8 @@ bash tests/test_eval.sh                # a single suite (each tests/test_*.sh is
 ./shai-fsck [--store sessions|runs|ledgers|failures] [--check ID] [--after DATE] [--before DATE]  # findings table; exit 0 clean / 1 problems / 2 usage / 3 scan failed
 ./shai-fsck --json                                                                                  # findings as a JSON array ([] when clean)
 ./shai-fsck --summary                                                                               # only the trailing digest
+./shai-fsck --fix [--dry-run] [--store STORE] [--check ID] [--after DATE] [--before DATE]          # repair every fixable finding, log one repair:/manual: line per action to stderr
+                                                                                                    # (never edits event-bearing logs); exit 0 all repaired / 1 unfixable remain / 2 usage / 3 scan or repair failed
 
 # Failure introspection:
 ./shai-failures list                         # per-workflow failure summary

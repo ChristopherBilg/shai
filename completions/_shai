@@ -311,7 +311,7 @@ _shai-fsck() {
     '--check[Only run this check id (repeatable)]:ID:_shai_type_fsck_check' \
     '--after[Only items at or after DATE]:DATE:_message -e date '"'"'YYYY-MM-DD'"'"'' \
     '--before[Only items at or before DATE]:DATE:_message -e date '"'"'YYYY-MM-DD'"'"'' \
-    '--fix[Repair repairable findings (parsed, not yet implemented)]' \
+    '--fix[Repair fixable findings without editing event logs]' \
     '--dry-run[With --fix, report the repairs without making them]' \
     '--summary[Print only the trailing digest]' \
     '--json[Emit the findings array as JSON]'
