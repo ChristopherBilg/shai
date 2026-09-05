@@ -454,7 +454,9 @@ The scripts:
   (S1-S9, R1-R7, L1-L4, F1-F4, X1), each with a pinned predicate, severity, and fixability —
   is the **State integrity** table below; a finding id is only meaningful against it.
   Scoping: `--store` (repeatable: `sessions|runs|ledgers|failures`), `--check` (repeatable),
-  `--after`/`--before` (inclusive `YYYY-MM-DD`, matched against the item's embedded date);
+  `--after`/`--before` (inclusive `YYYY-MM-DD`, matched against the item's embedded date —
+  session and run items only; the filename-level window never applies to ledger or
+  failure records, whose passes scan whole files);
   `--summary` prints the digest alone (to stdout; table mode trails it on stderr). Every check appends to one findings accumulator
   file, and the table renderer, the `--json` renderer, the digest, and `--fix`'s repair
   worklist all read that same file — so "N problems found, M fixable with --fix" is true
@@ -573,7 +575,9 @@ the event schema table above: it is what a check author adds a row to when addin
 check (the id, predicate, severity, and fixability are pinned in `shai-fsck`'s dispatch
 and asserted in `tests/test_fsck.sh`), and what a user reads to understand a finding id.
 Severity `error`/`warn` counts as a problem; `info` findings are reported but never
-count. Fixability names the `--fix` repair, or `no` for a manual remedy printed with the
+counted as errors or warnings, though any remaining finding — info included — still
+yields exit 1 (a scan whose only finding is an R7 missing run directory exits 1).
+Fixability names the `--fix` repair, or `no` for a manual remedy printed with the
 finding.
 
 | ID | Predicate | Severity | Fixability |
