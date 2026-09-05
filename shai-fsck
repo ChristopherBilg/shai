@@ -11,7 +11,8 @@
 #         log: S5 rebuilds the derived .latest.json from its log, and S4/S6/R1/R5/R6 delete
 #         whole redundant units. Everything else is refused with its named manual remedy.
 # Exit: 0 clean (no findings, or --fix repaired everything it found); 1 problems found
-#       (or --fix left problems it cannot safely repair); 2 usage error; 3 operational
+#       (or --fix left problems it cannot safely repair, or a --dry-run plan refused a
+#       repair the real --fix would fail); 2 usage error; 3 operational
 #       failure (the scan or a repair could not complete: jq missing, $SHAI_HOME
 #       absent/unreadable, or an unexpected command failure). 3 vs 1 is the point: a timer
 #       or CI job can tell "your state directory is dirty" apart from "the check never ran".
@@ -66,6 +67,9 @@ ALL_STORES=(sessions runs ledgers failures)
 STORES=() CHECKS=()
 AFTER="" BEFORE=""
 FIX=false DRY_RUN=false SUMMARY=false JSON=false
+# Count of planned repairs a --dry-run refused (S5's not-a-regular-file guard, #439): the
+# plan exits 1 instead of the false 0 of "everything is repairable" when one is refused.
+DRY_REFUSED=0
 
 # known_check <id>: 0 when the id is in the check catalog.
 known_check() {
@@ -1240,19 +1244,29 @@ apply_fixes() {
           # Rebuild .latest.json from the last line of the session log — the exact
           # invariant the dispatch loop and shai-retry expect of LATEST. Rebuild, never
           # delete: removing LATEST can turn a repairable run into an unresumable one.
-          # The temp-file + mv keeps a failed rebuild from truncating the old file, and
-          # the not-a-regular-file guard fails the repair (exit 3) instead of mv'ing
-          # into a directory.
-          printf 'repair: rebuild %s (%s)\n' "$path" "$check" >&2
-          if [ "$DRY_RUN" != true ]; then
-            if [ -e "$path" ] && [ ! -f "$path" ]; then
+          # The temp-file + mv keeps a failed rebuild from truncating the old file. The
+          # not-a-regular-file guard runs BEFORE the plan line and in dry-run too (#439):
+          # a directory (or any non-file) sitting where .latest.json belongs makes the
+          # real repair fail, so the plan must never claim that rebuild. Dry-run prints
+          # a manual: refusal instead (the verdict then exits 1); a real --fix fails the
+          # repair (exit 3) instead of mv'ing into a directory.
+          if [ -e "$path" ] && [ ! -f "$path" ]; then
+            if [ "$DRY_RUN" = true ]; then
+              printf 'manual: %s %s — %s\n' "$check" "$path" \
+                'rebuild blocked: the path is not a regular file (move it aside, then re-run --fix)' >&2
+              DRY_REFUSED=$((DRY_REFUSED + 1))
+            else
               printf 'error: cannot rebuild %s (not a regular file)\n' "$path" >&2
               exit 3
             fi
-            latest="$path"
-            log="$(store_dir "$store")/$target.jsonl"
-            tail -n 1 "$log" >"$latest.tmp.$$"
-            mv "$latest.tmp.$$" "$latest"
+          else
+            printf 'repair: rebuild %s (%s)\n' "$path" "$check" >&2
+            if [ "$DRY_RUN" != true ]; then
+              latest="$path"
+              log="$(store_dir "$store")/$target.jsonl"
+              tail -n 1 "$log" >"$latest.tmp.$$"
+              mv "$latest.tmp.$$" "$latest"
+            fi
           fi
           ;;
         S6)
@@ -1304,11 +1318,13 @@ fi
 # The exit verdict. A bare run exits 1 on any finding; --fix exits 0 when it repaired
 # everything it found and 1 only when findings remain that it cannot safely repair
 # (fixable == false records — the repairs above never remove those, and each was printed
-# with its named manual remedy). Both verdicts come from the same accumulator the
-# renderers read, never from a post-fix re-scan.
+# with its named manual remedy) or when a --dry-run plan refused a repair the real --fix
+# would fail (S5's not-a-regular-file guard, #439): a plan that cannot execute must not
+# read as the false 0 of "everything is repairable". Both verdicts come from the same
+# accumulator the renderers read, never from a post-fix re-scan.
 VERDICT=1
 if [ "$FIX" = true ]; then
-  if [ "$unfixable" -eq 0 ]; then VERDICT=0; fi
+  if [ "$unfixable" -eq 0 ] && [ "$DRY_REFUSED" -eq 0 ]; then VERDICT=0; fi
 else
   if [ "$total" -eq 0 ]; then VERDICT=0; fi
 fi
