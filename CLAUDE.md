@@ -136,6 +136,13 @@ A hand-run `shai-eval` with `SHAI_RUN_ID` set but no `SHAI_SPAN_ID` dumps to `sp
 Data flows as one JSON **event** per line. Each script is a pure stdin→stdout filter; the
 only shared state is the append-only session log. To rewind the assistant's memory, slice
 the file (`head -n 20 ~/.shai/sessions/<session_id>.jsonl`) — there is no database.
+`shai-fsck --fix` protects that property as an inviolable rule: it never edits, rewrites,
+truncates, or drops a line from any file that holds events. It rebuilds derived files
+(S5's `.latest.json` from its session log's last line) and deletes whole redundant units
+(S4's orphan `.latest.json`, S6's stillborn pair, R1's wholly empty run directory, R5's
+orphan span dump, R6's dead uncommitted run); everything else is refused with a named
+manual remedy, so the slice-to-rewind property holds exactly as documented whether or not
+fsck has run.
 
 State lives in `$SHAI_HOME`: `sessions/<session_id>.jsonl` (per-session append-only logs),
 `sessions/<session_id>.latest.json` (the most recent event, used by the dispatch loop),
@@ -438,6 +445,31 @@ The scripts:
   retention: removes session log files, run directories, workflow ledger files, and/or failure records, optionally
   filtered by date. Ledgers and failure records are included in the default (no-flags) prune alongside sessions
   and runs; `--ledgers`/`--failures` can still be passed alone to prune only ledgers/failure records. Interactive prompts for confirmation; non-interactive skips it.
+- **`shai-fsck [--store STORE] [--check ID] [--after DATE] [--before DATE] [--fix] [--dry-run] [--summary] [--json]`**
+  (`shai-fsck:1`) — store integrity: audits the four event stores (`$SHAI_HOME/sessions/`,
+  `runs/`, `ledgers/`, `failures/`) and reports inconsistencies as normalized findings —
+  one row per finding in a `SEVERITY CHECK STORE TARGET SUMMARY` table, with the digest
+  (`N errors, M warnings, K info — F fixable with --fix`) trailing on stderr, or the
+  findings array on stdout with `--json` (`[]` when clean). The check catalog — 25 checks
+  (S1-S9, R1-R7, L1-L4, F1-F4, X1), each with a pinned predicate, severity, and fixability —
+  is the **State integrity** table below; a finding id is only meaningful against it.
+  Scoping: `--store` (repeatable: `sessions|runs|ledgers|failures`), `--check` (repeatable),
+  `--after`/`--before` (inclusive `YYYY-MM-DD`, matched against the item's embedded date);
+  `--summary` prints the digest alone (to stdout; table mode trails it on stderr). Every check appends to one findings accumulator
+  file, and the table renderer, the `--json` renderer, the digest, and `--fix`'s repair
+  worklist all read that same file — so "N problems found, M fixable with --fix" is true
+  by construction and a finding can never appear in one renderer but not another.
+  `--fix` repairs every fixable finding under the `--fix` inviolable rule above, logging
+  one `repair:`/`manual:` line per action to stderr; `--dry-run` prints the plan without
+  executing it and requires `--fix`. Boundary: `policy.json`/`ci.json` validation stays
+  `shai-doctor`'s (table mode prints a one-line pointer to it), and date/category-based
+  deletion stays `shai-prune`'s — fsck deletes only what a fixable finding names. Exit 0
+  clean (no findings, or `--fix` repaired everything it found); 1 problems found (or
+  `--fix` left problems it cannot safely repair); 2 usage error; 3 operational failure
+  (jq missing, `$SHAI_HOME` absent/unreadable, or an unexpected command failure). 3 vs 1
+  is the point: a timer or CI job can tell "your state directory is dirty" (the scan
+  completed and found problems) apart from "the check never ran" (the report itself may
+  be incomplete).
 - **`shai-sessions [--recent N] [--after DATE] [--before DATE] [--json]`**
   (`shai-sessions:1`) — lists sessions from `$SHAI_HOME/sessions/*.jsonl` with event count,
   distinct run count, and total tokens (from `api.usage`). Human-readable table by default;
@@ -535,6 +567,42 @@ The scripts:
   exits 1 after rendering what it could. The other subcommands delegate to
   `systemctl --user` / `journalctl --user`. Exit 0 on success, 1 on validation/systemctl
   failure, 2 on usage error (unrecognized subcommand).
+
+**State integrity** — the `shai-fsck` check catalog is a contract in the same sense as
+the event schema table above: it is what a check author adds a row to when adding a
+check (the id, predicate, severity, and fixability are pinned in `shai-fsck`'s dispatch
+and asserted in `tests/test_fsck.sh`), and what a user reads to understand a finding id.
+Severity `error`/`warn` counts as a problem; `info` findings are reported but never
+count. Fixability names the `--fix` repair, or `no` for a manual remedy printed with the
+finding.
+
+| ID | Predicate | Severity | Fixability |
+| -- | --------- | -------- | ---------- |
+| S1 | every session-log line parses as a JSON object (a blank line is a violation) | error | no |
+| S2 | every event carries top-level `type`, `source`, `payload` (string, string, object) | error | no |
+| S3 | every non-null `meta.session_id` matches the session filename stem | error | no |
+| S4 | no orphan `.latest.json` (no sibling session log) | error | delete the orphan |
+| S5 | for a non-stillborn session, `.latest.json` exists, is non-empty, parses, and is JSON-equal to the log's last event | error | rebuild from the log's last line (no when the log has no parseable events) |
+| S6 | stillborn session — exactly one event (a message/system seed) beside an empty `.latest.json` | warn | delete the pair |
+| S7 | every `tool_result`'s `payload.tool_call_id` appears in a preceding assistant event's `tool_calls[].id` | error | no |
+| S8 | every non-final assistant `tool_calls[].id` has a matching `tool_result` later in the session | warn | no |
+| S9 | `version` is a known schema version (`1.0`); no version → info, unknown → warn | info/warn | no |
+| R1 | `runs/<id>/events.jsonl` exists, is non-empty, and parses line-by-line as JSON objects | error | delete (only a wholly empty run directory) |
+| R2 | every `meta.run_id` in a run log equals the run directory name | error | no |
+| R3 | span ids form `span_1..span_N` with no gaps and a linear `parent_span_id` chain (`span_0` exempt) | warn | no |
+| R4 | every `<span>-request.json` / `<span>-response.json` dump parses as JSON | warn | no |
+| R5 | every span dump has a matching event in the run log (`span_0` exempt) | warn | delete the dump |
+| R6 | a run's events appear in some session log (the verdict is `lib/replay.sh`'s `classify_replay` — the exact preconditions `shai-retry --run` applies) | warn | delete dead runs (no user message / no session id); resumable runs print the `shai-retry --run <id>` remedy |
+| R7 | every `meta.run_id` a session event references has a run directory on disk | info | no |
+| L1 | every ledger line parses with a non-empty string `key`, a `ts`, and a `session_id` | error | no |
+| L2 | no ledger key appears twice | error | no |
+| L3 | a ledger's `session_id` resolves to an existing session log | info | no |
+| L4 | the ledger filename names a `workflows/<name>/` directory | info | no |
+| F1 | every failure record parses and carries all seven documented keys | error | no |
+| F2 | `category` is one of the five documented values | warn | no |
+| F3 | `context` is a JSON object | error | no |
+| F4 | a non-null `run_id`/`session_id` resolves | info | no |
+| X1 | every store-directory entry matches that store's expected name pattern | info | never (deliberately — fsck must not delete what it cannot classify) |
 
 **The re-eval loop** (in `shai-loop`): the model may request tools → `shai-dispatch` runs them
 and appends `tool_result`s → `shai-context | shai-eval` re-runs so the model sees the results →
