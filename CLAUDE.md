@@ -1038,8 +1038,10 @@ are automatically queued for resolution. Install via
   files never inspected. Each check refuses to run — exit 1 with
   `error: N untracked script file(s) are invisible to this check — commit them first: <names>` —
   when the tree holds untracked files matching the shared script predicate in
-  `tests/check-untracked.sh` (`shai-*`, `tests/*.sh`, `lib/*.sh`, `tools/*/run.sh`,
-  `workflows/*/run.sh`, `install.sh`, or any file whose first line is `#!/bin/bash`);
+  `tests/check-untracked.sh` (`shai-*`, any `*.sh`, or any file whose first line is
+  `#!/bin/bash` — the `*.sh`-plus-shebang predicate `tests/lint.sh` applies to tracked
+  files, extended with `shai-*` for conventions.sh's extensionless runtime scripts), and
+  the guard fails closed too when the untracked listing itself cannot be obtained;
   `shai-completions check` gates on untracked `shai-*` scripts, its coverage universe, instead.
   `tests/lint.sh --list` is deliberately exempt: it is a pure listing consumed programmatically
   by `tests/conventions.sh`, not a green banner. Commit new scripts before expecting any of
