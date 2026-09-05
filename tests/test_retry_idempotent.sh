@@ -127,34 +127,36 @@ assert_eq "$RC" "0" "replay: already-committed run exits 0"
 assert_eq "$AFTER" "$BEFORE" "replay: already-committed run appends nothing"
 
 # --- shai-retry --run failure paths: verbatim messages + exit codes -----------------
-# Every case below pins the exact message shai-retry prints AND the exit code. #386 moved
+# Every case below pins the exact stderr shai-retry prints AND the exit code. #386 moved
 # these verdicts into lib/replay.sh's case mapping with the hard requirement that messages
 # and exit codes stay verbatim; before #407 only the exit code (missing log) and an
 # "already committed" substring were covered, so an arm swap or reword was a false green.
+# assert_fails_exact compares the WHOLE captured stderr for equality, so an extra or
+# duplicated line goes red too — a reword or arm swap cannot pass on a substring here.
 # Fixtures are pure $SHAI_HOME filesystem state — no stubs needed, since every failure
 # path exits before the health-check / model call.
 
 # usage error: --run without a run_id is rejected before any state is read
 new_home
-assert_fails 1 'error: --run requires a run_id' "replay: --run without a run_id" \
+assert_fails_exact 1 'error: --run requires a run_id' "replay: --run without a run_id" \
   -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run
 
 # the --run id guard (shai-retry's own check, ahead of lib/replay.sh's mapping) is also
 # part of the user-visible surface: the offending id is named in the message
-assert_fails 1 'error: run_id must not contain / or .. (got "run/evil")' "replay: run_id with /" \
+assert_fails_exact 1 'error: run_id must not contain / or .. (got "run/evil")' "replay: run_id with /" \
   -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run/evil
-assert_fails 1 'error: run_id must not contain / or .. (got "a..b")' "replay: run_id with .." \
+assert_fails_exact 1 'error: run_id must not contain / or .. (got "a..b")' "replay: run_id with .." \
   -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run a..b
 
 # missing run log: pin the message that names the log, not just "exit 1"
 new_home
-assert_fails 1 "error: run log not found: $SHOME/runs/nonexistent_run/events.jsonl" \
+assert_fails_exact 1 "error: run log not found: $SHOME/runs/nonexistent_run/events.jsonl" \
   "replay: missing run log" -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run nonexistent_run
 
 # an empty run log hits the same precondition and message
 mkdir -p "$SHOME/runs/run_empty"
 : >"$SHOME/runs/run_empty/events.jsonl"
-assert_fails 1 "error: run log not found: $SHOME/runs/run_empty/events.jsonl" \
+assert_fails_exact 1 "error: run log not found: $SHOME/runs/run_empty/events.jsonl" \
   "replay: empty run log" -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_empty
 
 # run log with no meta.session_id line
@@ -162,7 +164,7 @@ new_home
 mkdir -p "$SHOME/runs/run_nosid"
 printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"}}' \
   >"$SHOME/runs/run_nosid/events.jsonl"
-assert_fails 1 'error: run log has no session_id metadata' "replay: run log without session_id" \
+assert_fails_exact 1 'error: run log has no session_id metadata' "replay: run log without session_id" \
   -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_nosid
 
 # run log whose session_id contains / or ..: the offending id is named in the message
@@ -170,13 +172,13 @@ new_home
 mkdir -p "$SHOME/runs/run_slash"
 printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"},"meta":{"run_id":"run_slash","session_id":"../etc/passwd"}}' \
   >"$SHOME/runs/run_slash/events.jsonl"
-assert_fails 1 'error: session_id in run log must not contain / or .. (got "../etc/passwd")' \
+assert_fails_exact 1 'error: session_id in run log must not contain / or .. (got "../etc/passwd")' \
   "replay: session_id with /" -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_slash
 
 mkdir -p "$SHOME/runs/run_dotdot"
 printf '%s\n' '{"type":"message","source":"user","payload":{"text":"hi"},"meta":{"run_id":"run_dotdot","session_id":"a..b"}}' \
   >"$SHOME/runs/run_dotdot/events.jsonl"
-assert_fails 1 'error: session_id in run log must not contain / or .. (got "a..b")' \
+assert_fails_exact 1 'error: session_id in run log must not contain / or .. (got "a..b")' \
   "replay: session_id with .." -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_dotdot
 
 # run log with no non-null user payload.text: no user message at all...
@@ -184,7 +186,7 @@ new_home
 mkdir -p "$SHOME/runs/run_nomsg"
 printf '%s\n' '{"type":"error","source":"system","payload":{"text":"boom"},"meta":{"run_id":"run_nomsg","session_id":"sess"}}' \
   >"$SHOME/runs/run_nomsg/events.jsonl"
-assert_fails 1 'error: no user message found in run log' "replay: no user message" \
+assert_fails_exact 1 'error: no user message found in run log' "replay: no user message" \
   -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_nomsg
 
 # ...or a user message whose payload.text is null (both read as "no text")
@@ -192,7 +194,7 @@ new_home
 mkdir -p "$SHOME/runs/run_nulltext"
 printf '%s\n' '{"type":"message","source":"user","payload":{"text":null},"meta":{"run_id":"run_nulltext","session_id":"sess"}}' \
   >"$SHOME/runs/run_nulltext/events.jsonl"
-assert_fails 1 'error: no user message found in run log' "replay: null user text" \
+assert_fails_exact 1 'error: no user message found in run log' "replay: null user text" \
   -- env SHAI_HOME="$SHOME" "$DIR/shai-retry" --run run_nulltext
 
 # existing no-flag behavior is preserved (nothing to resume on empty history)

@@ -1,6 +1,8 @@
 #!/bin/bash
 # test_lib.sh — unit tests for the assertion helpers and fixture builders in tests/lib.sh
 # Covers: assert_fails — empty-fragment usage error, command skipped, literal fragment match;
+#         assert_fails_exact — exact stderr equality (extra/duplicated line goes red),
+#                              empty expected stderr usage error;
 #         assert_row_count — blank/whitespace-only output is 0 rows, header excluded, exact
 #                            count enforced;
 #         fixture builders — fixture_session (.latest.json mirroring the tail, malformed
@@ -54,6 +56,48 @@ desc "assert_fails: glob-style fragment cannot match unrelated stderr (inner ✗
   exit "$FAILED"
 )
 assert_eq "$?" "1" "a glob-interpreted fragment would false-pass; literal match fails"
+
+# --- assert_fails_exact: whole-stderr equality, not containment --------------------------
+# #386's verdict→message contract makes the message text API, and a contains-match cannot
+# see an extra or duplicated stderr line — the exact helper exists to pin both the full
+# stderr and the exit code. The fail-direction probes below (inner ✗ expected) are the
+# falsifiable half: an exact helper that could not fail would be worse than assert_fails.
+desc "assert_fails_exact: stderr equal to the expected line passes"
+(
+  FAILED=0
+  assert_fails_exact 1 "error: boom" "exact stderr" -- bash -c 'printf "%s\n" "error: boom" >&2; exit 1'
+  exit "$FAILED"
+)
+assert_eq "$?" "0" "exactly the expected stderr passes"
+
+desc "assert_fails_exact: an extra stderr line goes red (inner ✗ expected)"
+(
+  FAILED=0
+  assert_fails_exact 1 "error: boom" "extra stderr line" -- bash -c 'printf "%s\n" "error: boom" "noise" >&2; exit 1'
+  exit "$FAILED"
+)
+assert_eq "$?" "1" "an extra stderr line flips FAILED"
+
+desc "assert_fails_exact: a mismatched exit code goes red (inner ✗ expected)"
+(
+  FAILED=0
+  assert_fails_exact 2 "error: boom" "wrong exit code" -- bash -c 'printf "%s\n" "error: boom" >&2; exit 1'
+  exit "$FAILED"
+)
+assert_eq "$?" "1" "a mismatched exit code flips FAILED"
+
+desc "assert_fails_exact: empty expected stderr is a usage error"
+D2="$(mktemp -d)"
+_CLEANUP_DIRS+=("$D2")
+(
+  FAILED=0
+  assert_fails_exact 1 "" "empty expected stderr usage error" -- touch "$D2/ran"
+  exit "$FAILED"
+)
+assert_eq "$?" "1" "empty expected stderr flips FAILED and returns non-zero"
+RC=0
+[ -e "$D2/ran" ] && RC=1
+assert_eq "$RC" "0" "command is not run on the usage error"
 
 # --- assert_row_count: blank output is 0 rows, header excluded, count must be exact ---
 # This suite runs each failing-direction probe in a subshell so the inner ✗ (which flips
