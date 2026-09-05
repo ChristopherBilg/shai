@@ -24,10 +24,15 @@ re-review. A human re-applies a label if another round is wanted.
    PRs cannot be updated by this workflow. Continue with non-code actions (replies, resolves).
 2. Read the diff: `gh pr diff {{NUMBER}} -R {{REPO}}`.
 3. Fetch all review feedback:
-   - inline/diff comments: `gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --paginate`
+   - inline/diff comments:
+     `gh api repos/{{REPO}}/pulls/{{NUMBER}}/comments --paginate \
+        --jq '.[] | {id, in_reply_to_id, path, line, original_line, position, body}'`
+     (`--jq` applies per page with `--paginate`.) The projection drops `diff_hunk`, so a
+     large hunk cannot push the response past the truncation cap and hide comments in the
+     elided middle; the fields retained are exactly the ones to keep below.
    - top-level reviews (with state): `gh api repos/{{REPO}}/pulls/{{NUMBER}}/reviews --paginate`
    - general PR conversation: `gh api repos/{{REPO}}/issues/{{NUMBER}}/comments --paginate`
-   Keep each inline comment's `id`, `node_id`, `path`, `line`, `in_reply_to_id`, `body`, and
+   Keep each inline comment's `id`, `in_reply_to_id`, `path`, `line`, `original_line`, `body`, and
    whether its diff hunk is outdated (`position` is `null` when outdated).
 4. Find which threads are already resolved, so you skip them, via GraphQL:
 
