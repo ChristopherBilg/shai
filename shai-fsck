@@ -5,19 +5,30 @@
 # Reads: $SHAI_HOME/sessions/, $SHAI_HOME/runs/, $SHAI_HOME/ledgers/, $SHAI_HOME/failures/,
 #        workflows/ (L4 resolves a ledger filename against the shipped workflow directories)
 # Writes: findings table to stdout (digest to stderr), the findings array to stdout with
-#         --json, or the digest alone to stdout with --summary; never modifies the store
-# Exit: 0 clean (no findings); 1 problems found; 2 usage error; 3 operational failure
-#       (the scan could not complete: jq missing, $SHAI_HOME absent/unreadable, or an
-#       unexpected command failure). 3 vs 1 is the point: a timer or CI job can tell
-#       "your state directory is dirty" apart from "the check never ran".
+#         --json, or the digest alone to stdout with --summary; --fix additionally repairs
+#         every fixable finding and logs one repair:/manual: line per action to stderr.
+#         A repair never edits, rewrites, truncates, or drops a line from an event-bearing
+#         log: S5 rebuilds the derived .latest.json from its log, and S4/S6/R1/R5/R6 delete
+#         whole redundant units. Everything else is refused with its named manual remedy.
+# Exit: 0 clean (no findings, or --fix repaired everything it found); 1 problems found
+#       (or --fix left problems it cannot safely repair); 2 usage error; 3 operational
+#       failure (the scan or a repair could not complete: jq missing, $SHAI_HOME
+#       absent/unreadable, or an unexpected command failure). 3 vs 1 is the point: a timer
+#       or CI job can tell "your state directory is dirty" apart from "the check never ran".
 set -euo pipefail
 
-# fsck_failed: ERR-trap handler — any unexpected command failure means the scan did not
-# complete, which must read as 3 (operational), never 1 ("problems found").
+# fsck_failed: ERR-trap handler — any unexpected command failure means the scan (or, during
+# the fix phase, a repair) did not complete, which must read as 3 (operational), never 1
+# ("problems found"). $PHASE names the phase so the message is honest about which failed.
+PHASE=scan
 # shellcheck disable=SC2317  # invoked by the ERR trap below, not visible to static analysis
 fsck_failed() {
   local rc=$?
-  printf 'shai-fsck: scan failed (exit %s) — the report may be incomplete\n' "$rc" >&2
+  if [ "$PHASE" = "repair" ]; then
+    printf 'shai-fsck: repair failed (exit %s) — repairs are incomplete\n' "$rc" >&2
+  else
+    printf 'shai-fsck: scan failed (exit %s) — the report may be incomplete\n' "$rc" >&2
+  fi
   exit 3
 }
 trap fsck_failed ERR
@@ -141,11 +152,6 @@ if [ "$SUMMARY" = true ] && [ "$JSON" = true ]; then
   printf 'error: --summary cannot be combined with --json\n' >&2
   exit 2
 fi
-# --fix is parsed and validated here; the fix behaviour lands in a later issue. Say so
-# instead of silently accepting a flag that does nothing.
-if [ "$FIX" = true ]; then
-  printf 'warning: --fix is parsed but not implemented yet (a later issue); no files were modified\n' >&2
-fi
 
 # Operational guards — these are the exit 3 conditions, checked before any scan so a
 # failed prerequisite can never masquerade as a clean scan.
@@ -168,7 +174,7 @@ fi
 
 # Findings accumulator: checks append normalized records here and nothing downstream knows
 # how a check reached its conclusion. The table renderer, the --json renderer, the digest,
-# and (in a later issue) --fix all read the same file, so the summary line
+# and --fix's repair worklist all read the same file, so the summary line
 # "N problems found, M fixable with --fix" is true by construction.
 FINDINGS_FILE="$(mktemp)"
 trap 'rm -f "$FINDINGS_FILE"' EXIT
@@ -261,6 +267,12 @@ ck_S4() {
 #   event (CLAUDE.md:139) beside a log whose tail is the last committed event. Flagging
 #   that divergence would be a false positive, and "rebuild" would overwrite the only
 #   copy of the error.
+#   Exception: a session log with no parseable events is never "rebuildable". The repair
+#   is `tail -n 1` of the log, and with zero events that writes an empty file (or the
+#   last garbage line) — destroying whatever the old LATEST held, while a rescan still
+#   reports S5, so the repair can never converge and the exit-0 promise would be false.
+#   Every zero-event shape (missing/empty/unparseable/content latest) is refused with a
+#   named manual remedy instead, mirroring the error-event carve-out above.
 # S6 (warn): stillborn session — exactly one event, a message/system seed, beside an
 #   empty .latest.json, the pair wf_seed_session writes. Evaluated before S5 and claims
 #   the session: without the precedence every stillborn session reports twice (correctly
@@ -337,10 +349,10 @@ SESS_SCAN_PROGRAM='
          | if is_event(.v) then empty
            elif .line == "" then
                s_emit("S1"; "error"; ("line " + (.n | tostring) + " is blank");
-                      false; "none"; $path)
+                      false; "manual: hand-edit the session log to repair or remove the line"; $path)
            else
                s_emit("S1"; "error"; ("line " + (.n | tostring) + " is not a JSON object");
-                      false; "none"; $path)
+                      false; "manual: hand-edit the session log to repair or remove the line"; $path)
            end]
       else [] end)
      + (if $s2 then
@@ -350,7 +362,7 @@ SESS_SCAN_PROGRAM='
                     or ((.v.payload | type) != "object"))
            | s_emit("S2"; "error";
                     ("event " + (.n | tostring) + " missing or invalid type, source, or payload");
-                    false; "none"; $path)]
+                    false; "manual: hand-edit the session log to repair the event"; $path)]
         else [] end)
      + (if $s3 then
           [$parsed[]
@@ -361,10 +373,18 @@ SESS_SCAN_PROGRAM='
            | s_emit("S3"; "error";
                     ("event " + (.n | tostring) + " meta.session_id "
                      + (.v.meta.session_id | tojson) + " does not match the session id");
-                    false; "none"; $path)]
+                    false; "manual: hand-edit the session log to correct meta.session_id"; $path)]
         else [] end)
      + (if $s5 and ($stillborn | not) then
-          if $latest_state == "missing" then
+          if ($latest_state == "present") and ($latest_parsed.ok)
+             and ($latest_parsed.v.type == "error") then []
+          elif $events_n == 0 then
+            [s_emit("S5"; "error";
+                    "latest.json cannot be rebuilt (the session log has no parseable events)";
+                    false;
+                    "manual: hand-edit the session log to restore an event, or delete the session pair";
+                    $latest_path)]
+          elif $latest_state == "missing" then
             [s_emit("S5"; "error"; "latest.json missing"; true; "rebuild"; $latest_path)]
           elif $latest_state == "other" then
             [s_emit("S5"; "error"; "latest.json is not a regular file"; true; "rebuild"; $latest_path)]
@@ -372,10 +392,6 @@ SESS_SCAN_PROGRAM='
             [s_emit("S5"; "error"; "latest.json empty"; true; "rebuild"; $latest_path)]
           elif ($latest_parsed.ok | not) then
             [s_emit("S5"; "error"; "latest.json does not parse as JSON"; true; "rebuild"; $latest_path)]
-          elif $latest_parsed.v.type == "error" then []
-          elif $events_n == 0 then
-            [s_emit("S5"; "error"; "latest.json has content but the session log has no events";
-                    true; "rebuild"; $latest_path)]
           elif $latest_parsed.v == $last_event then []
           else
             [s_emit("S5"; "error"; "latest.json is not the last event"; true; "rebuild"; $latest_path)]
@@ -386,7 +402,8 @@ SESS_SCAN_PROGRAM='
                   true; "delete pair"; $path)]
         else [] end)
      + (if $s7 then
-          [$s7_bad[] | s_emit("S7"; "error"; .; false; "none"; $path)]
+          [$s7_bad[] | s_emit("S7"; "error"; .; false;
+                              "manual: hand-edit the session log to repair the tool_result"; $path)]
         else [] end)
      + (if $s8 then
           [$parsed[]
@@ -399,13 +416,13 @@ SESS_SCAN_PROGRAM='
            | ($v.payload.tool_calls // [] | .[]) as $tc
            | if (($tc.id // null) == null) then
                s_emit("S8"; "warn"; ("assistant tool call (event " + ($n | tostring) + ") has no id");
-                      false; "none"; $path)
+                      false; "manual: hand-edit the session log to repair the tool call"; $path)
              elif any($results[]; .i > $i and .id == $tc.id) then empty
              else
                s_emit("S8"; "warn";
                       ("assistant tool call " + ($tc.id | tojson) + " (event " + ($n | tostring)
                        + ") has no tool_result");
-                      false; "none"; $path)
+                      false; "manual: hand-edit the session log to repair the tool call"; $path)
              end]
         else [] end)
      + (if $s9 then
@@ -413,12 +430,12 @@ SESS_SCAN_PROGRAM='
            | select(is_event(.v))
            | if (.v | has("version") | not) then
                s_emit("S9"; "info"; ("event " + (.n | tostring) + " has no version");
-                      false; "none"; $path)
+                      false; "manual: ignore (legacy events predate the envelope) or restamp"; $path)
              elif .v.version == "1.0" then empty
              else
                s_emit("S9"; "warn";
                       ("event " + (.n | tostring) + " has unknown version " + (.v.version | tojson));
-                      false; "none"; $path)
+                      false; "manual: restamp the event to a known version or hand-edit the log"; $path)
              end]
         else [] end))
   | .[]
@@ -532,6 +549,7 @@ ck_R1() {
   local dir id date log summary n bad line
   for dir in "$RUNS_DIR"/*/; do
     if [ ! -d "$dir" ]; then continue; fi
+    dir="${dir%/}" # canonical path: the finding's path is the fixer's verbatim input
     id="$(basename "$dir")"
     date="$(item_date "$id")"
     if ! in_window "$date"; then continue; fi
@@ -576,6 +594,7 @@ ck_R2() {
   local dir id date log summary n line rid
   for dir in "$RUNS_DIR"/*/; do
     if [ ! -d "$dir" ]; then continue; fi
+    dir="${dir%/}"
     id="$(basename "$dir")"
     date="$(item_date "$id")"
     if ! in_window "$date"; then continue; fi
@@ -607,6 +626,7 @@ ck_R3() {
   local dir id date log summary n max missing k parent expected s
   for dir in "$RUNS_DIR"/*/; do
     if [ ! -d "$dir" ]; then continue; fi
+    dir="${dir%/}"
     id="$(basename "$dir")"
     date="$(item_date "$id")"
     if ! in_window "$date"; then continue; fi
@@ -659,6 +679,7 @@ ck_R4() {
   local dir id date dump fname dumps=()
   for dir in "$RUNS_DIR"/*/; do
     if [ ! -d "$dir" ]; then continue; fi
+    dir="${dir%/}"
     id="$(basename "$dir")"
     date="$(item_date "$id")"
     if ! in_window "$date"; then continue; fi
@@ -686,6 +707,7 @@ ck_R5() {
   local dir id date log summary dump fname span found s spans=() dumps=()
   for dir in "$RUNS_DIR"/*/; do
     if [ ! -d "$dir" ]; then continue; fi
+    dir="${dir%/}"
     id="$(basename "$dir")"
     date="$(item_date "$id")"
     if ! in_window "$date"; then continue; fi
@@ -732,6 +754,7 @@ ck_R6() {
   local dir id date log summary n
   for dir in "$RUNS_DIR"/*/; do
     if [ ! -d "$dir" ]; then continue; fi
+    dir="${dir%/}"
     id="$(basename "$dir")"
     date="$(item_date "$id")"
     if ! in_window "$date"; then continue; fi
@@ -811,7 +834,8 @@ ck_R7() {
     while IFS= read -r rid; do
       if [ ! -d "$RUNS_DIR/$rid" ]; then
         finding R7 info runs "$rid" "$RUNS_DIR/$rid" \
-          "run directory missing (events remain in the session log)" false ""
+          "run directory missing (events remain in the session log)" false \
+          "manual: ignore (the run was likely pruned) or recreate the run directory"
       fi
     done < <(printf '%s' "$refs" | jq -r '.[]')
   done
@@ -1171,12 +1195,13 @@ for store in "${ALL_STORES[@]}"; do
 done
 
 # One jq pass over the accumulator (never over store files) computes every downstream
-# number: the digest, the exit verdict, and — later — the --fix worklist.
+# number: the digest, the exit verdict, and --fix's worklist.
 STATS="$(jq -s '{
   errors: ([.[] | select(.severity == "error")] | length),
   warnings: ([.[] | select(.severity == "warn")] | length),
   info: ([.[] | select(.severity == "info")] | length),
   fixable: ([.[] | select(.fixable == true)] | length),
+  unfixable: ([.[] | select(.fixable != true)] | length),
   total: length
 }' "$FINDINGS_FILE")"
 total="$(printf '%s' "$STATS" | jq -r '.total')"
@@ -1184,6 +1209,109 @@ errors="$(printf '%s' "$STATS" | jq -r '.errors')"
 warnings="$(printf '%s' "$STATS" | jq -r '.warnings')"
 info="$(printf '%s' "$STATS" | jq -r '.info')"
 fixable="$(printf '%s' "$STATS" | jq -r '.fixable')"
+unfixable="$(printf '%s' "$STATS" | jq -r '.unfixable')"
+
+# --- --fix: repair what the findings say is repairable, refuse the rest ---------------
+# The worklist is the accumulator itself: records with fixable == true, in scan order.
+# Each fixable check maps to exactly one safe action — rebuild a derived file (S5) or
+# delete a whole redundant unit (S4, S6, R1's wholly-empty run directory, R5, R6's dead
+# run). Nothing else is ever touched: an event-bearing .jsonl is never edited, rewritten,
+# truncated, or dropped line-by-line (CLAUDE.md's head -n 20 rewind guarantee must hold
+# with or without fsck), and an unfixable finding is reported with its named manual
+# remedy rather than papered over. Repairs are independent — none depends on another
+# having run — and scoping (--store/--check/--after/--before) was already applied by the
+# scan, so the worklist is scoped by construction.
+apply_fixes() {
+  local check fixable store target path remedy latest log run_dir worklist
+  # One pass over the accumulator builds the whole worklist; jq failing here must abort
+  # (exit 3 via the ERR trap), never silently skip the repairs — hence the assignment,
+  # whose command-substitution failure set -e does check.
+  worklist="$(jq -rs '.[] | [.check, (.fixable | tostring), .store, .target, .path, .remedy] | @tsv' \
+    "$FINDINGS_FILE")"
+  while IFS=$'\t' read -r check fixable store target path remedy; do
+    if [ "$fixable" = "true" ]; then
+      case "$check" in
+        S4)
+          # Orphan .latest.json with no sibling session log: delete the orphan.
+          printf 'repair: delete %s (%s)\n' "$path" "$check" >&2
+          if [ "$DRY_RUN" != true ]; then rm -f -- "$path"; fi
+          ;;
+        S5)
+          # Rebuild .latest.json from the last line of the session log — the exact
+          # invariant the dispatch loop and shai-retry expect of LATEST. Rebuild, never
+          # delete: removing LATEST can turn a repairable run into an unresumable one.
+          # The temp-file + mv keeps a failed rebuild from truncating the old file, and
+          # the not-a-regular-file guard fails the repair (exit 3) instead of mv'ing
+          # into a directory.
+          printf 'repair: rebuild %s (%s)\n' "$path" "$check" >&2
+          if [ "$DRY_RUN" != true ]; then
+            if [ -e "$path" ] && [ ! -f "$path" ]; then
+              printf 'error: cannot rebuild %s (not a regular file)\n' "$path" >&2
+              exit 3
+            fi
+            latest="$path"
+            log="$(store_dir "$store")/$target.jsonl"
+            tail -n 1 "$log" >"$latest.tmp.$$"
+            mv "$latest.tmp.$$" "$latest"
+          fi
+          ;;
+        S6)
+          # Stillborn session: the seeded pair (one system event + empty .latest.json)
+          # is a wholly redundant unit — delete both halves.
+          latest="${path%.jsonl}.latest.json"
+          printf 'repair: delete pair %s and %s (%s)\n' "$path" "$latest" "$check" >&2
+          if [ "$DRY_RUN" != true ]; then rm -f -- "$path" "$latest"; fi
+          ;;
+        R1)
+          # Wholly empty run directory. rmdir, not rm -rf: only the emptiness the check
+          # verified is deleted, and a directory that somehow gained an entry between
+          # scan and fix fails the repair (exit 3) instead of losing a file.
+          printf 'repair: delete %s (%s)\n' "$path" "$check" >&2
+          if [ "$DRY_RUN" != true ]; then rmdir -- "$path"; fi
+          ;;
+        R5)
+          # Orphan span dump (no matching event in the run log): delete the dump only.
+          printf 'repair: delete %s (%s)\n' "$path" "$check" >&2
+          if [ "$DRY_RUN" != true ]; then rm -f -- "$path"; fi
+          ;;
+        R6)
+          # Dead uncommitted run — no user message or no session id, so nothing
+          # replayable is lost. Delete the whole run directory. A resumable run is never
+          # fixable (its remedy is the printed shai-retry command), so it can never
+          # reach this arm.
+          run_dir="$(store_dir "$store")/$target"
+          printf 'repair: delete %s (%s)\n' "$run_dir" "$check" >&2
+          if [ "$DRY_RUN" != true ]; then rm -rf -- "$run_dir"; fi
+          ;;
+        *)
+          # fail closed: a fixable record the fixer does not know how to repair means the
+          # accumulator contract broke, and repairing nothing is safer than guessing.
+          printf 'error: finding %s is marked fixable but has no repair action\n' "$check" >&2
+          exit 3
+          ;;
+      esac
+    else
+      printf 'manual: %s %s — %s\n' "$check" "$path" "$remedy" >&2
+    fi
+  done <<<"$worklist"
+}
+if [ "$FIX" = true ]; then
+  PHASE=repair
+  apply_fixes
+  PHASE=scan
+fi
+
+# The exit verdict. A bare run exits 1 on any finding; --fix exits 0 when it repaired
+# everything it found and 1 only when findings remain that it cannot safely repair
+# (fixable == false records — the repairs above never remove those, and each was printed
+# with its named manual remedy). Both verdicts come from the same accumulator the
+# renderers read, never from a post-fix re-scan.
+VERDICT=1
+if [ "$FIX" = true ]; then
+  if [ "$unfixable" -eq 0 ]; then VERDICT=0; fi
+else
+  if [ "$total" -eq 0 ]; then VERDICT=0; fi
+fi
 
 # plural <n> <singular> <plural>: the word matching <n> (English count agreement).
 plural() {
@@ -1244,9 +1372,9 @@ clean_line() {
 
 if [ "$JSON" = true ]; then
   # JSON output is the findings array itself — the composability point for jq pipelines —
-  # and nothing else. [] when clean.
+  # and nothing else. [] when clean. The repair/manual plan stays on stderr.
   jq -s . "$FINDINGS_FILE"
-  if [ "$total" -eq 0 ]; then exit 0; else exit 1; fi
+  exit "$VERDICT"
 fi
 
 # policy.json and ci.json stay shai-doctor's to validate — point there instead of
@@ -1263,7 +1391,7 @@ fi
 
 if [ "$SUMMARY" = true ]; then
   digest
-  exit 1
+  exit "$VERDICT"
 fi
 
 # Table mode: one row per finding on stdout — honest and row-countable — with the digest
@@ -1275,4 +1403,4 @@ for row in "${rows[@]}"; do
   printf '%-8s  %-5s  %-8s  %-29s  %s\n' "$sev" "$check" "$store" "$target" "$summary"
 done
 digest >&2
-exit 1
+exit "$VERDICT"

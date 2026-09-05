@@ -115,11 +115,21 @@ normalized findings — one row per finding, scoped by store, check, and date:
 ./shai-fsck --store sessions --check S4    # one store, one check
 ./shai-fsck --after 2026-08-01 --json      # findings as a JSON array ([] when clean)
 ./shai-fsck --summary                      # only the trailing digest
+./shai-fsck --fix                          # repair every fixable finding, then report
+./shai-fsck --fix --dry-run                # print the repair plan, change nothing
+./shai-fsck --fix --check S6               # clear only stillborn sessions
 ```
 
-Exit codes: `0` clean, `1` problems found, `2` usage error, `3` the scan could not complete.
-`shai-doctor` remains the owner of `policy.json`/`ci.json` validation, and `shai-prune` the
-owner of date/category-based deletion — `shai-fsck` only reports, it never deletes.
+Exit codes: `0` clean (or, with `--fix`, everything found was repaired), `1` problems found
+(or problems `--fix` cannot safely repair), `2` usage error, `3` the scan or a repair could
+not complete. `--fix` never edits, rewrites, truncates, or drops a line from an event-bearing
+log: it rebuilds `.latest.json` from the last line of its session log (S5) and deletes only
+whole redundant units — orphan `.latest.json` files (S4), stillborn sessions (S6), wholly
+empty run directories (R1), orphan span dumps (R5), and dead uncommitted runs (R6). A
+resumable run is never touched; its remedy is the printed `shai-retry --run` command.
+Everything else is refused and reported with a named manual remedy. `shai-doctor` remains
+the owner of `policy.json`/`ci.json` validation, and `shai-prune` the owner of
+date/category-based deletion.
 
 ## Tests
 ```shell
