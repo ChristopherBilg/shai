@@ -22,6 +22,13 @@ fsck_failed() {
 }
 trap fsck_failed ERR
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# R6 must classify an uncommitted run exactly as shai-retry --run would, so the verdict
+# comes from lib/replay.sh's classify_replay (issue #386) — sourced, never reimplemented.
+# The lib runs `set -uo pipefail` when sourced, so it never tightens this script's options.
+# shellcheck source=lib/replay.sh
+source "$DIR/lib/replay.sh"
+
 STATE_DIR="${SHAI_HOME:-$HOME/.shai}"
 SESSIONS_DIR="$STATE_DIR/sessions"
 RUNS_DIR="$STATE_DIR/runs"
@@ -30,18 +37,19 @@ FAILURES_DIR="$STATE_DIR/failures"
 # The install tree's workflows/: L4 checks a ledger filename against the workflow
 # directories shipped next to this script (the repo root in a dev clone, the versioned
 # install tree in a release install — the exec wrapper hands off to the real script path).
-WORKFLOWS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/workflows"
+WORKFLOWS_DIR="$DIR/workflows"
 
 # Check catalog: id -> the store its scan reads ("all" for the cross-store X1 name-pattern
-# check). Shipped: S1-S9 (the session store, issues #389/#390), L1-L4 (ledgers), F1-F4
-# (failures), X1 (cross-store); the runs family (R1-R6) appends its ids here later.
+# check). Shipped: S1-S9 (the session store, issues #389/#390), R1-R7 (the run store,
+# #391), L1-L4 (ledgers), F1-F4 (failures), X1 (cross-store).
 declare -A CHECK_STORE=([S1]=sessions [S2]=sessions [S3]=sessions [S4]=sessions
   [S5]=sessions [S6]=sessions [S7]=sessions [S8]=sessions [S9]=sessions
+  [R1]=runs [R2]=runs [R3]=runs [R4]=runs [R5]=runs [R6]=runs [R7]=runs
   [L1]=ledgers [L2]=ledgers [L3]=ledgers [L4]=ledgers
   [F1]=failures [F2]=failures [F3]=failures [F4]=failures [X1]=all)
 # Known ids in scan order (associative-array keys alone have no defined order); the order
 # also fixes the findings' row order within a store.
-KNOWN_CHECKS=(S1 S2 S3 S4 S5 S6 S7 S8 S9 L1 L2 L3 L4 F1 F2 F3 F4 X1)
+KNOWN_CHECKS=(S1 S2 S3 S4 S5 S6 S7 S8 S9 R1 R2 R3 R4 R5 R6 R7 L1 L2 L3 L4 F1 F2 F3 F4 X1)
 ALL_STORES=(sessions runs ledgers failures)
 
 STORES=() CHECKS=()
@@ -472,6 +480,343 @@ want() {
   if [ -n "${WANT_CHECKS[$1]:-}" ]; then printf 'true'; else printf 'false'; fi
 }
 
+# --- run-store checks (R1-R7, issue #391) ------------------------------------------
+# R1/R2/R3/R5 share exactly one jq pass per events.jsonl: run_summary caches a single
+# jq -s summary (line count, non-object lines, meta.run_id values, span ids, span
+# parents) that each check then filters in memory, so no check re-parses a store file.
+# R6 is the mandated exception — it calls lib/replay.sh's classify_replay, whose own
+# reads of the run and session logs are #386's contract, not part of this scan's budget.
+
+# run_summary <log>: the cached one-pass jq summary of a run log. Prints a JSON object
+# with keys count, bad_lines (1-based lines that are not JSON objects), run_ids
+# ({line, rid} per line carrying a meta.run_id), spans (unique meta.span_id strings),
+# and span_parents ({line, span, parent} per line carrying a meta.span_id); prints
+# nothing when the file does not parse as JSON (the caller treats that as
+# "unparseable" and lets R1 own the report).
+declare -A RUN_SUMMARIES=()
+RUN_SUMMARY_PROGRAM='{count: length,
+  bad_lines: [to_entries[] | select((.value | type) != "object") | (.key + 1)],
+  run_ids: [to_entries[] | select((.value | type) == "object")
+            | select((.value.meta.run_id? // null) != null)
+            | {line: (.key + 1), rid: .value.meta.run_id}],
+  spans: [.[] | select(type == "object") | .meta.span_id? // empty
+          | select(type == "string")] | unique,
+  span_parents: [to_entries[] | select((.value | type) == "object")
+                 | select((.value.meta.span_id? // null) != null)
+                 | {line: (.key + 1), span: .value.meta.span_id,
+                    parent: (.value.meta.parent_span_id? // null)}]}'
+run_summary() {
+  local log="$1"
+  if [ -z "${RUN_SUMMARIES[$log]+x}" ]; then
+    RUN_SUMMARIES[$log]="$(jq -c -s "$RUN_SUMMARY_PROGRAM" "$log" 2>/dev/null)" || RUN_SUMMARIES[$log]=""
+  fi
+  printf '%s' "${RUN_SUMMARIES[$log]}"
+}
+
+# run_dir_empty <dir>: 0 when <dir> has no entries at all — R1's narrow fixable case.
+# A directory that still holds any file (span dumps, a partial log) is the only trace
+# of an API call and gets a manual remedy instead. dotglob counts hidden files too.
+run_dir_empty() {
+  local entries=()
+  shopt -s nullglob dotglob
+  entries=("$1"/*)
+  shopt -u nullglob dotglob
+  [ "${#entries[@]}" -eq 0 ]
+}
+
+# R1 — runs/<id>/events.jsonl must exist, be non-empty, and parse line-by-line as JSON
+# objects. Severity error. The only fixable shape is a wholly empty run directory; a
+# directory holding anything else is evidence a human should look at, so those shapes
+# get manual remedies.
+ck_R1() {
+  local dir id date log summary n bad line
+  for dir in "$RUNS_DIR"/*/; do
+    if [ ! -d "$dir" ]; then continue; fi
+    id="$(basename "$dir")"
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    log="$dir/events.jsonl"
+    if [ ! -f "$log" ]; then
+      if run_dir_empty "$dir"; then
+        finding R1 error runs "$id" "$dir" "run directory is empty (no events.jsonl)" true delete
+      else
+        finding R1 error runs "$id" "$dir" "run directory has files but no events.jsonl" \
+          false "manual: inspect the files, then delete the run directory"
+      fi
+      continue
+    fi
+    summary="$(run_summary "$log")"
+    if [ -z "$summary" ]; then
+      finding R1 error runs "$id" "$log" "events.jsonl contains a line that does not parse as JSON" \
+        false "manual: repair or delete the run log"
+      continue
+    fi
+    n="$(printf '%s' "$summary" | jq -r '.count')"
+    if [ "$n" -eq 0 ]; then
+      finding R1 error runs "$id" "$log" "events.jsonl is empty" \
+        false "manual: inspect the run directory, then delete it"
+      continue
+    fi
+    bad="$(printf '%s' "$summary" | jq -c '.bad_lines')"
+    if [ "$bad" != "[]" ]; then
+      while IFS= read -r line; do
+        finding R1 error runs "$id" "$log" "events.jsonl line $line is not a JSON object" \
+          false "manual: repair or delete the run log"
+      done < <(printf '%s' "$bad" | jq -r '.[]')
+    fi
+  done
+}
+
+# R2 — every meta.run_id in a run log must equal the directory name. Severity error,
+# not fixable: which side is wrong (the directory name or the log) is a human judgment
+# call. Only lines carrying a meta.run_id are checked; unstamped lines are not
+# violations. Runs whose log R1 already reported (missing/empty/unparseable) are
+# skipped rather than double-counted.
+ck_R2() {
+  local dir id date log summary n line rid
+  for dir in "$RUNS_DIR"/*/; do
+    if [ ! -d "$dir" ]; then continue; fi
+    id="$(basename "$dir")"
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    log="$dir/events.jsonl"
+    if [ ! -f "$log" ]; then continue; fi
+    summary="$(run_summary "$log")"
+    if [ -z "$summary" ]; then continue; fi
+    n="$(printf '%s' "$summary" | jq -r '.count')"
+    if [ "$n" -eq 0 ]; then continue; fi
+    while IFS=$'\t' read -r line rid; do
+      finding R2 error runs "$id" "$log" \
+        "line $line: meta.run_id $rid does not match the run directory" \
+        false "manual: rename the run directory or correct the run log"
+    done < <(printf '%s' "$summary" | jq -r --arg id "$id" \
+      '.run_ids[] | select(.rid != $id) | "\(.line)\t\(.rid)"')
+  done
+}
+
+# R3 — span ids must form span_1..span_N with no gaps, and meta.parent_span_id must
+# form a linear chain (span_k's parent is span_{k-1}; span_1's parent is null).
+# Severity warn, not fixable. span_0 is exempt: a hand-run shai-eval with SHAI_RUN_ID
+# set but no SHAI_SPAN_ID dumps to span_0-request.json, and real spans start at
+# span_1, so span_0 is never a gap and never a chain member. The chain is checked
+# only when the sequence is contiguous — a gapped sequence has no linear chain by
+# definition, and reporting both for one corruption would double-count it. Span ids
+# outside the span_N shape are reported individually: a corrupted id like span_1x is
+# otherwise invisible to both the gap and the chain check.
+ck_R3() {
+  local dir id date log summary n max missing k parent expected s
+  for dir in "$RUNS_DIR"/*/; do
+    if [ ! -d "$dir" ]; then continue; fi
+    id="$(basename "$dir")"
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    log="$dir/events.jsonl"
+    if [ ! -f "$log" ]; then continue; fi
+    summary="$(run_summary "$log")"
+    if [ -z "$summary" ]; then continue; fi
+    n="$(printf '%s' "$summary" | jq -r '.count')"
+    if [ "$n" -eq 0 ]; then continue; fi
+    while IFS= read -r s; do
+      finding R3 warn runs "$id" "$log" \
+        "span id $s is not in span_N form (span_1..span_N, or span_0 for hand runs)" \
+        false "manual: repair the run log"
+    done < <(printf '%s' "$summary" | jq -r '.spans[] | select(test("^span_[0-9]+$") | not)')
+    max="$(printf '%s' "$summary" | jq -r '[.spans[]
+      | select(test("^span_[0-9]+$")) | sub("^span_"; "") | tonumber
+      | select(. > 0)] | if length == 0 then 0 else max end')"
+    if [ "$max" -eq 0 ]; then continue; fi
+    missing="$(printf '%s' "$summary" | jq -c --argjson max "$max" '
+      [.spans[] | select(test("^span_[0-9]+$")) | sub("^span_"; "") | tonumber
+       | select(. > 0)] as $have | [range(1; $max + 1)] - $have')"
+    if [ "$missing" != "[]" ]; then
+      while IFS= read -r k; do
+        finding R3 warn runs "$id" "$log" "span_$k missing (gaps in the span sequence)" \
+          false "manual: repair the run log"
+      done < <(printf '%s' "$missing" | jq -r '.[]')
+      continue
+    fi
+    while IFS=$'\t' read -r k parent expected; do
+      finding R3 warn runs "$id" "$log" \
+        "span_$k parent_span_id is $parent (expected $expected)" \
+        false "manual: repair the run log"
+    done < <(printf '%s' "$summary" | jq -r '
+      [.span_parents[]
+       | select(.span | type == "string")
+       | select(.span | test("^span_[0-9]+$"))
+       | .n = (.span | sub("^span_"; "") | tonumber)
+       | select(.n > 0)
+       | .expected = (if .n == 1 then null else "span_" + ((.n - 1) | tostring) end)
+       | select(.parent != .expected)
+       | "\(.n)\t\(.parent)\t\(.expected)"] | .[]')
+  done
+}
+
+# R4 — every <span>-request.json / <span>-response.json dump must parse as JSON.
+# Severity warn, deliberately not fixable: a malformed dump is the only record of a
+# failed API call, so deleting it must stay a human decision. One jq validation pass
+# per dump file, and no other check reads dumps.
+ck_R4() {
+  local dir id date dump fname dumps=()
+  for dir in "$RUNS_DIR"/*/; do
+    if [ ! -d "$dir" ]; then continue; fi
+    id="$(basename "$dir")"
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    shopt -s nullglob
+    dumps=("$dir"/span_*-request.json "$dir"/span_*-response.json)
+    shopt -u nullglob
+    for dump in "${dumps[@]+"${dumps[@]}"}"; do
+      if ! jq -e . "$dump" >/dev/null 2>&1; then
+        fname="$(basename "$dump")"
+        finding R4 warn runs "$id" "$dump" "$fname does not parse as JSON" \
+          false "manual: inspect the dump, then delete or repair it"
+      fi
+    done
+  done
+}
+
+# R5 — a span dump must have a matching event in its run log; a dump whose span has no
+# event is an orphan (the defect the live-audit found: span_9-request.json with events
+# only through span_8). Severity warn, fixable by deleting the dump. span_0 is exempt
+# (CLAUDE.md: a hand-run shai-eval without SHAI_SPAN_ID dumps to span_0-request.json —
+# legitimate, never an orphan). R5 only classifies dumps when the run log is present,
+# non-empty, and parseable: without an authoritative span set orphanhood is unprovable,
+# and those directories are already R1's report.
+ck_R5() {
+  local dir id date log summary dump fname span found s spans=() dumps=()
+  for dir in "$RUNS_DIR"/*/; do
+    if [ ! -d "$dir" ]; then continue; fi
+    id="$(basename "$dir")"
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    log="$dir/events.jsonl"
+    if [ ! -f "$log" ]; then continue; fi
+    summary="$(run_summary "$log")"
+    if [ -z "$summary" ]; then continue; fi
+    if [ "$(printf '%s' "$summary" | jq -r '.count')" -eq 0 ]; then continue; fi
+    mapfile -t spans < <(printf '%s' "$summary" | jq -r '.spans[]')
+    shopt -s nullglob
+    dumps=("$dir"/span_*-request.json "$dir"/span_*-response.json)
+    shopt -u nullglob
+    for dump in "${dumps[@]+"${dumps[@]}"}"; do
+      fname="$(basename "$dump")"
+      span="${fname%-request.json}"
+      span="${span%-response.json}"
+      if [ "$span" = "span_0" ]; then continue; fi
+      found=""
+      for s in "${spans[@]+"${spans[@]}"}"; do
+        if [ "$s" = "$span" ]; then
+          found=1
+          break
+        fi
+      done
+      if [ -z "$found" ]; then
+        finding R5 warn runs "$id" "$dump" "$fname has no matching event in the run log" true delete
+      fi
+    done
+  done
+}
+
+# R6 — a run's events must appear in some session log; buffer-then-commit means a run
+# directory whose events never reached a session is an uncommitted run. Severity warn.
+# The verdict comes from classify_replay — the exact five preconditions shai-retry
+# --run applies — so fsck can never call a run "resumable" that shai-retry would refuse
+# (issue #386's contract, including the meta.retry_of half of the committed test).
+# A resumable run is never fixable; its remedy is the literal resume command, and the
+# summary carries it too so every renderer lets the user act on it directly. Only dead
+# runs (no user message, or no session id) are fixable: their events are unreplayable,
+# so deletion loses nothing recoverable. classify_replay is only called on present,
+# non-empty, parseable run logs — R1 owns the other shapes, and the classifier's own
+# jq would otherwise fail on a malformed log.
+ck_R6() {
+  local dir id date log summary n
+  for dir in "$RUNS_DIR"/*/; do
+    if [ ! -d "$dir" ]; then continue; fi
+    id="$(basename "$dir")"
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    log="$dir/events.jsonl"
+    if [ ! -f "$log" ]; then continue; fi
+    summary="$(run_summary "$log")"
+    if [ -z "$summary" ]; then continue; fi
+    n="$(printf '%s' "$summary" | jq -r '.count')"
+    if [ "$n" -eq 0 ]; then continue; fi
+    classify_replay "$id"
+    case "$REPLAY_VERDICT" in
+      committed) ;;
+      replayable)
+        finding R6 warn runs "$id" "$log" \
+          "uncommitted run (resumable) — shai-retry --run $id" false "shai-retry --run $id"
+        ;;
+      no-user-message)
+        finding R6 warn runs "$id" "$log" "uncommitted run (dead: no user message)" true delete
+        ;;
+      no-session-id)
+        finding R6 warn runs "$id" "$log" "uncommitted run (dead: no session id)" true delete
+        ;;
+      unsafe-session-id)
+        finding R6 warn runs "$id" "$log" \
+          "uncommitted run (session id in the run log is unsafe: $REPLAY_SESSION)" \
+          false "manual: repair the run log"
+        ;;
+      unsafe-run-id | no-log) ;; # unreachable behind the gates above; fail-closed skip
+      *)
+        # classify_replay only emits the verdicts above; fail closed rather than
+        # silently misclassifying a run.
+        printf 'error: cannot classify run log: %s\n' "$log" >&2
+        exit 3
+        ;;
+    esac
+  done
+}
+
+# R7 — every meta.run_id referenced by a session event must have a run directory on
+# disk. Severity info, never fixable: shai-prune --runs legitimately removes run
+# directories while their events remain committed in the session log, and shai-trace
+# already handles that ("run directory not found; using session log"). Reported so a
+# user understands why shai-trace warns, not because anything is broken. Run ids
+# containing / or .. are skipped — they could never name a real run directory, and
+# probing them would re-derive shai-retry's path guard as a bare existence check.
+# ck_R7 also fires on the --store runs path (the dispatch arm and the missing-runs/
+# exception above), where the scan loop's sessions-store readability guard does not
+# apply — the check carries its own exit-3 guard so an unreadable sessions dir aborts the
+# scan instead of reading as a false-clean report.
+ck_R7() {
+  local f id date refs rid
+  # A missing sessions dir is clean by definition (no session logs, no references);
+  # a present-but-unreadable one must abort — mirror the per-store guard above.
+  if [ -d "$SESSIONS_DIR" ] && { [ ! -r "$SESSIONS_DIR" ] || [ ! -x "$SESSIONS_DIR" ]; }; then
+    printf 'error: cannot scan %s (not readable) — scan aborted\n' "$SESSIONS_DIR" >&2
+    exit 3
+  fi
+  for f in "$SESSIONS_DIR"/*.jsonl; do
+    if [ ! -f "$f" ]; then continue; fi
+    id="$(basename "$f" .jsonl)"
+    date="$(item_date "$id")"
+    if ! in_window "$date"; then continue; fi
+    # Raw input with a per-line try/catch, exactly like SESS_SCAN_PROGRAM: a session line
+    # that does not parse is S1's finding to report, and aborting here would discard that
+    # report along with every reference the file's readable lines do carry — turning a
+    # reported problem into "the check never ran". What still aborts is the case this
+    # guard exists for: a session log jq cannot read at all, which raw mode leaves as
+    # jq's own non-zero exit (the same chmod-only shape as the sessions-dir guard above).
+    if ! refs="$(jq -cnR '[inputs | (try fromjson catch empty)
+                           | select(type == "object") | .meta.run_id? // empty
+                           | select(type == "string") | select(length > 0)
+                           | select(test("^[^/]+$")) | select(contains("..") | not)]
+                           | unique' "$f" 2>/dev/null)"; then
+      printf 'error: cannot scan %s (not readable) — scan aborted\n' "$f" >&2
+      exit 3
+    fi
+    while IFS= read -r rid; do
+      if [ ! -d "$RUNS_DIR/$rid" ]; then
+        finding R7 info runs "$rid" "$RUNS_DIR/$rid" \
+          "run directory missing (events remain in the session log)" false ""
+      fi
+    done < <(printf '%s' "$refs" | jq -r '.[]')
+  done
+}
+
 # L1/L2/L3 — ledgers/<workflow>.jsonl, one jq pass per file. The --after/--before window
 # does not apply here: it is a filename-level filter for items carrying an embedded date,
 # and a ledger line that fails L1 has no parseable date at all, while an L2 duplicate is a
@@ -787,8 +1132,14 @@ RUN_MAP_JSON="$(printf '%s\n' "${EXISTING_RUNS[@]+"${EXISTING_RUNS[@]}"}" |
 for store in "${ALL_STORES[@]}"; do
   if [ -z "${WANT_STORES[$store]:-}" ]; then continue; fi
   dir="$(store_dir "$store")"
-  # A store directory that was never created is an empty store, not a failure.
-  if [ ! -d "$dir" ]; then continue; fi
+  # A store directory that was never created is an empty store, not a failure — with one
+  # exception: R7's subject is run directories that are NOT on disk (it reads session
+  # logs, not runs/), so a missing runs/ is exactly the state it exists to report. Run
+  # it before the per-check loop rather than letting the empty-store skip swallow it.
+  if [ ! -d "$dir" ]; then
+    if [ "$store" = "runs" ] && [ -n "${WANT_CHECKS[R7]:-}" ]; then ck_R7; fi
+    continue
+  fi
   if [ ! -r "$dir" ] || [ ! -x "$dir" ]; then
     printf 'error: cannot scan %s (not readable) — scan aborted\n' "$dir" >&2
     exit 3
@@ -804,6 +1155,13 @@ for store in "${ALL_STORES[@]}"; do
     case "$check" in
       S1 | S2 | S3 | S5 | S6 | S7 | S8 | S9) ck_S ;;
       S4) ck_S4 ;;
+      R1) ck_R1 ;;
+      R2) ck_R2 ;;
+      R3) ck_R3 ;;
+      R4) ck_R4 ;;
+      R5) ck_R5 ;;
+      R6) ck_R6 ;;
+      R7) ck_R7 ;;
       L1 | L2 | L3) ck_L ;;
       L4) ck_L4 ;;
       F1 | F2 | F3 | F4) ck_F ;;

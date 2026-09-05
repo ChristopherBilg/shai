@@ -5,7 +5,10 @@
 #         --json findings array ([] when clean, type+length asserted), table renderer row
 #         counts, digest on stderr, --store/--check/--after/--before scoping, --summary,
 #         --fix/--dry-run parsing, usage errors (exit 2) with distinct messages,
-#         operational failures (exit 3), L1-L4 ledger checks, F1-F4 failure checks, X1
+#         operational failures (exit 3), the R1-R7 run-store checks (empty/garbled run
+#         logs, foreign meta.run_id, span gaps and chain breaks, span dump integrity,
+#         uncommitted-run classification via lib/replay.sh including the retry_of half,
+#         missing run directories), L1-L4 ledger checks, F1-F4 failure checks, X1
 #         cross-store name patterns, and every check id running alone
 set -uo pipefail
 # shellcheck source=tests/lib.sh
@@ -29,6 +32,16 @@ orphan_latest() {
   printf '{}\n' >"$SHAI_HOME/sessions/$1.latest.json"
 }
 
+# sess_event <type> <source> <payload> [...]: fixture_event for a session-store fixture —
+# the same stamped event with its meta.run_id nulled, the shape shai-stamp writes when a
+# pipeline runs without an ambient SHAI_RUN_ID. fixture_event defaults run_id to the
+# placeholder "run_test" and a session-only fixture never builds runs/run_test, so without
+# the null every session-store block would also report an R7 info finding (a session event
+# whose meta.run_id has no run directory on disk) for a reference it never meant to make.
+# Session-store assertions stay full-store scans this way, rather than being narrowed to
+# --store sessions to hide the extra row.
+sess_event() { fixture_event "$@" | jq -c '.meta.run_id = null'; }
+
 # build_sink: nine sessions, one per check id, each corrupt in exactly one way — the
 # isolation store for the --check loop below. Every corruption is staged in the open:
 # fixture builders produce the healthy shape first, then exactly one break is applied, so
@@ -37,11 +50,11 @@ build_sink() {
   local ev tmp
   mkdir -p "$SHAI_HOME/sessions"
   # S1: healthy event plus a garbage line (line 2 is not a JSON object)
-  ev="$(fixture_event message user '{"text":"a"}')"
+  ev="$(sess_event message user '{"text":"a"}')"
   fixture_session sess_s1 "$ev"
   printf 'not json\n' >>"$SHAI_HOME/sessions/sess_s1.jsonl"
   # S2: an event with its source key deleted (log and latest rewritten together)
-  ev="$(fixture_event message user '{"text":"b"}')"
+  ev="$(sess_event message user '{"text":"b"}')"
   fixture_session sess_s2 "$ev"
   tmp="$(mktemp)"
   jq -c 'del(.source)' "$SHAI_HOME/sessions/sess_s2.jsonl" >"$tmp"
@@ -50,8 +63,8 @@ build_sink() {
   # S3: first of two events stamped with the wrong session id (latest still mirrors the
   #     untouched second event)
   fixture_session sess_s3 \
-    "$(fixture_event message user '{"text":"c1"}')" \
-    "$(fixture_event message user '{"text":"c2"}')"
+    "$(sess_event message user '{"text":"c1"}')" \
+    "$(sess_event message user '{"text":"c2"}')"
   tmp="$(mktemp)"
   head -n 1 "$SHAI_HOME/sessions/sess_s3.jsonl" | jq -c '.meta.session_id = "elsewhere"' >"$tmp"
   sed -n '2p' "$SHAI_HOME/sessions/sess_s3.jsonl" >>"$tmp"
@@ -60,24 +73,24 @@ build_sink() {
   orphan_latest sess_s4
   # S5: three events with an empty .latest.json (multi-event, so never stillborn)
   fixture_session sess_s5 \
-    "$(fixture_event message user '{"text":"d"}')" \
-    "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')" \
-    "$(fixture_event message user '{"text":"e"}')"
+    "$(sess_event message user '{"text":"d"}')" \
+    "$(sess_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')" \
+    "$(sess_event message user '{"text":"e"}')"
   : >"$SHAI_HOME/sessions/sess_s5.latest.json"
   # S6: the stillborn pair — one system event, empty .latest.json
-  fixture_session sess_s6 "$(fixture_event message system '{"text":"seed"}')"
+  fixture_session sess_s6 "$(sess_event message system '{"text":"seed"}')"
   : >"$SHAI_HOME/sessions/sess_s6.latest.json"
   # S7: a tool_result whose id no preceding assistant event announced
   fixture_session sess_s7 \
-    "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
-    "$(fixture_event tool_result tool '{"tool_call_id":"ghost","content":"nope","is_error":false}')"
+    "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+    "$(sess_event tool_result tool '{"tool_call_id":"ghost","content":"nope","is_error":false}')"
   # S8: an unanswered tool call on an earlier assistant event (the final assistant has none)
   fixture_session sess_s8 \
-    "$(fixture_event message user '{"text":"f"}')" \
-    "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
-    "$(fixture_event message assistant '{"content":"done","tool_calls":[],"finish_reason":"stop"}')"
+    "$(sess_event message user '{"text":"f"}')" \
+    "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+    "$(sess_event message assistant '{"content":"done","tool_calls":[],"finish_reason":"stop"}')"
   # S9: an unrecognized schema version
-  ev="$(fixture_event message user '{"text":"g"}')"
+  ev="$(sess_event message user '{"text":"g"}')"
   fixture_session sess_s9 "$ev"
   tmp="$(mktemp)"
   jq -c '.version = "0.9"' "$SHAI_HOME/sessions/sess_s9.jsonl" >"$tmp"
@@ -89,9 +102,12 @@ build_sink() {
 # Closes #387's deferred assertion. The builders never stage corruption: fixture_session
 # mirrors the log tail into .latest.json (so S4 stays quiet by construction), fixture_run
 # and fixture_ledger build their healthy shapes, fixture_failure writes a healthy record.
+# The run is committed for R6 (the session log carries the same stamped event, so
+# meta.run_id matches) and resolves for R7 (the referenced run directory exists); the
+# ledger's backing session carries a null run_id (R7-clean by construction).
 desc "healthy store from fixture builders: clean, exit 0"
 setup_home
-ev="$(fixture_event message user '{"text":"hello"}')"
+ev="$(fixture_event message user '{"text":"hello"}' run_20260810T120000_aabbccdd)"
 fixture_session sess_20260810T120000_aabbccdd "$ev"
 fixture_run run_20260810T120000_aabbccdd sess_20260810T120000_aabbccdd "$ev"
 fixture_ledger heartbeat k1
@@ -162,11 +178,13 @@ assert_contains "$ERR" "2 errors, 0 warnings, 0 info — 2 fixable with --fix" \
 
 # --- S4's negative control: a .latest.json with a sibling .jsonl is not an orphan ---
 # The healthy-store block above is the positive control; this block pins the sibling test
-# directly (fixture_session always writes both files, so no corruption is needed).
+# directly (fixture_session always writes both files, so no corruption is needed). The
+# event's run_id is nulled (sess_event) so the store is clean under R7 too — the only
+# assertion here is "no finding at all".
 desc "S4: .latest.json with a sibling session log is not an orphan"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "0" "paired .latest.json exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "paired .latest.json produces no finding"
@@ -213,7 +231,11 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "2" "undated id dropped when a w
 desc "--store: scopes the scan and the clean line"
 setup_home
 orphan_latest sess_20260810T120000_aabbccdd
-mkdir -p "$SHAI_HOME/runs/run_20260810T120000_aabbccdd"
+# A committed run keeps the runs store clean under R1-R7 (an empty directory would be
+# an R1 finding; an uncommitted one an R6 finding).
+ev="$(fixture_event message user '{"text":"hi"}' run_20260810T120000_aabbccdd)"
+fixture_session sess_20260810T120001_aabbccdd "$ev"
+fixture_run run_20260810T120000_aabbccdd sess_20260810T120001_aabbccdd "$ev"
 OUT=$("$FSCK" --store sessions --json)
 assert_eq "$?" "1" "sessions scope still finds the orphan"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "sessions scope reports one finding"
@@ -237,8 +259,375 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "a repeated --check does not
 OUT=$("$FSCK" --check S4 --store runs 2>/dev/null)
 assert_eq "$?" "0" "a check disjoint from the selected store scans nothing"
 assert_eq "$OUT" "no problems found (0 runs)" "disjoint selection reports clean"
-assert_fails 2 "error: unknown check id: R1" "unknown check id" -- "$FSCK" --check R1
+# Z1 is deliberately outside every shipped family (S/R/L/F/X): an id a later issue might
+# ship — an earlier revision of this assertion used S9, then R1 — turns this test green by
+# accident the moment that check lands.
+assert_fails 2 "error: unknown check id: Z1" "unknown check id" -- "$FSCK" --check Z1
 assert_fails 2 "error: --check requires a check id" "--check missing value" -- "$FSCK" --check
+
+# --- R1: three adjacent shapes — wholly empty (fixable), dumps without a log
+#     (not fixable), and a healthy log (no finding), plus the two log-corruption shapes ---
+# Each expected-one assertion is mutation-checked: with the ck_R1 dispatch arm deleted
+# the scan reports zero findings and every one of these goes red (verified during
+# development, then restored).
+desc "R1: a wholly empty run directory is the narrow fixable case"
+setup_home
+mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$?" "1" "empty run directory exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R1 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "error" "severity error"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "true" "wholly empty directory is fixable"
+assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "delete" "remedy is delete"
+
+desc "R1: dumps without an event log are reported, not fixable"
+setup_home
+fixture_span_dump run_20260903T043418_67e3340f span_1 request
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$?" "1" "dumps-without-log exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R1 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "dumps are the only trace of a call — not fixable"
+assert_contains "$(printf '%s' "$F" | jq -r '.remedy')" "manual" "remedy is a manual instruction"
+
+desc "R1: an empty event log is a finding, not fixable"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "empty event log is one finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "events.jsonl is empty" "summary names the empty log"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "empty log is not fixable"
+
+desc "R1: a line that does not parse and a non-object line are each one finding"
+setup_home
+mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+ev="$(fixture_event message user '{"text":"hi"}')"
+{ printf '%s\n' "$ev" '{garbage'; } >"$SHAI_HOME/runs/run_20260903T043418_67e3340f/events.jsonl"
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "unparseable line is one finding"
+assert_contains "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "does not parse as JSON" \
+  "summary names the unparseable line"
+setup_home
+mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+printf '%s\n' '42' >"$SHAI_HOME/runs/run_20260903T043418_67e3340f/events.jsonl"
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "non-object line is one finding"
+assert_contains "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 1 is not a JSON object" \
+  "summary names the offending line"
+
+desc "R1: a healthy run log produces no finding (positive control)"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}')"
+OUT=$("$FSCK" --check R1 --json)
+assert_eq "$?" "0" "healthy run log exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "healthy run log produces no R1 finding"
+
+# --- R2: meta.run_id must equal the directory name ---
+# Mutation-checked: deleting the ck_R2 arm drops the expected-one finding below
+# (verified during development).
+desc "R2: a foreign meta.run_id in the log is one error finding"
+setup_home
+ev="$(fixture_event message user '{"text":"hi"}' run_other sess_20260903T043418_67e3340f)"
+mkdir -p "$SHAI_HOME/runs/run_20260903T043418_67e3340f"
+printf '%s\n' "$ev" | jq -c '.meta.session_id = "sess_20260903T043418_67e3340f"' \
+  >"$SHAI_HOME/runs/run_20260903T043418_67e3340f/events.jsonl"
+OUT=$("$FSCK" --check R2 --json)
+assert_eq "$?" "1" "foreign run_id exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R2 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "error" "severity error"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "meta.run_id run_other does not match the run directory" "summary names the foreign run_id"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "R2 is not fixable"
+
+desc "R2: a matching meta.run_id produces no finding (positive control)"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}')"
+OUT=$("$FSCK" --check R2 --json)
+assert_eq "$?" "0" "matching run_id exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "matching run_id produces no R2 finding"
+
+# --- R3/R5: span_0 is exempt from both; a missing span_2 is one R3 finding ---
+# Both zero-finding halves are mutation-checked at the exemption, not the check: the
+# first fixture below (the issue's exact wording — span_0 dump, events starting at
+# span_1) goes red when the span_0 skip is removed from ck_R5 (the dump reads as an
+# orphan); the second (a span_0 event among the spans) goes red when the `.n > 0`
+# exemption is removed from ck_R3's chain check (span_0 reads as a chain member with
+# an impossible "span_-1" parent). Both verified during development, then restored.
+# The gap finding is mutation-checked by deleting the ck_R3 arm (goes red).
+desc "R3/R5: a span_0 dump with events starting at span_1 produces zero findings"
+setup_home
+ev1="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+ev2="$(fixture_event message assistant '{"content":"a"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_2)"
+ev2="$(printf '%s' "$ev2" | jq -c '.meta.parent_span_id = "span_1"')"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev1" "$ev2"
+fixture_span_dump run_20260903T043418_67e3340f span_0 request
+OUT=$("$FSCK" --check R3 --check R5 --json)
+assert_eq "$?" "0" "span_0 dump fixture exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "span_0 dump is never a gap or an orphan"
+
+desc "R3: a run missing span_2 between span_1 and span_3 is one warning"
+setup_home
+ev1="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+ev3="$(fixture_event message assistant '{"content":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_3)"
+ev3="$(printf '%s' "$ev3" | jq -c '.meta.parent_span_id = "span_2"')"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev1" "$ev3"
+OUT=$("$FSCK" --check R3 --json)
+assert_eq "$?" "1" "gapped run exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one R3 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "warn" "severity warn"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "span_2 missing" "summary names the gap"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "R3 is not fixable"
+
+desc "R3: a span_0 event is never a gap or a chain member"
+setup_home
+ev0="$(fixture_event message user '{"text":"hand-run"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_0)"
+ev1="$(fixture_event message assistant '{"content":"a"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+ev2="$(fixture_event message assistant '{"content":"b"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_2)"
+ev2="$(printf '%s' "$ev2" | jq -c '.meta.parent_span_id = "span_1"')"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev0" "$ev1" "$ev2"
+fixture_span_dump run_20260903T043418_67e3340f span_0 request
+OUT=$("$FSCK" --check R3 --check R5 --json)
+assert_eq "$?" "0" "span_0 event fixture exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "span_0 event is never a gap or a chain member"
+
+desc "R3: a non-linear parent chain is one finding"
+setup_home
+ev1="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+ev2="$(fixture_event message assistant '{"content":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_2)"
+ev2="$(printf '%s' "$ev2" | jq -c '.meta.parent_span_id = "span_9"')"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev1" "$ev2"
+OUT=$("$FSCK" --check R3 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "broken chain is one finding"
+assert_contains "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
+  "span_2 parent_span_id is span_9 (expected span_1)" "summary names the chain break"
+
+desc "R3: a span id outside the span_N shape is one warning, never silently ignored"
+setup_home
+ev1="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+evx="$(fixture_event message assistant '{"content":"a"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1x)"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev1" "$evx"
+OUT=$("$FSCK" --check R3 --json)
+assert_eq "$?" "1" "malformed span id exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R3 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "span id span_1x is not in span_N form" "summary names the malformed id"
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "warn" "severity warn"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "malformed id is not fixable"
+
+# --- R4: span dumps must parse as JSON, never fixable ---
+# Mutation-checked: deleting the ck_R4 arm drops the expected-one finding (verified
+# during development).
+desc "R4: a malformed span dump is one warn finding, never fixable"
+setup_home
+fixture_span_dump run_20260903T043418_67e3340f span_1 request '{not json'
+OUT=$("$FSCK" --check R4 --json)
+assert_eq "$?" "1" "malformed dump exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R4 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "warn" "severity warn"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "span_1-request.json does not parse as JSON" "summary names the malformed dump"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" \
+  "a malformed dump is the only record of a failed call — not fixable"
+
+desc "R4: well-formed dumps produce no finding (positive control)"
+setup_home
+fixture_span_dump run_20260903T043418_67e3340f span_1 request
+fixture_span_dump run_20260903T043418_67e3340f span_1 response
+OUT=$("$FSCK" --check R4 --json)
+assert_eq "$?" "0" "well-formed dumps exit 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "well-formed dumps produce no R4 finding"
+
+# --- R5: an orphan span dump (the audit's defect: span_9 dump, events through span_8) ---
+# Mutation-checked: deleting the ck_R5 arm drops the expected-one finding (verified
+# during development).
+desc "R5: a dump whose span has no event is one fixable orphan finding"
+setup_home
+evs=()
+for i in {1..8}; do
+  if [ "$i" -eq 1 ]; then
+    ev="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f span_1)"
+  else
+    ev="$(fixture_event message assistant '{"content":"step"}' run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "span_$i")"
+    ev="$(printf '%s' "$ev" | jq -c --arg p "span_$((i - 1))" '.meta.parent_span_id = $p')"
+  fi
+  evs+=("$ev")
+done
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "${evs[@]+"${evs[@]}"}"
+fixture_span_dump run_20260903T043418_67e3340f span_9 request
+OUT=$("$FSCK" --check R5 --json)
+assert_eq "$?" "1" "orphan dump exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one R5 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "span_9-request.json has no matching event in the run log" "summary names the orphan dump"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "true" "orphan dump is fixable"
+assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "delete" "remedy is delete"
+
+# --- R6: committed (including retry_of-only), resumable vs dead ---
+# The retry_of zero-finding assertion below is the highest-value test in this issue and
+# was mutation-checked the way the issue prescribes: removing the
+# `or .meta.retry_of? == $rid` clause from lib/replay.sh makes classify_replay miss the
+# commit, the fixture's user message then satisfies precondition 5, the verdict falls
+# through to "replayable", and this assertion goes red (verified during development,
+# then restored). The resumable/dead expected-ones are mutation-checked by deleting the
+# ck_R6 arm (goes red).
+desc "R6: events committed only via meta.retry_of are not an uncommitted orphan"
+setup_home
+ev="$(fixture_event message user '{"text":"again"}')"
+rid=$(fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev")
+# A replay commits under a NEW run id carrying meta.retry_of, so the session log below
+# matches the run only via retry_of — no meta.run_id match exists.
+retried="$(printf '%s' "$ev" | jq -c --arg new run_20260903T043419_89abcdef --arg rof "$rid" \
+  '.meta.run_id = $new | .meta.retry_of = $rof')"
+fixture_session sess_20260903T043418_67e3340f "$retried"
+OUT=$("$FSCK" --check R6 --json)
+assert_eq "$?" "0" "already-retried run exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "retry_of match means committed — no R6 finding"
+
+desc "R6: resumable run is unfixable with the literal resume command; dead run is fixable"
+setup_home
+rid=$(fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hello"}')")
+# An unrelated earlier turn in the session log: the committed probe runs and misses,
+# the user message holds — exactly an interrupted-but-resumable run.
+fixture_session sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"older turn"}' run_20260903T043400_00000001)"
+OUT=$("$FSCK" --check R6 --json)
+assert_eq "$?" "1" "uncommitted resumable run exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R6 finding for the resumable run"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "resumable" "summary subclassifies resumable"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "resumable run is never fixable"
+assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "shai-retry --run $rid" \
+  "remedy is the literal resume command"
+# Adjacent: no user message anywhere in the log — the run is dead and deletable.
+setup_home
+fixture_run run_20260903T043419_89abcdef sess_20260903T043419_89abcdef \
+  "$(fixture_event error system '{"text":"timeout"}')"
+OUT=$("$FSCK" --check R6 --json)
+assert_eq "$?" "1" "dead run exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R6 finding for the dead run"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "dead" "summary subclassifies dead"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "true" "dead run is fixable"
+assert_eq "$(printf '%s' "$F" | jq -r '.remedy')" "delete" "remedy is delete"
+
+desc "R6: a session id shai-retry would refuse is one unfixable finding naming the id"
+setup_home
+fixture_run run_20260903T043418_67e3340f "sess/../20260903T043418_67e3340f" \
+  "$(fixture_event message user '{"text":"hello"}')"
+OUT=$("$FSCK" --check R6 --json)
+assert_eq "$?" "1" "unsafe session id exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R6 finding for the unsafe session id"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" \
+  "session id in the run log is unsafe" "summary names the unsafe verdict"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "sess/../20260903T043418_67e3340f" \
+  "summary interpolates the offending session id"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "unsafe session id is never fixable"
+assert_contains "$(printf '%s' "$F" | jq -r '.remedy')" "manual" "remedy is manual"
+
+# --- R7: session references must have a run directory on disk (info, never fixable) ---
+# Mutation-checked: removing the scan loop's missing-runs/ exception (the path R7
+# fires through when runs/ is absent — its dispatch arm never runs then) drops the
+# expected-one finding below (verified during development, then restored).
+desc "R7: a session event referencing a missing run directory is one info finding"
+setup_home
+fixture_session sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f)"
+OUT=$("$FSCK" --check R7 --json)
+assert_eq "$?" "1" "missing run directory exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R7 finding"
+F=$(printf '%s' "$OUT" | jq '.[0]')
+assert_eq "$(printf '%s' "$F" | jq -r '.severity')" "info" "R7 is info, not a defect"
+assert_eq "$(printf '%s' "$F" | jq -r '.target')" "run_20260903T043418_67e3340f" \
+  "target is the missing run id"
+assert_eq "$(printf '%s' "$F" | jq -r '.fixable')" "false" "R7 is never fixable"
+assert_contains "$(printf '%s' "$F" | jq -r '.summary')" "run directory missing" \
+  "summary explains the missing directory"
+OUT=$("$FSCK" --check R7 --summary)
+assert_eq "$OUT" "0 errors, 0 warnings, 1 info — 0 fixable with --fix" \
+  "digest counts R7 as info"
+
+desc "R7: a referenced run directory on disk produces no finding (positive control)"
+setup_home
+ev="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f)"
+fixture_session sess_20260903T043418_67e3340f "$ev"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev"
+OUT=$("$FSCK" --check R7 --json)
+assert_eq "$?" "0" "referenced run directory exits 0"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "referenced run directory produces no R7 finding"
+
+desc "R7: run ids containing / or .. are skipped; a plain missing id is still reported"
+setup_home
+fixture_session sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}' "run/20260903T043418_67e3340f")" \
+  "$(fixture_event message user '{"text":"hi"}' run_..20260903T043418_67e3340f)" \
+  "$(fixture_event message user '{"text":"hi"}' run_20260903T043419_89abcdef)"
+OUT=$("$FSCK" --check R7 --json)
+assert_eq "$?" "1" "plain missing id still exits 1"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "traversal ids are skipped — exactly one finding"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].target')" "run_20260903T043419_89abcdef" \
+  "the plain missing id is the finding"
+
+# A malformed session line belongs to S1, not to R7: R7 reads the file's parseable lines
+# and keeps reporting their references, because aborting would discard S1's finding along
+# with them and turn a reported problem into "the check never ran". The read-failure half
+# of ck_R7's guard is the same chmod-only shape as the per-store readability guard
+# (documented at the operational-failures block below): not driven, for the same reason.
+desc "R7: a malformed session log does not abort the scan — S1 owns that report"
+setup_home
+fixture_session sess_20260903T043418_67e3340f \
+  "$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f)"
+printf '{truncated\n' >>"$SHAI_HOME/sessions/sess_20260903T043418_67e3340f.jsonl"
+OUT=$("$FSCK" --check R7 --json)
+assert_eq "$?" "1" "the parseable line's reference is still reported"
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "one R7 finding, not an aborted scan"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].target')" "run_20260903T043418_67e3340f" \
+  "the run reference on the parseable line is the finding"
+# Positive control for the division of labour, adjacent so the contrast is visible: the
+# same store scanned under S1 reports the malformed line itself.
+OUT=$("$FSCK" --check S1 --json)
+assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "S1 reports the malformed line"
+assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 2 is not a JSON object" \
+  "the malformed line is S1's finding, named by line"
+
+# --- R6 in table mode: one row per finding, the resume command printed in the report ---
+desc "R6 table mode: resumable and dead render two rows; digest counts the fixable one"
+setup_home
+fixture_run run_20260903T043418_67e3340f sess_a "$(fixture_event message user '{"text":"hi"}')"
+fixture_run run_20260903T043419_89abcdef sess_b "$(fixture_event error system '{"text":"boom"}')"
+OUT=$("$FSCK" --check R6 2>/dev/null)
+assert_eq "$?" "1" "two uncommitted runs exit 1"
+assert_row_count "$OUT" 2 "one row per finding"
+assert_contains "$OUT" "shai-retry --run run_20260903T043418_67e3340f" \
+  "resume command printed in the report"
+ERR=$("$FSCK" --check R6 2>&1 >/dev/null)
+assert_contains "$ERR" "0 errors, 2 warnings, 0 info — 1 fixable with --fix" \
+  "digest counts only the dead run fixable"
+
+# --- --check R1..R7: every run check selects and runs alone on a healthy store ---
+# Each zero here is pinned by the check's corrupt-fixture block above (deleting a check
+# leaves these green but turns its expected-one block red), so these assertions cover
+# the selectability criterion without needing a per-check deletion pass.
+desc "--check R1..R7: each run check runs alone"
+setup_home
+ev="$(fixture_event message user '{"text":"hi"}' run_20260903T043418_67e3340f)"
+fixture_session sess_20260903T043418_67e3340f "$ev"
+fixture_run run_20260903T043418_67e3340f sess_20260903T043418_67e3340f "$ev"
+for c in R1 R2 R3 R4 R5 R6 R7; do
+  OUT=$("$FSCK" --check "$c" --json)
+  assert_eq "$?" "0" "--check $c runs alone on a healthy store"
+  assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "--check $c reports zero findings on a healthy run"
+done
 
 # --- --summary: the digest alone, exit 1 when problems exist ---
 desc "--summary: digest only, no rows"
@@ -251,9 +640,10 @@ assert_eq "$OUT" "1 error, 0 warnings, 0 info — 1 fixable with --fix" \
 ERR=$("$FSCK" --summary 2>&1 >/dev/null)
 assert_eq "$ERR" "" "summary mode keeps stderr quiet"
 # Clean store: the digest case reports the distinctive clean line, still exit 0.
+# sess_event keeps the session-only fixture clean under R7 (no run directory exists).
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 OUT=$("$FSCK" --summary)
 assert_eq "$?" "0" "clean summary mode exits 0"
 assert_eq "$OUT" "no problems found (1 session, 0 runs, 0 ledgers, 0 failure logs)" \
@@ -280,7 +670,7 @@ assert_fails 2 "error: --dry-run requires --fix" "--dry-run without --fix" -- "$
 desc "scope pointer: policy.json and ci.json validation is pointed at shai-doctor"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 ERR=$("$FSCK" 2>&1 >/dev/null)
 assert_contains "$ERR" "validated by shai-doctor" \
   "table mode points policy/ci validation at shai-doctor"
@@ -568,7 +958,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
 # resolve are both quiet. Mutation-checked: without the F4 emission the ghost-id records
 # scanned clean (exit 0, zero findings).
 setup_home
-ev="$(fixture_event message user '{"text":"hello"}')"
+ev="$(fixture_event message user '{"text":"hello"}' run_20260810T120000_aabbccdd)"
 SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
 RID=$(fixture_run run_20260810T120000_aabbccdd "$SID" "$ev")
 fixture_failure heartbeat api_error "boom"
@@ -584,7 +974,7 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "null and resolving ids yiel
 #     (info, deliberately never fixable — fsck reports the unknown, it never deletes it) ---
 desc "X1: a wholly healthy store with .latest.json siblings and span dumps yields zero; one stray file yields one"
 setup_home
-ev="$(fixture_event message user '{"text":"hello"}')"
+ev="$(fixture_event message user '{"text":"hello"}' run_20260810T120000_aabbccdd)"
 SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
 RID=$(fixture_run run_20260810T120000_aabbccdd "$SID" "$ev")
 fixture_span_dump "$RID" span_1 request
@@ -663,7 +1053,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
 desc "S1: a blank line at the tail and one mid-log each yield exactly one S1; a clean log yields zero"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 printf '\n' >>"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "1" "blank-tail session exits 1"
@@ -677,8 +1067,8 @@ OUT=$("$FSCK" 2>/dev/null)
 assert_row_count "$OUT" 1 "table mode: exactly one S1 row"
 setup_home
 # a blank between two events, with the mirrored tail keeping S5 quiet
-ev1="$(fixture_event message user '{"text":"a"}')"
-ev2="$(fixture_event message user '{"text":"b"}')"
+ev1="$(sess_event message user '{"text":"a"}')"
+ev2="$(sess_event message user '{"text":"b"}')"
 SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev1" "$ev2")
 mapfile -t LINES <"$SHAI_HOME/sessions/$SID.jsonl"
 {
@@ -693,7 +1083,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 2 is blank" \
   "the mid-log blank is named by line"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"a"}')"
+  "$(sess_event message user '{"text":"a"}')"
 printf 'this is not json\n' >>"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
 OUT=$("$FSCK" --json)
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 2 is not a JSON object" \
@@ -702,7 +1092,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "line 2 is not a JSON o
 # S1 emission the blank-tail fixture scanned clean (exit 0, zero findings).
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 OUT=$("$FSCK" --check S1 --json)
 assert_eq "$?" "0" "a clean one-line log exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a clean log yields zero S1"
@@ -712,7 +1102,7 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a clean log yields zero S1"
 desc "S2: a missing key and a null-typed key each yield exactly one S2; a stamped event yields zero"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 TMP="$(mktemp)"
 jq -c 'del(.source)' "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" >"$TMP"
 mv "$TMP" "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
@@ -732,7 +1122,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S2 is not fixa
 # findings) and the assertion below went red.
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 TMP="$(mktemp)"
 jq -c '.type = null' "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" >"$TMP"
 mv "$TMP" "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl"
@@ -748,7 +1138,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
 # event scanned clean (exit 0, zero findings).
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 OUT=$("$FSCK" --check S2 --json)
 assert_eq "$?" "0" "a stamped event exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a stamped event yields zero S2"
@@ -758,8 +1148,8 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a stamped event yields zero
 desc "S3: a mismatched meta.session_id yields exactly one S3; a legacy unstamped log yields zero"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"a"}')" \
-  "$(fixture_event message user '{"text":"b"}')"
+  "$(sess_event message user '{"text":"a"}')" \
+  "$(sess_event message user '{"text":"b"}')"
 TMP="$(mktemp)"
 head -n 1 "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.jsonl" |
   jq -c '.meta.session_id = "elsewhere"' >"$TMP"
@@ -797,7 +1187,7 @@ assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S9" and .severity
 desc "S6/S5 precedence: the stillborn pair is S6's alone; an empty latest beside a real log is S5"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message system '{"text":"seed"}')"
+  "$(sess_event message system '{"text":"seed"}')"
 : >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "1" "stillborn session exits 1"
@@ -816,9 +1206,9 @@ assert_row_count "$OUT" 1 "table mode: exactly one S6 row"
 # The other half, adjacent: the same empty .latest.json beside a three-event log is S5.
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"a"}')" \
-  "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')" \
-  "$(fixture_event message user '{"text":"b"}')"
+  "$(sess_event message user '{"text":"a"}')" \
+  "$(sess_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')" \
+  "$(sess_event message user '{"text":"b"}')"
 : >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "1" "empty latest beside a three-event log exits 1"
@@ -839,7 +1229,7 @@ assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S6")] | length')"
 #     empty, unparseable, and stale are all failures of it (error, fixable by rebuild) ---
 desc "S5: missing, unparseable, and stale latest.json each yield exactly one S5; a mirrored or error-event latest yields zero"
 setup_home
-ev="$(fixture_event message user '{"text":"hello"}')"
+ev="$(sess_event message user '{"text":"hello"}')"
 SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
 rm "$SHAI_HOME/sessions/$SID.latest.json"
 OUT=$("$FSCK" --json)
@@ -849,7 +1239,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].check')" "S5" "the finding is S5"
 assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "latest.json missing" \
   "a missing latest.json is named"
 setup_home
-ev="$(fixture_event message user '{"text":"hello"}')"
+ev="$(sess_event message user '{"text":"hello"}')"
 SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
 printf 'garbage\n' >"$SHAI_HOME/sessions/$SID.latest.json"
 OUT=$("$FSCK" --json)
@@ -858,8 +1248,8 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "latest.json does not p
   "an unparseable latest.json is named"
 setup_home
 SID=$(fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"a"}')" \
-  "$(fixture_event message user '{"text":"b"}')")
+  "$(sess_event message user '{"text":"a"}')" \
+  "$(sess_event message user '{"text":"b"}')")
 printf '%s\n' '{"type":"message","source":"user","payload":{"text":"stale"}}' \
   >"$SHAI_HOME/sessions/$SID.latest.json"
 OUT=$("$FSCK" --json)
@@ -872,8 +1262,8 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" "latest.json is not the
 # emission the stale fixture scanned clean (exit 0, zero findings).
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"a"}')" \
-  "$(fixture_event message user '{"text":"b"}')"
+  "$(sess_event message user '{"text":"a"}')" \
+  "$(sess_event message user '{"text":"b"}')"
 OUT=$("$FSCK" --check S5 --json)
 assert_eq "$?" "0" "a mirrored latest exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a mirrored latest yields zero S5"
@@ -885,8 +1275,8 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a mirrored latest yields ze
 # exemption this fixture emits exactly one S5 ("latest.json is not the last event").
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"a"}')" \
-  "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')"
+  "$(sess_event message user '{"text":"a"}')" \
+  "$(sess_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')"
 printf '%s\n' '{"type":"error","source":"system","payload":{"text":"eval failed"}}' \
   >"$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json"
 OUT=$("$FSCK" --check S5 --json)
@@ -898,7 +1288,7 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "an error-event latest yield
 desc "S6: a seeded session with a mirrored latest.json yields zero S6"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message system '{"text":"seed"}')"
+  "$(sess_event message system '{"text":"seed"}')"
 OUT=$("$FSCK" --check S6 --json)
 assert_eq "$?" "0" "a mirrored system event exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a mirrored system event yields zero S6"
@@ -909,8 +1299,8 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a mirrored system event yie
 desc "S7: an unmatched tool_call_id yields exactly one S7; a result matching a later assistant event still fails"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
-  "$(fixture_event tool_result tool '{"tool_call_id":"ghost","content":"nope","is_error":false}')"
+  "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+  "$(sess_event tool_result tool '{"tool_call_id":"ghost","content":"nope","is_error":false}')"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "1" "unmatched tool_result exits 1"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S7)"
@@ -925,8 +1315,8 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S7 is not fixa
 # implementation reports it.
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event tool_result tool '{"tool_call_id":"call1","content":"early","is_error":false}')" \
-  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')"
+  "$(sess_event tool_result tool '{"tool_call_id":"call1","content":"early","is_error":false}')" \
+  "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "1" "a result matching a later assistant event exits 1"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S7)"
@@ -939,8 +1329,8 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].summary')" \
 # zero findings).
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
-  "$(fixture_event tool_result tool '{"tool_call_id":"call1","content":"ok","is_error":false}')"
+  "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+  "$(sess_event tool_result tool '{"tool_call_id":"call1","content":"ok","is_error":false}')"
 OUT=$("$FSCK" --check S7 --json)
 assert_eq "$?" "0" "a matched tool_result exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a matched tool_result yields zero S7"
@@ -952,8 +1342,8 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a matched tool_result yield
 desc "S8: the final assistant event is exempt; an unanswered call on an earlier assistant event yields exactly one"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"list files"}')" \
-  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')"
+  "$(sess_event message user '{"text":"list files"}')" \
+  "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "0" "an interrupted session (unanswered calls on the final event) exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" \
@@ -963,9 +1353,9 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" \
 # state the check must not treat as corruption.
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"a"}')" \
-  "$(fixture_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
-  "$(fixture_event message assistant '{"content":"done","tool_calls":[],"finish_reason":"stop"}')"
+  "$(sess_event message user '{"text":"a"}')" \
+  "$(sess_event message assistant '{"content":null,"tool_calls":[{"id":"call1","type":"function","function":{"name":"list_directory","arguments":"{}"}}],"finish_reason":"tool_calls"}')" \
+  "$(sess_event message assistant '{"content":"done","tool_calls":[],"finish_reason":"stop"}')"
 OUT=$("$FSCK" --json)
 assert_eq "$?" "1" "an unanswered earlier call exits 1"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" "exactly one finding (S8)"
@@ -980,7 +1370,7 @@ assert_eq "$(printf '%s' "$OUT" | jq -r '.[0].fixable')" "false" "S8 is not fixa
 #     no version at all is INFO, never WARN — the same legacy tolerance as S3 ---
 desc "S9: an unrecognized version yields exactly one WARN S9; a versionless legacy log yields INFO only"
 setup_home
-ev="$(fixture_event message user '{"text":"hello"}')"
+ev="$(sess_event message user '{"text":"hello"}')"
 SID=$(fixture_session sess_20260810T120000_aabbccdd "$ev")
 TMP="$(mktemp)"
 jq -c '.version = "0.9"' "$SHAI_HOME/sessions/$SID.jsonl" >"$TMP"
@@ -1007,12 +1397,12 @@ assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S9" and .severity
   "a wholly unstamped log yields zero S9 WARNINGS"
 assert_eq "$(printf '%s' "$OUT" | jq '[.[] | select(.check == "S9" and .severity == "info")] | length')" "2" \
   "each versionless event yields one INFO S9, never a warning"
-# Healthy negative control: fixture_event always stamps version 1.0. Mutation-checked:
+# Healthy negative control: sess_event always stamps version 1.0. Mutation-checked:
 # without the S9 emission the unknown-version fixture scanned clean (exit 0, zero
 # findings).
 setup_home
 fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')"
+  "$(sess_event message user '{"text":"hello"}')"
 OUT=$("$FSCK" --check S9 --json)
 assert_eq "$?" "0" "a version 1.0 event exits 0"
 assert_eq "$(printf '%s' "$OUT" | jq 'length')" "0" "a version 1.0 event yields zero S9"
@@ -1045,11 +1435,15 @@ assert_eq "$(printf '%s' "$OUT" | jq 'length')" "1" \
 
 # --- one jq pass per store file, per the shai-events:167 pattern: a counting jq stub
 #     must observe the session log opened by exactly one jq invocation ---
+# Scoped to --store sessions deliberately. The property under test is that the S family
+# shares one pass, not that a whole scan opens each session log once: R7 is a run-store
+# check that reads session logs (its subject is the run directories they reference), so it
+# adds a second, by-design pass that --store sessions keeps out of the count.
 desc "one jq pass per store file: the S-family shares a single jq pass over the session log"
 setup_home
 SID=$(fixture_session sess_20260810T120000_aabbccdd \
-  "$(fixture_event message user '{"text":"hello"}')" \
-  "$(fixture_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')")
+  "$(sess_event message user '{"text":"hello"}')" \
+  "$(sess_event message assistant '{"content":"hi","tool_calls":[],"finish_reason":"stop"}')")
 REAL_JQ="$(command -v jq)"
 JQ_LOG="$SHAI_HOME/jq.log"
 make_stub_bin
@@ -1061,15 +1455,15 @@ printf '\n' >>"$JQ_LOG"
 exec "$REAL_JQ" "\$@"
 EOF
 chmod +x "$STUB/jq"
-OUT=$("$FSCK" --json)
+OUT=$("$FSCK" --store sessions --json)
 assert_eq "$?" "0" "healthy session exits 0 under the counting jq stub"
 assert_eq "$(grep -c "$SID.jsonl" "$JQ_LOG" || true)" "1" \
   "the session log is opened by exactly one jq pass"
 
 # --- --check S1 … --check X1: every shipped id runs alone (each catalog entry is
 #     reachable, and no id depends on another id's scan side effects) ---
-desc "--check: each of the eighteen check ids runs alone"
-for id in S1 S2 S3 S4 S5 S6 S7 S8 S9 L1 L2 L3 L4 F1 F2 F3 F4 X1; do
+desc "--check: each of the twenty-five check ids runs alone"
+for id in S1 S2 S3 S4 S5 S6 S7 S8 S9 R1 R2 R3 R4 R5 R6 R7 L1 L2 L3 L4 F1 F2 F3 F4 X1; do
   setup_home
   RC=0
   "$FSCK" --check "$id" --json >/dev/null 2>&1 || RC=$?
