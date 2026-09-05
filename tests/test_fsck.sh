@@ -1910,7 +1910,10 @@ assert_eq "$(store_checksum)" "$SNAP" "the store is byte-identical after the sec
 #     repair cannot complete. The S5 rebuild guard drives the 3 directly: a directory
 #     sitting where .latest.json belongs makes the rebuild fail. The same fixture drives
 #     the dry-run refusal (#439): the plan must not claim the rebuild the real --fix
-#     just refused, and must not exit 0 ---
+#     just refused, and must not exit 0. The unscoped exit 1 is not enough to pin the
+#     DRY_REFUSED verdict: X1 also flags the obstructing directory as an unfixable
+#     "unrecognized entry", so base exits 1 too — the false 0 only happens scoped, where
+#     X1 is unselected. --check S5 isolates the branch ---
 desc "--fix exit 3: a repair that cannot complete"
 setup_home
 fixture_session sess_20260810T120000_aabbccdd "$(sess_event message user '{"text":"hi"}')"
@@ -1924,5 +1927,10 @@ assert_not_contains "$DRY_ERR" "repair: rebuild" \
 assert_contains "$DRY_ERR" "manual: S5 " "--fix --dry-run prints a manual refusal instead"
 assert_eq "$([ -d "$SHAI_HOME/sessions/sess_20260810T120000_aabbccdd.latest.json" ] && echo yes || echo no)" "yes" \
   "--fix --dry-run left the obstructing directory untouched"
+DRY_ERR=$("$FSCK" --fix --dry-run --check S5 2>&1 >/dev/null)
+assert_eq "$?" "1" "--fix --dry-run --check S5 on the blocked rebuild exits 1, not the false 0"
+assert_not_contains "$DRY_ERR" "repair: rebuild" \
+  "--fix --dry-run --check S5 prints no rebuild plan the real --fix would refuse"
+assert_contains "$DRY_ERR" "manual: S5 " "--fix --dry-run --check S5 prints a manual refusal instead"
 
 finish
