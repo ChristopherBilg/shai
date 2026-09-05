@@ -476,7 +476,7 @@ declared_flag() {
 # instead of silently passing coverage.
 # Any failure prints an `error:` line (plus a diff for staleness) and exits 1.
 check() {
-  local script flag flags fail=0 tmp shell file scripts untracked untracked_names untracked_n=0
+  local script flag flags fail=0 tmp shell file scripts untracked untracked_names="" untracked_n=0
   if ! scripts="$(git -C "$DIR" ls-files 'shai-*' 2>&1)"; then
     printf 'error: cannot list shai-* scripts (check must run inside a git checkout): %s\n' "$scripts" >&2
     return 1
