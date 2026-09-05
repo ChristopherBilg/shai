@@ -1,8 +1,11 @@
 #!/bin/bash
 # docs.sh — fail-closed documentation checker: every tracked file must be documented
-# Usage: ./tests/docs.sh [file ...]   (no args → checks `git ls-files` from repo root)
+# Usage: ./tests/docs.sh [file ...]   (no args → checks `git ls-files` from repo root, failing
+#        first if untracked script files would be invisible to it)
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
+# shellcheck source=tests/check-untracked.sh
+source "$ROOT/tests/check-untracked.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -283,6 +286,10 @@ main() {
     files=("$@")
   else
     cd "$ROOT"
+    # Fail closed on dirty trees (#413): an untracked script is invisible to `git ls-files`,
+    # so the DOCS OK banner could go green over a script whose doc header was never checked.
+    # Explicit file arguments are unaffected — they name exactly what is being checked.
+    check_no_untracked_scripts || exit 1
     mapfile -t files < <(git ls-files)
   fi
   for f in "${files[@]}"; do

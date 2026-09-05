@@ -7,7 +7,8 @@
 #         ${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/_shai (zsh) or
 #         ${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/shai (bash);
 #         check writes nothing on success
-# Exit: 0 on success; 1 on generation, write, or check failure (invalid manifest, jq error);
+# Exit: 0 on success; 1 on generation, write, or check failure (invalid manifest, jq error,
+#        untracked shai-* scripts invisible to the coverage gate);
 #       2 on usage error
 set -euo pipefail
 
@@ -471,12 +472,32 @@ declared_flag() {
 #   1. Coverage: every git-tracked shai-* script has a completions.json entry.
 #   2. Flag sync: every case-arm flag in those scripts is declared in the manifest.
 #   3. Freshness: generate zsh/bash reproduce the checked-in completions/* files.
+# Before them, an untracked-shai-* gate (#413): files git ls-files cannot see are named
+# instead of silently passing coverage.
 # Any failure prints an `error:` line (plus a diff for staleness) and exits 1.
 check() {
-  local script flag flags fail=0 tmp shell file scripts
+  local script flag flags fail=0 tmp shell file scripts untracked untracked_names untracked_n=0
   if ! scripts="$(git -C "$DIR" ls-files 'shai-*' 2>&1)"; then
     printf 'error: cannot list shai-* scripts (check must run inside a git checkout): %s\n' "$scripts" >&2
     return 1
+  fi
+  # Untracked shai-* scripts are invisible to the git-derived coverage list (#413): a green
+  # coverage pass would claim every script has a manifest entry while skipping files that
+  # were never listed. Fail closed, naming each one, instead.
+  if ! untracked="$(git -C "$DIR" ls-files --others --exclude-standard 'shai-*' 2>&1)"; then
+    printf 'error: cannot list untracked shai-* scripts: %s\n' "$untracked" >&2
+    fail=1
+  else
+    while IFS= read -r script; do
+      [ -n "$script" ] || continue
+      untracked_names="$untracked_names${untracked_names:+ }$script"
+      untracked_n=$((untracked_n + 1))
+    done <<<"$untracked"
+    if [ "$untracked_n" -gt 0 ]; then
+      printf 'error: %d untracked script file(s) are invisible to this check — commit them first: %s\n' \
+        "$untracked_n" "$untracked_names" >&2
+      fail=1
+    fi
   fi
   # 1. Coverage — derived from git, not hardcoded (the same fail-closed pattern as
   # tests/docs.sh): a new shai-* script with no manifest entry fails here.

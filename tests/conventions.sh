@@ -4,6 +4,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." &>/dev/null && pwd)"
 cd "$ROOT"
+# shellcheck source=tests/check-untracked.sh
+source "$ROOT/tests/check-untracked.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -14,6 +16,11 @@ note() {
   fail=1
 }
 ok() { echo -e "  ${GREEN}✓${NC} $1"; }
+
+# Fail closed on dirty trees (#413): an untracked script is invisible to every git-derived
+# list below (RUNTIME, SCRIPTS, the lint cross-check), so the CONVENTIONS OK banner could go
+# green over scripts that were never shebang-, strict-mode-, or executable-bit-checked.
+check_no_untracked_scripts || exit 1
 
 # Derived from git, not hardcoded: a hardcoded list silently skipped shai-retry for two PRs.
 mapfile -t RUNTIME < <({

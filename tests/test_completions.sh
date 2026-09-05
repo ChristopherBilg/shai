@@ -259,6 +259,24 @@ rm -f "$FX/shai-gamma"
 out="$("$FX/shai-completions" check 2>&1)"
 assert_eq "$?" "0" "check: coverage failure disappears once the script is gone"
 
+# Untracked mutation (#413): an untracked shai-* script is invisible to the git-derived
+# coverage gate, so a green coverage pass would claim a manifest entry exists for a script
+# the gate never listed. The check must fail closed, naming the file, instead.
+# (Mutation-checked: deleting the untracked listing from shai-completions check leaves this
+# green, because coverage only sees the tracked shai-alpha/shai-completions.)
+cat >"$FX/shai-delta" <<'EOF'
+#!/bin/bash
+# shai-delta — untracked fixture script with a manifest entry
+set -euo pipefail
+EOF
+out="$("$FX/shai-completions" check 2>&1)"
+assert_eq "$?" "1" "check: an untracked shai-* script fails the check"
+assert_contains "$out" "error: 1 untracked script file(s) are invisible to this check — commit them first: shai-delta" \
+  "check: untracked failure names the script"
+rm -f "$FX/shai-delta"
+out="$("$FX/shai-completions" check 2>&1)"
+assert_eq "$?" "0" "check: untracked failure disappears once the file is gone"
+
 # Flag sync mutation: a --flag) case arm the manifest does not declare fails and
 # names both script and flag. (Mutation-checked: break the declared_flag lookup
 # and this assertion goes red.)
